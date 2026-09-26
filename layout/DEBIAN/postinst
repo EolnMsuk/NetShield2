@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+case "${1:-}" in
+    configure)
+        /var/jb/usr/bin/uicache -p /var/jb/Applications/NetShield.app
+        printf '%s\n' 'NetShield 2 is experimental. Open the app; verify provider deployment before relying on filtering.'
+        printf '%s\n' 'When upgrading v1, reboot and re-jailbreak to unload old socket hooks from running processes.'
+        ;;
+esac
