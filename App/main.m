@@ -203,7 +203,9 @@
         else {
             NSDictionary *event = events[events.count - 1 - path.row];
             cell.textLabel.text = [NSString stringWithFormat:@"%@ · %@", event[@"action"], [event[@"identity"] length] ? event[@"identity"] : @"Unattributed"];
-            cell.detailTextLabel.text = [NSString stringWithFormat:@"%@ · %@ · event %@\nIn %@ B / Out %@ B", event[@"time"], event[@"direction"], event[@"event"], event[@"bytesIn"], event[@"bytesOut"];
+            cell.detailTextLabel.text = [NSString stringWithFormat:@"%@ · %@ · event %@\nIn %@ B / Out %@ B",
+                event[@"time"], event[@"direction"], event[@"event"],
+                event[@"bytesIn"], event[@"bytesOut"]];
         }
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
     }
