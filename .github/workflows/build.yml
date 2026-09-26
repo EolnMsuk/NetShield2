@@ -12,11 +12,13 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 30
     env:
-      THEOS: ${{ runner.temp }}/netshield-theos
       THEOS_REVISION: dd5c14bb9d91311e221d51b5bfb8c9e5948156db
       SDK_SHA256: 5e0fd3f01266cce4ce012d4a99b38eb56578fca40d09edc81cd83dee958202fb
     steps:
       - uses: actions/checkout@v4
+      - name: Set Theos path
+        shell: bash
+        run: printf 'THEOS=%s/netshield-theos\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Install build tools
         run: brew install make ldid xz
       - name: Install pinned Theos and iOS 16.5 SDK
