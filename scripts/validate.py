@@ -23,6 +23,8 @@ require(b'\r' not in control, 'control must have LF line endings')
 metadata = dict(line.split(': ', 1) for line in control.decode().splitlines() if ': ' in line)
 require(metadata['Version'] == '2.0.0', 'Wrong package version')
 require(metadata['Architecture'] == 'iphoneos-arm64', 'Wrong rootless architecture')
+require(metadata['Depends'] == 'firmware (>= 15.0), firmware (<< 18.0), uikittools', 'Expected iOS 15-17 package range')
+require(re.search(r'^export TARGET = iphone:clang:[^:]+:15\.0$', (ROOT / 'Makefile').read_text(), re.M), 'Expected iOS 15.0 deployment target')
 require(metadata.get('Icon') == 'file:///var/jb/Applications/NetShield.app/Icon.png', 'Missing package icon')
 require((ROOT / 'App/Resources/Icon.png').read_bytes().startswith(b'\x89PNG\r\n\x1a\n'), 'Invalid app icon')
 require('mobilesubstrate' not in metadata['Depends'], 'v1 injection dependency remains')
@@ -45,7 +47,7 @@ for directory, binary, suffix, point, principal in bundles:
     info = plist(source / 'Resources/Info.plist')
     require(info['CFBundleIdentifier'] == 'com.eolnmsuk.netshield' + suffix, 'Bundle ID mismatch')
     require(info['CFBundleExecutable'] == binary, 'Executable mismatch')
-    require(info['MinimumOSVersion'] == '16.0', 'Deployment mismatch')
+    require(info['MinimumOSVersion'] == '15.0', 'Deployment mismatch')
     require(info.get('CFBundleVersion') == '20010',
             f'{directory}/Resources/Info.plist: CFBundleVersion is '
             f'{info.get("CFBundleVersion")!r}; expected "20010" for {metadata["Version"]}. '

@@ -123,7 +123,12 @@
     [UNUserNotificationCenter.currentNotificationCenter getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings *settings) {
         dispatch_async(dispatch_get_main_queue(), ^{
             if (settings.authorizationStatus == UNAuthorizationStatusNotDetermined) [self authorizeNotificationsThen:nil];
-            else [UIApplication.sharedApplication openURL:[NSURL URLWithString:UIApplicationOpenNotificationSettingsURLString] options:@{} completionHandler:nil];
+            else {
+                // iOS 15.0-15.3 has no public direct link to notification settings.
+                NSString *settingsURL = UIApplicationOpenSettingsURLString;
+                if (@available(iOS 15.4, *)) settingsURL = UIApplicationOpenNotificationSettingsURLString;
+                [UIApplication.sharedApplication openURL:[NSURL URLWithString:settingsURL] options:@{} completionHandler:nil];
+            }
         });
     }];
 }
@@ -391,7 +396,7 @@
     if (section == 4) return @"Tap an app identity to change its rule. Changes affect new connections; close and reopen the app to end existing connections.";
     if (section == 2) return @"Do Not Disturb silences banners unless you allow NetShield in Settings > Focus > Do Not Disturb > Apps.";
     if (section == 5) return @"Latest 20 of up to 300 recorded events. Data totals arrive when a connection closes; permission decisions show no data totals.";
-    return @"NetShield 2.0.0 / iOS 16 rootless. Filters connections provided by iOS; system-exempt traffic is not guaranteed covered.";
+    return @"NetShield 2.0.0 / iOS 15-17 rootless. Filters connections provided by iOS; system-exempt traffic is not guaranteed covered.";
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)path {
     UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];

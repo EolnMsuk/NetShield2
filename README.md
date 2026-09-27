@@ -1,6 +1,6 @@
 # NetShield2
 
-Control internet access on rootless (roothide users use roothide patcher to convert the deb before installing) iOS 16 devices. NetShield uses an OS content filter, saved app rules and actionable notifications.
+Control internet access on rootless (roothide users use roothide patcher to convert the deb before installing) iOS 15-17 devices. iOS 15 and 17 compatibility is experimental pending device testing. NetShield uses an OS content filter, saved app rules and actionable notifications.
 
 ![NetShield banner](App/Resources/banner.png)
 
@@ -8,7 +8,7 @@ Control internet access on rootless (roothide users use roothide patcher to conv
 
 1. Install the deb from the releases section. No respring is required.
 2. Open NetShield and turn on **Firewall** + accept the iOS permissions. Leave **New apps** set to **Ask me** to decide as apps connect. Existing rules are kept when upgrading or toggling the firewall.
-3. Enable banners under **Notification settings**. If you use **Do Not Disturb**, allow NetShield in **Settings > Focus > Do Not Disturb > Apps**.
+3. Enable banners under **Notification settings**. On iOS 15.0-15.3, this opens the app settings page; choose **Notifications** there (or use **Settings > Notifications > NetShield**). If you use **Do Not Disturb**, allow NetShield in **Settings > Focus > Do Not Disturb > Apps**.
 4. When a new app connects, touch and hold its NetShield notification and choose **Allow app** or **Keep blocking**. Tapping the notification body opens NetShield instead where you can also allow or block through prompts.
 
 Unanswered connections are blocked after 30 seconds. You can decide later in **Waiting for your decision**, then retry the app. To ask again for a previously decided app, tap its rule and select **Use new-app setting** while New apps is Ask me.
@@ -30,8 +30,6 @@ Before uninstalling, use **Advanced & support > Prepare for uninstall** to remov
 ## Coverage
 
 Rules apply to new connections delivered by iOS, not every raw packet or OS-exempt path. Unidentified connections have their own rule. Direction rules refer to who initiates a connection, not reply packets. No VPN server entry is needed: this is a content filter, not a VPN tunnel.
-
-MIT License. Copyright 2026 EolnMsuk.
 
 ## Support the Dev
 

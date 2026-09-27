@@ -32,11 +32,11 @@ targets = [
 ]
 sources = sorted({source for _, files, _, _ in targets for source in files})
 sources += ['Tests/policy_test.m', 'Tests/permission_test.m', 'Tests/response_test.m']
-base = [str(zig), 'cc', '-target', 'aarch64-ios.16.0', '-isysroot', str(sdk)]
-compile_flags = ['-fobjc-arc', '-fobjc-runtime=ios-16.0', '-fblocks',
+base = [str(zig), 'cc', '-target', 'aarch64-ios.15.0', '-isysroot', str(sdk)]
+compile_flags = ['-fobjc-arc', '-fobjc-runtime=ios-15.0', '-fblocks',
                  '-iframework', str(sdk / 'System/Library/Frameworks'),
                  '-isystem', str(sdk / 'usr/include'),
-                 '-Wall', '-Wextra', '-Werror', '-Wno-unused-parameter']
+                 '-Wall', '-Wextra', '-Werror', '-Wunguarded-availability', '-Wno-unused-parameter']
 results = []
 
 def run(label, command):

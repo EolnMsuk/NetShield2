@@ -13,7 +13,7 @@
         },
         {
           "class": "DepictionMarkdownView",
-          "markdown": "Control internet access on rootless iOS 16 with saved app rules and permission notifications.\n\nOpen NetShield after installation and enable Firewall. No respring is required.\n\n[Get started](https://github.com/EolnMsuk/NetShield2/#readme) | [GitHub](https://github.com/EolnMsuk/NetShield2/)\n\nSupport the Dev: [Venmo](https://venmo.com/u/rustonrails) | [BTC](https://www.blockchain.com/explorer/addresses/btc/31uHLpioo1TbxAmo9kM7rrKcLz3wvcoZaL)"
+          "markdown": "Control internet access on rootless iOS 15-17 (iOS 15 and 17 support is experimental pending device testing) with saved app rules and permission notifications.\n\nOpen NetShield after installation and enable Firewall. No respring is required.\n\n[Get started](https://github.com/EolnMsuk/NetShield2/#readme) | [GitHub](https://github.com/EolnMsuk/NetShield2/)\n\nSupport the Dev: [Venmo](https://venmo.com/u/rustonrails) | [BTC](https://www.blockchain.com/explorer/addresses/btc/31uHLpioo1TbxAmo9kM7rrKcLz3wvcoZaL)"
         }
       ]
     }

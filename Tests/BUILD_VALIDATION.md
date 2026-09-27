@@ -1,6 +1,6 @@
 # Release build validation
 
-The local Windows validation uses Zig 0.14.1 / Clang, targeting arm64 iOS 16.0 with the pinned iPhoneOS16.5 SDK. It compiles all nine production/test translation units with ARC, blocks and warnings treated as errors, then links NetShield and both providers. Shared/provider sources compile under app-extension restrictions.
+The local Windows validation uses Zig 0.14.1 / Clang, targeting arm64 iOS 15.0 with the pinned iPhoneOS16.5 SDK. It compiles all nine production/test translation units with ARC, blocks and warnings treated as errors, including unguarded API availability, then links NetShield and both providers. Shared/provider sources compile under app-extension restrictions.
 
 Run `python scripts/validate.py` and `python Tests/validation_test.py` for metadata/package fixtures. Use `scripts/cross_compile.py --zig PATH --sdk PATH --output TEMP_DIRECTORY` for compile/link validation.
 

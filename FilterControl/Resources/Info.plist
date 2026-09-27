@@ -17,7 +17,7 @@
 	<key>CFBundleVersion</key>
 	<string>20010</string>
 	<key>MinimumOSVersion</key>
-	<string>16.0</string>
+	<string>15.0</string>
 	<key>NSExtension</key>
 	<dict>
 		<key>NSExtensionPointIdentifier</key>
