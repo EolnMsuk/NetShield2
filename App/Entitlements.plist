@@ -14,5 +14,8 @@
 	</array>
 	<key>platform-application</key>
 	<true/>
+	<!-- Development-only NEFilterManager configuration test; not deployment authorization. -->
+	<key>get-task-allow</key>
+	<true/>
 </dict>
 </plist>

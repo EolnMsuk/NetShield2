@@ -16,7 +16,7 @@
 @implementation NSDashboard
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = @"NetShield 2 · Experimental";
+    self.title = @"NetShield 2 · Alpha 2";
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemRefresh target:self action:@selector(loadConfiguration)];
     self.tableView.rowHeight = UITableViewAutomaticDimension;
     self.tableView.estimatedRowHeight = 64;
@@ -60,7 +60,10 @@
     [self.tableView reloadData];
 }
 - (void)showError:(NSError *)error {
-    self.message = [NSString stringWithFormat:@"%@ (%@ %ld). Activation and coverage are unverified.", error.localizedDescription, error.domain, (long)error.code];
+    [self showError:error operation:@"Policy/storage"];
+}
+- (void)showError:(NSError *)error operation:(NSString *)operation {
+    self.message = [NSString stringWithFormat:@"%@: %@ (%@ %ld). Activation and coverage are unverified.", operation, error.localizedDescription, error.domain, (long)error.code];
     [self.tableView reloadData];
 }
 - (void)loadConfiguration {
@@ -70,7 +73,7 @@
         dispatch_async(dispatch_get_main_queue(), ^{
             self.busy = NO;
             self.loaded = error == nil;
-            if (error) [self showError:error];
+            if (error) [self showError:error operation:@"Load filter configuration"];
             [self reloadMonitor];
         });
     }];
@@ -83,11 +86,16 @@
     NEFilterManager *manager = [NEFilterManager sharedManager];
     [manager loadFromPreferencesWithCompletionHandler:^(NSError *loadError) {
         dispatch_async(dispatch_get_main_queue(), ^{
-            if (loadError) { self.busy = NO; [self showError:loadError]; return; }
+            if (loadError) {
+                self.busy = NO;
+                self.loaded = NO;
+                [self showError:loadError operation:@"Load before configuration change"];
+                return;
+            }
             void (^finished)(NSError *) = ^(NSError *error) {
                 dispatch_async(dispatch_get_main_queue(), ^{
                     self.busy = NO;
-                    if (error) [self showError:error];
+                    if (error) [self showError:error operation:operation == 2 ? @"Remove filter configuration" : (operation == 1 ? @"Save enabled filter" : @"Save disabled filter")];
                     else self.message = operation == 1 ? @"Enable request saved. This does not prove the providers started or that all traffic is covered. Generate new traffic and inspect reports below." : @"Disable/remove request saved. Verify network access before uninstalling.";
                     [self loadConfiguration];
                 });
