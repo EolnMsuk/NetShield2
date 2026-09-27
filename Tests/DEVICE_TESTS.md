@@ -1,3 +1,5 @@
+> For the alpha 4 owner walkthrough and result template, see [USER_GUIDE.md](USER_GUIDE.md). The owner confirms alpha 3 in-app decisions work; background notifications remain unverified. The older qualification matrix below records broader coverage still to be tested.
+
 # NetShield 2 device acceptance
 
 Status: **Alpha 2 activation and basic blocking confirmed by owner** on **iOS 16.1.1 / Dopamine 3.0.10**. Saved configuration enabled, recent control heartbeat, OS flow report timestamp observed, and default Block prevented the traffic tried. Model, OS build and supervision remain unknown. Protocol-by-protocol coverage and attribution cases below remain NOT RUN.

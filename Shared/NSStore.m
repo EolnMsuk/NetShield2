@@ -77,3 +77,38 @@ NSDictionary *NSReadMonitor(void) {
     if (d[@"notificationError"] && ![d[@"notificationError"] isKindOfClass:NSString.class]) return @{};
     return d;
 }
+
+// Called on the application's main queue by both the inbox and background actions.
+// No view creation or application foreground transition is required.
+BOOL NSAnswerPermissionRequest(NSDictionary *request, BOOL allow, NSError **error) {
+    NSPolicy *policy = NSReadPolicy(error);
+    if (!policy) return NO;
+    NSDictionary *document = NSPermissionResponseDocument(request, NSReadMonitor(), policy, NSDate.date, allow, error);
+    return document && NSWriteDocument(document, @"policy.plist", error);
+}
+NSDictionary *NSPermissionResponseDocument(NSDictionary *request, NSDictionary *monitor, NSPolicy *policy, NSDate *now, BOOL allow, NSError **error) {
+    NSDate *updated = monitor[@"updated"];
+    BOOL current = NO;
+    if ([request[@"token"] isKindOfClass:NSString.class] && [request[@"identity"] isKindOfClass:NSString.class] &&
+        [monitor[@"controlRunning"] boolValue] && updated && [updated timeIntervalSinceDate:now] <= 0 && [updated timeIntervalSinceDate:now] > -8) {
+        for (NSDictionary *candidate in monitor[@"requests"]) {
+            if ([candidate[@"token"] isEqual:request[@"token"]] && [candidate[@"identity"] isEqual:request[@"identity"]]) { current = YES; break; }
+        }
+    }
+    if (!current) {
+        if (error) *error = NSStorageError(@"This request is no longer current or the filter is unavailable. Open NetShield to review it.");
+        return nil;
+    }
+    // A duplicate/late action must not overwrite an explicit decision already saved.
+    if (![policy requiresPermissionForIdentity:request[@"identity"]]) {
+        if (error) *error = NSStorageError(@"A rule already handles this app. Review its current rule in NetShield.");
+        return nil;
+    }
+    NSMutableDictionary *document = [policy.document mutableCopy];
+    NSMutableDictionary *rules = [document[@"rules"] mutableCopy];
+    rules[request[@"identity"]] = allow ? @"allow" : @"block";
+    document[@"rules"] = rules;
+    document[@"revision"] = NSUUID.UUID.UUIDString;
+    NSPolicy *validated = [NSPolicy policyWithDocument:document error:error];
+    return validated.document;
+}

@@ -1,12 +1,14 @@
 # NetShield 2
 
-OS-level network access control for rootless iOS 16, with a Home Screen app, a Network Extension data provider and a separate control provider. Current build: **2.0.0~alpha3**.
+OS-level network access control for rootless iOS 16, with a Home Screen app, a Network Extension data provider and a separate control provider. Current build: **2.0.0~alpha4**.
 
-The owner has confirmed that alpha 2 builds, installs, enables both providers, reports OS flows, and blocks the traffic they tried when the default rule is Block on **iOS 16.1.1 / Dopamine 3.0.10**. Comprehensive protocol coverage and reliable attribution of every system flow have not been established. Alpha 3 adds the permission workflow described below; its on-device behavior has not yet been verified.
+The owner has confirmed that alpha 2 builds, installs, enables both providers, reports OS flows, and blocks the traffic they tried when the default rule is Block on **iOS 16.1.1 / Dopamine 3.0.10**. Comprehensive protocol coverage and reliable attribution of every system flow have not been established. The owner also confirms alpha 3 in-app prompts work. Alpha 4 fixes notification action handling and setup, and adds settings diagnostics, a delivery test and retries. Its background delivery still needs device validation.
 
 ## Use
 
-1. Install the alpha 3 deb and open **NetShield**.
+See [the complete installation and feature test guide](Tests/USER_GUIDE.md), including notification Settings, the five-second delivery test, and the report-back checklist. No respring or userspace reboot is required for this app/provider-only package.
+
+1. Install the alpha 4 deb and open **NetShield**.
 2. Tap **Start permission prompts**, then allow notifications when iOS asks. This selects Ask for apps without a rule, retains existing app decisions, and starts or restarts the filter through NetworkExtension. Restarting briefly disables filtering.
 3. Open another app and make a new network request. Use **Allow app** or **Block app** in the notification, or open NetShield's **Permission requests** section. Decisions are saved for future incoming and outgoing flows from that exact OS identity.
 4. If a connection has timed out before you answer, save the rule and retry the app's request. Change saved rules under **Apps and OS identities**.
@@ -21,7 +23,7 @@ There is no need to enter an app identifier manually for observed requests. NetS
 - The pending queue has a 30-second monotonic deadline, checked once a second. Unanswered flows are denied. An app can time out sooner. A late Allow saves a rule for a retry; it cannot resurrect a closed connection.
 - Multiple attempts from one identity share one prompt. An expired unresolved request remains in the inbox, and retries are immediately denied until a rule is saved. This prevents repeated notification floods from an app retrying.
 - Limits are 64 unresolved identities, 16 held flows per identity and 256 held flows in total. Overflow is denied. Stopping the control provider resolves outstanding callbacks as denied.
-- Local notifications offer **Allow app** and **Block app** actions. Actions open NetShield and require unlocking. The app validates the request token against the current provider session before saving a rule. Stale notifications cannot change policy.
+- Local notifications offer **Allow app** and **Block app** actions. Long-press the banner to show actions. Actions save the decision in the background and require unlocking; tapping the body opens NetShield. The shared response handler validates the token, identity, current heartbeat and absence of an existing decision before saving a rule. Stale notifications cannot change policy.
 - The app also presents requests while it is open. If notification permission is denied, notifications are suppressed by Focus, or iOS rejects scheduling from the control extension, the inbox remains available and the deadline still denies unanswered flows. Scheduling errors appear in Status. **Background notification delivery from this provider is not yet device-verified.**
 - Allow/Block saves an app-wide rule, rather than asking repeatedly for every packet. Unattributed flows cannot be reliably presented as a named app and therefore use their separate Allow/Block setting.
 
@@ -39,11 +41,11 @@ Upload this source tree at the root of the GitHub repository, including **all th
 
 `NetShield-2-experimental-iOS16-rootless`
 
-containing `com.eolnmsuk.netshield_2.0.0~alpha3_iphoneos-arm64.deb`.
+containing `com.eolnmsuk.netshield_2.0.0~alpha4_iphoneos-arm64.deb`.
 
 A Mac with Theos and the 16.5 SDK can run `make package FINALPACKAGE=1`. Apps/extensions are arm64 and also run on arm64e devices. No socket-hook or SpringBoard injection library is built.
 
-Local validation now uses portable Zig/Clang with the pinned iOS SDK. All eight production/test source files compile with warnings treated as errors, and the app plus both providers link successfully as arm64 iOS executables. See [the compiler validation record](Tests/BUILD_VALIDATION.md). The local cross-compiler does not execute iOS binaries or Foundation tests; GitHub runs the tests and builds the signed Theos package. Runtime notification delivery, flow waiting behavior and OS bypasses still require device validation.
+Local validation now uses portable Zig/Clang with the pinned iOS SDK. All nine production/test source files compile with warnings treated as errors, and the app plus both providers link successfully as arm64 iOS executables. See [the compiler validation record](Tests/BUILD_VALIDATION.md). The local cross-compiler does not execute iOS binaries or Foundation tests; GitHub runs the tests and builds the signed Theos package. Runtime notification delivery, flow waiting behavior and OS bypasses still require device validation.
 
 ## Deployment and removal
 
@@ -63,7 +65,7 @@ Use **Remove filter configuration** before uninstalling. The package removal scr
 | scripts | Metadata, package and signed-entitlement validation |
 | layout/DEBIAN | Rootless registration and removal scripts |
 
-Local checks: `python scripts/validate.py` and `python Tests/validation_test.py`. CI additionally runs `Tests/policy_test.m` and `Tests/permission_test.m`. Queue tests cover coalescing, per-direction decisions, exactly-once completion, timeout, late consent, invalid policy, queue limits and shutdown cancellation.
+Local checks: `python scripts/validate.py` and `python Tests/validation_test.py`. CI additionally runs `Tests/policy_test.m`, `Tests/permission_test.m` and `Tests/response_test.m`. Queue tests cover coalescing, per-direction decisions, exactly-once completion, timeout, late consent, invalid policy, queue limits and shutdown cancellation.
 
 ## References
 

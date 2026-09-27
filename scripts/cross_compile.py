@@ -31,7 +31,7 @@ targets = [
      ['Foundation', 'NetworkExtension', 'UserNotifications'], True),
 ]
 sources = sorted({source for _, files, _, _ in targets for source in files})
-sources += ['Tests/policy_test.m', 'Tests/permission_test.m']
+sources += ['Tests/policy_test.m', 'Tests/permission_test.m', 'Tests/response_test.m']
 base = [str(zig), 'cc', '-target', 'aarch64-ios.16.0', '-isysroot', str(sdk)]
 compile_flags = ['-fobjc-arc', '-fobjc-runtime=ios-16.0', '-fblocks',
                  '-iframework', str(sdk / 'System/Library/Frameworks'),
@@ -76,4 +76,4 @@ if all(result['exit'] == 0 for result in results):
 (output / 'validation.json').write_text(json.dumps(results, indent=2), encoding='utf-8')
 if any(result['exit'] for result in results):
     raise SystemExit(1)
-print('8 source compiles and 3 links passed. Tests were compiled, not executed. Use Theos for deployment.')
+print('9 source compiles and 3 links passed. Tests were compiled, not executed. Use Theos for deployment.')

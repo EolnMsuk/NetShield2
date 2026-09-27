@@ -2,6 +2,8 @@
 set -eu
 case "${1:-}" in
     configure)
+        # App and NE providers only: no injected SpringBoard code to respring.
+        printf '%s\n' 'NetShield alpha 4: open the app and Start permission prompts to restart providers. No respring required.'
         /var/jb/usr/bin/uicache -p /var/jb/Applications/NetShield.app
         printf '%s\n' 'NetShield 2 is experimental. Open the app; verify provider deployment before relying on filtering.'
         printf '%s\n' 'When upgrading v1, reboot and re-jailbreak to unload old socket hooks from running processes.'

@@ -12,11 +12,12 @@
 @property(nonatomic) BOOL stopped;
 @property(nonatomic, strong) NSPermissionQueue *permissions;
 @property(nonatomic, copy) NSString *notificationError;
+@property(nonatomic, copy) NSString *notificationRetry;
 @end
 
 @implementation NSFilterControlProvider
 - (NSDictionary *)snapshotWithRunning:(BOOL)running policyError:(NSError *)error {
-    return @{@"schema": @2, @"controlRunning": @(running), @"session": self.session ?: @"",
+    return @{@"engine": @20004, @"schema": @2, @"controlRunning": @(running), @"session": self.session ?: @"",
              @"updated": NSDate.date, @"lastReport": self.lastReport ?: [NSDate dateWithTimeIntervalSince1970:0],
              @"revision": self.revision ?: @"", @"policyError": error.localizedDescription ?: @"",
              @"events": [self.events copy] ?: @[], @"requests": self.permissions.requests ?: @[],
@@ -37,6 +38,11 @@
         if (removed.count) {
             [UNUserNotificationCenter.currentNotificationCenter removePendingNotificationRequestsWithIdentifiers:removed];
             [UNUserNotificationCenter.currentNotificationCenter removeDeliveredNotificationsWithIdentifiers:removed];
+        }
+        NSString *retry = NSReadDocument(@"notification-retry.plist", NULL)[@"revision"];
+        if ([retry isKindOfClass:NSString.class] && ![retry isEqual:self.notificationRetry]) {
+            self.notificationRetry = retry;
+            for (NSDictionary *request in self.permissions.requests) [self sendNotification:request];
         }
         NSString *revision = policy.document[@"revision"];
         if (![self.revision isEqual:revision]) {
@@ -129,23 +135,29 @@
             }];
         [self refresh];
         if (!request) return; // Already queued, timed out, or over capacity.
-        UNMutableNotificationContent *content = [UNMutableNotificationContent new];
-        content.title = @"Network access requested";
-        content.body = [NSString stringWithFormat:@"%@ wants to connect. Allow or block this app in NetShield. Unanswered connections are blocked after 30 seconds.", identity];
-        content.categoryIdentifier = NSPermissionCategory;
-        content.sound = UNNotificationSound.defaultSound;
-        content.userInfo = @{@"token": request[@"token"], @"identity": identity};
-        UNNotificationRequest *notification = [UNNotificationRequest requestWithIdentifier:request[@"token"] content:content trigger:nil];
-        [UNUserNotificationCenter.currentNotificationCenter addNotificationRequest:notification withCompletionHandler:^(NSError *error) {
-            NSFilterControlProvider *owner = weakSelf;
-            if (!owner) return;
-            @synchronized(owner) {
-                if (!owner.stopped) owner.notificationError = error ?
-                    [NSString stringWithFormat:@"Notifications unavailable (%@ %ld). Open NetShield to answer requests.", error.domain, (long)error.code] : @"";
-            }
-        }];
+        [self sendNotification:request];
     }
 }
+- (void)sendNotification:(NSDictionary *)request {
+    NSString *identity = request[@"identity"];
+    __weak typeof(self) weakSelf = self;
+    UNMutableNotificationContent *content = [UNMutableNotificationContent new];
+    content.title = @"Network access requested";
+    content.body = [NSString stringWithFormat:@"%@ wants to connect. Long-press this banner for Allow app or Keep blocking. Unanswered connections are blocked after 30 seconds.", identity];
+    content.categoryIdentifier = NSPermissionCategory;
+    content.sound = UNNotificationSound.defaultSound;
+    content.userInfo = @{@"token": request[@"token"], @"identity": identity};
+    UNNotificationRequest *notification = [UNNotificationRequest requestWithIdentifier:request[@"token"] content:content trigger:nil];
+    [UNUserNotificationCenter.currentNotificationCenter addNotificationRequest:notification withCompletionHandler:^(NSError *error) {
+        NSFilterControlProvider *owner = weakSelf;
+        if (!owner) return;
+        @synchronized(owner) {
+            if (!owner.stopped) owner.notificationError = error ?
+                [NSString stringWithFormat:@"Notifications unavailable (%@ %ld). Open NetShield to answer requests.", error.domain, (long)error.code] : @"Provider notification accepted by iOS. Banner display is not confirmed.";
+        }
+    }];
+}
+
 - (void)stopFilterWithReason:(NEProviderStopReason)reason completionHandler:(void (^)(void))completionHandler {
     @synchronized(self) {
         self.stopped = YES;

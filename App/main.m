@@ -36,10 +36,11 @@
         if (NSWriteDocument([NSPolicy defaultDocument], @"policy.plist", &error)) self.policy = NSReadPolicy(&error);
     }
     self.message = self.policy ? @"Choose Ask for apps without a rule to receive permission requests." : error.localizedDescription;
+    [self refreshNotificationSettings];
     [self loadConfiguration];
 }
 - (void)configurationChanged:(NSNotification *)notification {
-    dispatch_async(dispatch_get_main_queue(), ^{ [self loadConfiguration]; });
+    dispatch_async(dispatch_get_main_queue(), ^{ [self refreshNotificationSettings]; NSWriteDocument(@{@"revision": NSUUID.UUID.UUIDString}, @"notification-retry.plist", NULL); [self loadConfiguration]; });
 }
 - (void)dealloc {
     [NSNotificationCenter.defaultCenter removeObserver:self];
@@ -81,33 +82,59 @@
     NSTimeInterval age = [updated isKindOfClass:NSDate.class] ? -updated.timeIntervalSinceNow : DBL_MAX;
     return age >= 0 && age < 8 && [self.monitor[@"controlRunning"] boolValue];
 }
-- (void)requestNotifications {
+- (void)refreshNotificationSettings {
+    [UNUserNotificationCenter.currentNotificationCenter getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings *settings) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self.notificationStatus = [NSString stringWithFormat:@"Authorization: %@; alerts: %@. Tap for settings. Long-press banners for Allow / Keep blocking.",
+                settings.authorizationStatus == UNAuthorizationStatusAuthorized ? @"allowed" :
+                settings.authorizationStatus == UNAuthorizationStatusDenied ? @"denied" :
+                settings.authorizationStatus == UNAuthorizationStatusNotDetermined ? @"not requested" : @"quiet/provisional",
+                settings.alertSetting == UNNotificationSettingEnabled ? @"on" : @"off"];
+            [self.tableView reloadData];
+        });
+    }];
+}
+- (void)authorizeNotificationsThen:(void (^)(void))completion {
     NSRegisterPermissionActions();
     [UNUserNotificationCenter.currentNotificationCenter requestAuthorizationWithOptions:UNAuthorizationOptionAlert | UNAuthorizationOptionSound completionHandler:^(BOOL granted, NSError *error) {
         dispatch_async(dispatch_get_main_queue(), ^{
-            self.notificationStatus = granted ? @"Notifications allowed" : @"Notifications off — answer requests in NetShield";
-            if (error) self.notificationStatus = error.localizedDescription;
+            [self refreshNotificationSettings];
+            if (error) [self showError:error operation:@"Notification authorization"];
+            else if (!granted) self.message = @"Notifications are off. Enable Allow Notifications and Banners in notification settings.";
+            // Re-attempt existing requests after a permission change, without restarting the filter.
+            NSWriteDocument(@{@"revision": NSUUID.UUID.UUIDString}, @"notification-retry.plist", NULL);
+            if (completion) completion();
+        });
+    }];
+}
+- (void)requestNotifications {
+    [UNUserNotificationCenter.currentNotificationCenter getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings *settings) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (settings.authorizationStatus == UNAuthorizationStatusNotDetermined) [self authorizeNotificationsThen:nil];
+            else [UIApplication.sharedApplication openURL:[NSURL URLWithString:UIApplicationOpenNotificationSettingsURLString] options:@{} completionHandler:nil];
+        });
+    }];
+}
+- (void)testNotification {
+    UNMutableNotificationContent *content = [UNMutableNotificationContent new];
+    content.title = @"NetShield notification test";
+    content.body = @"App notification delivery works. Real permission banners have Allow app / Keep blocking when long-pressed. This test changes no rules.";
+    content.sound = UNNotificationSound.defaultSound;
+    UNNotificationRequest *request = [UNNotificationRequest requestWithIdentifier:@"netshield-test" content:content
+        trigger:[UNTimeIntervalNotificationTrigger triggerWithTimeInterval:5 repeats:NO]];
+    [UNUserNotificationCenter.currentNotificationCenter addNotificationRequest:request withCompletionHandler:^(NSError *error) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (error) [self showError:error operation:@"Test notification"];
+            else self.message = @"Test scheduled: switch to another app within 5 seconds. Scheduling success does not prove a banner was displayed.";
             [self.tableView reloadData];
         });
     }];
 }
 - (void)answerRequest:(NSDictionary *)request allow:(BOOL)allow {
-    // Validate against the current provider session, not a possibly stale notification.
-    NSDictionary *monitor = NSReadMonitor();
-    BOOL current = NO;
-    for (NSDictionary *candidate in monitor[@"requests"]) {
-        if ([candidate[@"token"] isEqual:request[@"token"]] && [candidate[@"identity"] isEqual:request[@"identity"]]) { current = YES; break; }
-    }
-    if (!current) { self.message = @"This request is no longer pending. New requests appear below."; [self reloadMonitor]; return; }
     NSError *error = nil;
-    NSPolicy *policy = NSReadPolicy(&error);
-    if (!policy) { [self showError:error]; return; }
-    NSMutableDictionary *document = [policy.document mutableCopy];
-    NSMutableDictionary *rules = [document[@"rules"] mutableCopy];
-    rules[request[@"identity"]] = allow ? @"allow" : @"block";
-    document[@"rules"] = rules;
-    [self.deferredRequests addObject:request[@"token"]];
-    [self savePolicy:document];
+    if (!NSAnswerPermissionRequest(request, allow, &error)) [self showError:error];
+    else self.message = @"Rule saved. Retry the requesting app if its connection timed out.";
+    [self reloadMonitor];
 }
 - (void)presentRequest:(NSDictionary *)request {
     if (self.presentedViewController) return;
@@ -167,7 +194,7 @@
                     configuration.filterSockets = YES;
                     configuration.filterBrowsers = YES;
                     configuration.organization = @"NetShield";
-                    configuration.vendorConfiguration = @{@"schema": @2, @"engine": @20003};
+                    configuration.vendorConfiguration = @{@"schema": @2, @"engine": @20004};
                     manager.providerConfiguration = configuration;
                     manager.localizedDescription = @"NetShield network access control";
                 }
@@ -256,15 +283,14 @@
     document[@"revision"] = NSUUID.UUID.UUIDString;
     if (!NSWriteDocument(document, @"policy.plist", &error)) { [self showError:error]; return; }
     self.policy = [NSPolicy policyWithDocument:document error:NULL];
-    [self requestNotifications];
-    [self changeConfiguration:1];
+    [self authorizeNotificationsThen:^{ [self changeConfiguration:1]; }];
 }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { return 6; }
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     if (section == 0) return 1;
     if (section == 1) return 4;
     if (section == 2) return MAX((NSUInteger)1, [self.monitor[@"requests"] count]);
-    if (section == 3) return 5;
+    if (section == 3) return 7;
     if (section == 4) return MAX((NSUInteger)1, self.identities.count);
     return MAX((NSUInteger)1, [self.monitor[@"events"] count]);
 }
@@ -294,7 +320,7 @@
         cell.textLabel.text = state;
         cell.textLabel.textColor = [state isEqual:@"Filtering active"] ? UIColor.systemGreenColor : UIColor.labelColor;
         NSString *time = observed ? [NSDateFormatter localizedStringFromDate:last dateStyle:NSDateFormatterShortStyle timeStyle:NSDateFormatterMediumStyle] : @"None yet";
-        cell.detailTextLabel.text = [NSString stringWithFormat:@"Last OS activity: %@\n%@\n%@\n%@", time,
+        cell.detailTextLabel.text = [NSString stringWithFormat:@"Last OS activity: %@\nControl build: %@ (expected 20004)\n%@\n%@\n%@", time, self.monitor[@"engine"] ?: @"older version",
             [self.message isEqual:@"Filter enabled. Waiting for provider activity."] && fresh && observed ? @"Rules are being applied to new connections." : (self.message ?: @""),
             self.monitor[@"policyError"] ?: @"", self.monitor[@"notificationError"] ?: @""];
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
@@ -312,7 +338,7 @@
             cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         }
     } else if (path.section == 3) {
-        cell.textLabel.text = @[@"Apps without a rule", @"Unattributed flows", @"Notification permission", @"Add exact app identity...", @"Reset rules..."][path.row];
+        cell.textLabel.text = @[@"Apps without a rule", @"Unattributed flows", @"Notification permission", @"Add exact app identity...", @"Reset rules...", @"Test notification (5 seconds)", @"Retry pending notifications"][path.row];
         if (path.row < 2) cell.detailTextLabel.text = self.policy.document[path.row ? @"unattributed" : @"default"] ?: @"Policy unavailable";
         if (path.row == 2) cell.detailTextLabel.text = self.notificationStatus ?: @"Tap to enable permission notifications";
     } else if (path.section == 4) {
@@ -350,6 +376,8 @@
         if (path.row < 2) [self chooseActionForIdentity:nil defaultKey:path.row ? @"unattributed" : @"default"];
         else if (path.row == 2) [self requestNotifications];
         else if (path.row == 3) [self addIdentity];
+        else if (path.row == 5) [self testNotification];
+        else if (path.row == 6) { NSWriteDocument(@{@"revision": NSUUID.UUID.UUIDString}, @"notification-retry.plist", NULL); self.message = @"Requested notification retry. Check Status for provider results."; [self reloadMonitor]; }
         else {
             UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Reset all rules?" message:@"Removes saved app decisions, asks for unknown apps and allows unattributed traffic. Does not enable or disable the filter." preferredStyle:UIAlertControllerStyleAlert];
             [alert addAction:[UIAlertAction actionWithTitle:@"Reset" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) { [self savePolicy:[[NSPolicy defaultDocument] mutableCopy]]; }]];
@@ -368,16 +396,23 @@
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)options {
     NSRegisterPermissionActions();
     UNUserNotificationCenter.currentNotificationCenter.delegate = self;
+    if (application.applicationState != UIApplicationStateBackground) [self createInterface];
+    return YES;
+}
+- (void)createInterface {
+    if (self.window) return;
     self.window = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
     self.dashboard = [[NSDashboard alloc] initWithStyle:UITableViewStyleInsetGrouped];
     self.window.rootViewController = [[UINavigationController alloc] initWithRootViewController:self.dashboard];
     [self.window makeKeyAndVisible];
-    return YES;
+}
+- (void)applicationDidBecomeActive:(UIApplication *)application {
+    [self createInterface];
 }
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center willPresentNotification:(UNNotification *)notification
         withCompletionHandler:(void (^)(UNNotificationPresentationOptions))completionHandler {
-    // Foreground requests already have a modal and an inbox; avoid duplicate banners.
-    dispatch_async(dispatch_get_main_queue(), ^{ [self.dashboard reloadMonitor]; completionHandler(UNNotificationPresentationOptionNone); });
+    // The foreground inbox handles requests; the delivery test should still be visible.
+    dispatch_async(dispatch_get_main_queue(), ^{ [self.dashboard reloadMonitor]; completionHandler([notification.request.identifier isEqual:@"netshield-test"] ? UNNotificationPresentationOptionBanner | UNNotificationPresentationOptionSound : UNNotificationPresentationOptionNone); });
 }
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center didReceiveNotificationResponse:(UNNotificationResponse *)response
         withCompletionHandler:(void (^)(void))completionHandler {
@@ -385,10 +420,16 @@
         NSDictionary *request = response.notification.request.content.userInfo;
         if ([response.notification.request.content.categoryIdentifier isEqual:NSPermissionCategory] &&
             [request[@"token"] isKindOfClass:NSString.class] && [request[@"identity"] isKindOfClass:NSString.class]) {
-            // Force view initialization before handling a cold-start action.
-            [self.dashboard loadViewIfNeeded];
             if ([response.actionIdentifier isEqual:NSAllowAction] || [response.actionIdentifier isEqual:NSBlockAction]) {
-                [self.dashboard answerRequest:request allow:[response.actionIdentifier isEqual:NSAllowAction]];
+                NSError *error = nil;
+                BOOL saved = NSAnswerPermissionRequest(request, [response.actionIdentifier isEqual:NSAllowAction], &error);
+                if (!saved) {
+                    UNMutableNotificationContent *failure = [UNMutableNotificationContent new];
+                    failure.title = @"NetShield decision not saved";
+                    failure.body = error.localizedDescription ?: @"Open NetShield to review the request.";
+                    [center addNotificationRequest:[UNNotificationRequest requestWithIdentifier:@"netshield-action-error" content:failure trigger:nil] withCompletionHandler:nil];
+                }
+                if (UIApplication.sharedApplication.applicationState == UIApplicationStateActive) [self.dashboard reloadMonitor];
             } else [self.dashboard reloadMonitor];
         }
         completionHandler();
