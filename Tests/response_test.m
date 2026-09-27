@@ -30,7 +30,13 @@ int main(void) {
         check(!NSPermissionResponseDocument(request, monitor, decided, now, YES, NULL), @"Late action cannot override explicit decision");
         monitor[@"requests"] = @[];
         check(!NSPermissionResponseDocument(request, monitor, policy, now, YES, NULL), @"Reject removed request");
-        NSLog(@"Passed 11 notification-response checks");
+        NSDictionary *appleRequest = @{@"token": @"apple-token", @"identity": @"com.apple.test"};
+        monitor[@"requests"] = @[appleRequest];
+        NSMutableDictionary *appleDocument = [[NSPolicy defaultDocument] mutableCopy];
+        appleDocument[@"allowAppleSystemProcesses"] = @YES;
+        NSPolicy *applePolicy = [NSPolicy policyWithDocument:appleDocument error:NULL];
+        check(!NSPermissionResponseDocument(appleRequest, monitor, applePolicy, now, NO, NULL), @"Stale notification cannot save a block while Apple allowance is on");
+        NSLog(@"Passed 12 notification-response checks");
     }
     return 0;
 }

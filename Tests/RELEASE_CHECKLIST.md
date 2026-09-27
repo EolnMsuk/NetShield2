@@ -13,3 +13,8 @@ The owner confirmed that permission notifications and background decisions work 
 9. Before removal, Prepare for uninstall should remove the system filter and show a success message. Then uninstall in Sileo.
 
 Report any failed step and the copied diagnostics. The Mail/Sileo first-install icon may remain generic until the package's local icon exists; a hosted repository icon is needed to avoid that dependency.
+
+9. Confirm the section order is Firewall, Waiting for your decision, Notifications, Advanced & support, App rules, Recent activity. Test each relocated rule and notification row.
+10. Enable Allow all iOS system processes with an existing blocked `com.apple.` identity. Retry a new connection; it should be allowed with no prompt. Disable the switch and confirm the saved block applies again. Repeat for `.com.apple.` and a pending Apple request; third-party and unidentified policies must remain unchanged.
+11. Open all three links at the end of Advanced & support. Verify GitHub, Venmo and the specified Bitcoin address.
+12. Publish `depiction.json` and `App/Resources/banner.png` to the default branch of https://github.com/EolnMsuk/NetShield2/ before releasing the deb. Preserve the control file's SileoDepiction and Depiction fields in the repository Packages index. Confirm Sileo displays the header image before installation and afterward; other clients use the README fallback if supported. Local deb viewers may not render remote depictions.

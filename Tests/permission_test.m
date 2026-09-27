@@ -71,6 +71,18 @@ int main(void) {
         check(q.waitingCount == 256 && callbacks == 16, "global waiter cap enforced");
         [q cancelAll];
         check(callbacks == 272 && allowed == 0, "all retained completions released on stop");
+        callbacks = allowed = 0;
+        NSMutableDictionary *appleDocument = [[NSPolicy defaultDocument] mutableCopy];
+        appleDocument[@"allowAppleSystemProcesses"] = @YES;
+        NSPolicy *applePolicy = [NSPolicy policyWithDocument:appleDocument error:NULL];
+        [q enqueueIdentity:@"com.apple.test" direction:NSFlowDirectionOutbound now:700 date:date completion:done];
+        [q resolveWithPolicy:applePolicy now:701];
+        check(callbacks == 1 && allowed == 1 && q.requests.count == 0, "enabling switch resolves pending Apple request");
+        [q resolveWithPolicy:applePolicy now:702];
+        check(callbacks == 1, "switch resolves each pending flow exactly once");
+        [q enqueueIdentity:@".com.apple.test" direction:NSFlowDirectionOutbound now:800 date:date completion:done];
+        [q resolveWithPolicy:applePolicy now:830];
+        check(callbacks == 2 && allowed == 1 && q.requests.count == 0, "late switch clears request without admitting timed-out flow");
         printf("Passed %u permission queue checks\n", checks);
     }
     return 0;

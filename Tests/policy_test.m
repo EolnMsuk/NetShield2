@@ -43,6 +43,40 @@ int main(void) {
         rules[@"TEAM.app"] = @"block";
         check([policy allowsIdentity:@"TEAM.app" direction:NSFlowDirectionOutbound], "snapshot cannot be mutated externally");
         check(![parse(d) allowsIdentity:@"TEAM.app" direction:NSFlowDirectionOutbound], "new snapshot sees edit");
+        // Optional switch preserves old documents and overrides without deleting rules.
+        NSMutableDictionary *apple = [[NSPolicy defaultDocument] mutableCopy];
+        check(![parse(apple) automaticallyAllowsIdentity:@"com.apple.test"], "switch defaults off");
+        [apple removeObjectForKey:@"allowAppleSystemProcesses"];
+        check([parse(apple) requiresPermissionForIdentity:@"com.apple.test"], "legacy policy keeps asking");
+        apple[@"allowAppleSystemProcesses"] = @YES;
+        apple[@"rules"] = @{@"com.apple.test": @"block", @".com.apple.test": @"block-outbound"};
+        NSPolicy *applePolicy = parse(apple);
+        for (NSString *identity in @[@"com.apple.test", @".com.apple.test", @"com.apple.new"]) {
+            check(![applePolicy requiresPermissionForIdentity:identity], "Apple allowance bypasses prompt");
+            for (NSNumber *direction in @[@0, @1, @2])
+                check([applePolicy allowsIdentity:identity direction:direction.integerValue], "Apple allowance overrides all directions");
+        }
+        for (NSString *identity in @[@"com.appleevil.test", @"com.apple", @"TEAM.com.apple.test", @"other.com.apple.test", @"COM.APPLE.test", @""]) {
+            check(![applePolicy automaticallyAllowsIdentity:identity], "only exact leading namespaces match");
+        }
+        check(![applePolicy automaticallyAllowsIdentity:nil], "nil is not auto-allowed");
+        check([applePolicy requiresPermissionForIdentity:@"third.party"], "other apps still ask");
+        apple[@"default"] = @"block";
+        apple[@"unattributed"] = @"block";
+        applePolicy = parse(apple);
+        check([applePolicy allowsIdentity:@"com.apple.new" direction:NSFlowDirectionOutbound], "allowance overrides default block");
+        check(![applePolicy allowsIdentity:@"third.party" direction:NSFlowDirectionOutbound], "other apps still block");
+        check(![applePolicy allowsIdentity:nil direction:NSFlowDirectionOutbound], "unidentified policy is preserved");
+        apple[@"allowAppleSystemProcesses"] = @NO;
+        applePolicy = parse(apple);
+        check(![applePolicy allowsIdentity:@"com.apple.test" direction:NSFlowDirectionOutbound], "saved block restored when disabled");
+        check(![applePolicy allowsIdentity:@".com.apple.test" direction:NSFlowDirectionOutbound], "saved directional block restored");
+        check([applePolicy allowsIdentity:@".com.apple.test" direction:NSFlowDirectionInbound], "saved directional allow restored");
+        check([applePolicy.document[@"rules"] isEqual:apple[@"rules"]], "original rules remain intact");
+        for (id invalid in @[@"yes", @1, @[], NSNull.null]) {
+            apple[@"allowAppleSystemProcesses"] = invalid;
+            check([NSPolicy policyWithDocument:apple error:NULL] == nil, "malformed allowance rejected");
+        }
         for (id bad in @[@[], @"x", @{}, @{@"schema": @1}, @{@"schema": @YES}]) {
             NSError *error = nil;
             check([NSPolicy policyWithDocument:bad error:&error] == nil && error != nil, "malformed root rejected");

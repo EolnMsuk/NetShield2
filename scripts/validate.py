@@ -1,5 +1,6 @@
 """Validate source metadata or the staged deb tree; does not emulate iOS."""
 import argparse
+import json
 import pathlib
 import plistlib
 import re
@@ -25,6 +26,14 @@ require(metadata['Architecture'] == 'iphoneos-arm64', 'Wrong rootless architectu
 require(metadata.get('Icon') == 'file:///var/jb/Applications/NetShield.app/Icon.png', 'Missing package icon')
 require((ROOT / 'App/Resources/Icon.png').read_bytes().startswith(b'\x89PNG\r\n\x1a\n'), 'Invalid app icon')
 require('mobilesubstrate' not in metadata['Depends'], 'v1 injection dependency remains')
+
+depiction = json.loads((ROOT / 'depiction.json').read_text())
+require(metadata.get('SileoDepiction') == 'https://raw.githubusercontent.com/EolnMsuk/NetShield2/HEAD/depiction.json', 'Missing Sileo depiction')
+require(metadata.get('Depiction') == 'https://github.com/EolnMsuk/NetShield2/#readme', 'Missing web depiction fallback')
+require(depiction.get('class') == 'DepictionTabView' and depiction.get('minVersion') == '0.4', 'Invalid native depiction root')
+require(depiction.get('headerImage') == 'https://raw.githubusercontent.com/EolnMsuk/NetShield2/HEAD/App/Resources/banner.png', 'Wrong depiction banner')
+require((ROOT / 'App/Resources/banner.png').read_bytes().startswith(b'\x89PNG\r\n\x1a\n'), 'Invalid package banner')
+
 
 bundles = [
     ('App', 'NetShield', '', None, None),

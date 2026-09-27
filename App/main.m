@@ -66,7 +66,15 @@
 - (void)reloadMonitor {
     NSPolicy *latest = NSReadPolicy(NULL);
     if (latest) self.policy = latest;
-    self.monitor = NSReadMonitor();
+    NSMutableDictionary *monitor = [NSReadMonitor() mutableCopy];
+    // The provider clears resolved requests on its next tick. Hide overridden
+    // Apple requests immediately so saving the switch cannot reopen a stale prompt.
+    NSMutableArray *requests = [NSMutableArray new];
+    for (NSDictionary *request in monitor[@"requests"]) {
+        if (![self.policy automaticallyAllowsIdentity:request[@"identity"]]) [requests addObject:request];
+    }
+    monitor[@"requests"] = requests;
+    self.monitor = monitor;
     NSMutableSet *identities = [NSMutableSet setWithArray:[self.policy.document[@"rules"] allKeys] ?: @[]];
     for (NSDictionary *event in self.monitor[@"events"]) {
         NSString *identity = event[@"identity"];
@@ -353,6 +361,13 @@
     [self.tableView reloadData];
     [self authorizeNotificationsThen:^{ self.busy = NO; [self changeConfiguration:1]; }];
 }
+- (void)appleSystemProcessesChanged:(UISwitch *)sender {
+    if (!self.policy || self.busy) return;
+    NSMutableDictionary *document = [self.policy.document mutableCopy];
+    document[@"allowAppleSystemProcesses"] = @(sender.on);
+    [self savePolicy:document];
+    [self.tableView reloadData];
+}
 - (void)showNotificationHelp {
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Answer without leaving your app" message:@"Touch and hold a NetShield notification, then choose Allow app or Keep blocking. Tapping the notification body opens NetShield.\n\nUsing Do Not Disturb? In Settings > Focus > Do Not Disturb > Apps, allow notifications from NetShield. Do the same for any other Focus you use.\n\nUnanswered requests are blocked after 30 seconds. You can allow them later and retry the connection." preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleCancel handler:nil]];
@@ -360,21 +375,21 @@
 }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { return 6; }
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    if (section == 0) return 3;
+    if (section == 0) return 4;
     if (section == 1) return MAX((NSUInteger)1, [self.monitor[@"requests"] count]);
-    if (section == 2) return MAX((NSUInteger)1, self.identities.count);
-    if (section == 3) return 2;
-    if (section == 4) return 5;
+    if (section == 4) return MAX((NSUInteger)1, self.identities.count);
+    if (section == 2) return 2;
+    if (section == 3) return 8;
     return MAX((NSUInteger)1, MIN((NSUInteger)20, [self.monitor[@"events"] count]));
 }
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
-    return @[@"Firewall", @"Waiting for your decision", @"App rules", @"Notifications", @"Advanced & support", @"Recent activity"][section];
+    return @[@"Firewall", @"Waiting for your decision", @"Notifications", @"Advanced & support", @"App rules", @"Recent activity"][section];
 }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     if (section == 0) return @"Your rules are kept when you turn the firewall off. Ask me prompts only for apps without a saved rule.";
     if (section == 1) return @"Unanswered requests are blocked after 30 seconds. Allow an app here, then retry if its connection timed out.";
-    if (section == 2) return @"Tap an app identity to change its rule. Changes affect new connections; close and reopen the app to end existing connections.";
-    if (section == 3) return @"Do Not Disturb silences banners unless you allow NetShield in Settings > Focus > Do Not Disturb > Apps.";
+    if (section == 4) return @"Tap an app identity to change its rule. Changes affect new connections; close and reopen the app to end existing connections.";
+    if (section == 2) return @"Do Not Disturb silences banners unless you allow NetShield in Settings > Focus > Do Not Disturb > Apps.";
     if (section == 5) return @"Latest 20 of up to 300 recorded events. Data totals arrive when a connection closes; permission decisions show no data totals.";
     return @"NetShield 2.0.0 / iOS 16 rootless. Filters connections provided by iOS; system-exempt traffic is not guaranteed covered.";
 }
@@ -404,6 +419,16 @@
         cell.detailTextLabel.text = [self.message length] ? [NSString stringWithFormat:@"%@\n%@", detail, self.message] : detail;
         cell.accessoryType = UITableViewCellAccessoryNone;
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
+    } else if (path.section == 0 && path.row == 3) {
+        cell.textLabel.text = @"Allow all iOS system processes";
+        cell.detailTextLabel.text = @"Allow identities starting with com.apple. or .com.apple. Saved rules are ignored until this is off.";
+        UISwitch *toggle = [UISwitch new];
+        toggle.on = [self.policy.document[@"allowAppleSystemProcesses"] boolValue];
+        toggle.enabled = self.policy != nil && !self.busy;
+        toggle.accessibilityLabel = cell.textLabel.text;
+        [toggle addTarget:self action:@selector(appleSystemProcessesChanged:) forControlEvents:UIControlEventValueChanged];
+        cell.accessoryView = toggle;
+        cell.selectionStyle = UITableViewCellSelectionStyleNone;
     } else if (path.section == 0) {
         cell.textLabel.text = @"New apps";
         cell.detailTextLabel.text = [self ruleTitle:self.policy.document[@"default"]];
@@ -415,10 +440,10 @@
             cell.textLabel.text = request[@"identity"];
             cell.detailTextLabel.text = [request[@"expired"] boolValue] ? @"Blocked while waiting. Tap to decide." : @"Tap to allow or keep blocking";
         }
-    } else if (path.section == 2) {
+    } else if (path.section == 4) {
         if (!self.identities.count) { cell.textLabel.text = @"Apps appear here when they connect"; cell.accessoryType = UITableViewCellAccessoryNone; }
-        else { NSString *identity = self.identities[path.row]; cell.textLabel.text = identity; cell.detailTextLabel.text = [self ruleTitle:self.policy.document[@"rules"][identity]]; }
-    } else if (path.section == 3) {
+        else { NSString *identity = self.identities[path.row]; cell.textLabel.text = identity; cell.detailTextLabel.text = [self.policy automaticallyAllowsIdentity:identity] ? [NSString stringWithFormat:@"Allowed by iOS system processes setting. Saved rule: %@", [self ruleTitle:self.policy.document[@"rules"][identity]]] : [self ruleTitle:self.policy.document[@"rules"][identity]]; }
+    } else if (path.section == 2) {
         cell.textLabel.text = path.row == 0 ? @"Notification settings" : @"Banners & Do Not Disturb";
         cell.detailTextLabel.text = path.row == 0 ? self.notificationStatus : @"How to answer while using another app";
     } else if (path.section == 5) {
@@ -434,9 +459,9 @@
             cell.detailTextLabel.text = [NSString stringWithFormat:@"%@ / %@\nReceived %@ B / Sent %@ B", time, event[@"direction"], event[@"bytesIn"], event[@"bytesOut"]];
         }
     } else {
-        cell.textLabel.text = @[@"Unidentified connections", @"Add a rule by app identity", @"Copy notification diagnostics", @"Reset NetShield...", @"Prepare for uninstall..."][path.row];
-        cell.detailTextLabel.text = @[[self ruleTitle:self.policy.document[@"unattributed"]], @"For an exact identity supplied by iOS", @"Copy technical details for support", @"Clear rules and history; leave the firewall off", @"Remove the system filter before deleting NetShield"][path.row];
-        if (path.row >= 3) cell.textLabel.textColor = UIColor.systemRedColor;
+        cell.textLabel.text = @[@"Unidentified connections", @"Add a rule by app identity", @"Copy notification diagnostics", @"Reset NetShield...", @"Prepare for uninstall...", @"GitHub Link", @"Support the Dev - Venmo", @"Support the Dev - BTC"][path.row];
+        cell.detailTextLabel.text = @[[self ruleTitle:self.policy.document[@"unattributed"]], @"For an exact identity supplied by iOS", @"Copy technical details for support", @"Clear rules and history; leave the firewall off", @"Remove the system filter before deleting NetShield", @"Source code, releases and issues", @"Donate with Venmo", @"View the Bitcoin donation address"][path.row];
+        if (path.row == 3 || path.row == 4) cell.textLabel.textColor = UIColor.systemRedColor;
     }
     return cell;
 }
@@ -445,13 +470,16 @@
     if (self.busy) return;
     if (path.section == 0 && path.row == 2) [self chooseActionForIdentity:nil defaultKey:@"default"];
     else if (path.section == 1 && [self.monitor[@"requests"] count]) [self presentRequest:self.monitor[@"requests"][path.row]];
-    else if (path.section == 2 && self.identities.count) [self chooseActionForIdentity:self.identities[path.row] defaultKey:nil];
-    else if (path.section == 3) { if (path.row == 0) [self requestNotifications]; else [self showNotificationHelp]; }
-    else if (path.section == 4) {
+    else if (path.section == 4 && self.identities.count) [self chooseActionForIdentity:self.identities[path.row] defaultKey:nil];
+    else if (path.section == 2) { if (path.row == 0) [self requestNotifications]; else [self showNotificationHelp]; }
+    else if (path.section == 3) {
         if (path.row == 0) [self chooseActionForIdentity:nil defaultKey:@"unattributed"];
         else if (path.row == 1) [self addIdentity];
         else if (path.row == 2) [self copyNotificationDiagnostics];
-        else {
+        else if (path.row >= 5) {
+            NSString *url = @[@"https://github.com/EolnMsuk/NetShield2/", @"https://venmo.com/u/rustonrails", @"https://www.blockchain.com/explorer/addresses/btc/31uHLpioo1TbxAmo9kM7rrKcLz3wvcoZaL"][path.row - 5];
+            [UIApplication.sharedApplication openURL:[NSURL URLWithString:url] options:@{} completionHandler:nil];
+        } else {
             BOOL reset = path.row == 3;
             UIAlertController *alert = [UIAlertController alertControllerWithTitle:reset ? @"Reset NetShield?" : @"Prepare for uninstall?" message:reset ? @"Deletes app rules, pending requests and history. Restores Ask me for new apps, allows unidentified connections and leaves Firewall off. iOS notification settings are kept." : @"Removes NetShield's system filter and stops filtering. After this succeeds, uninstall NetShield in your package manager." preferredStyle:UIAlertControllerStyleAlert];
             [alert addAction:[UIAlertAction actionWithTitle:reset ? @"Reset" : @"Remove system filter" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) { if (reset) [self resetNetShield]; else [self changeConfiguration:2]; }]];

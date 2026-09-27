@@ -2,6 +2,8 @@
 
 Control internet access on rootless (roothide users use roothide patcher to convert the deb before installing) iOS 16 devices. NetShield uses an OS content filter, saved app rules and actionable notifications.
 
+![NetShield banner](App/Resources/banner.png)
+
 ## Get started
 
 1. Install the deb from the releases section. No respring is required.
@@ -14,10 +16,11 @@ Unanswered connections are blocked after 30 seconds. You can decide later in **W
 ## Options
 
 - **Firewall:** on/off; turning it off keeps your rules.
+- **Allow all iOS system processes:** off by default. When enabled, identities starting with `com.apple.` or `.com.apple.` are allowed without prompting, overriding saved rules. Those rules are preserved and apply again when disabled. Changes affect new connections.
 - **New apps:** Ask me, Allow or Block for apps without an explicit rule.
-- **App rules:** change saved decisions. Changes apply to new connections; close/reopen an app to end existing connections.
+- **App rules:** below Advanced & support, above Recent activity; change saved decisions. Changes apply to new connections; close/reopen an app to end existing connections.
 - **Notifications:** notification settings and instructions for banners and Do Not Disturb.
-- **Advanced & support:** unidentified connections, manual rules, Copy notification diagnostics, Reset NetShield, and Prepare for uninstall.
+- **Advanced & support:** unidentified connections, manual rules, Copy notification diagnostics, Reset NetShield, Prepare for uninstall, GitHub and donation links.
 - **Recent activity:** the latest 20 events from a rolling 300-event record. Data counts arrive when connections close; permission events are not traffic totals.
 
 **Reset NetShield** clears rules, requests and history, restores Ask me and allows unidentified connections, then leaves Firewall off. iOS notification permission is retained.
@@ -29,3 +32,7 @@ Before uninstalling, use **Advanced & support > Prepare for uninstall** to remov
 Rules apply to new connections delivered by iOS, not every raw packet or OS-exempt path. Unidentified connections have their own rule. Direction rules refer to who initiates a connection, not reply packets. No VPN server entry is needed: this is a content filter, not a VPN tunnel.
 
 MIT License. Copyright 2026 EolnMsuk.
+
+## Support the Dev
+
+[GitHub](https://github.com/EolnMsuk/NetShield2/) | [Venmo](https://venmo.com/u/rustonrails) | [BTC](https://www.blockchain.com/explorer/addresses/btc/31uHLpioo1TbxAmo9kM7rrKcLz3wvcoZaL)

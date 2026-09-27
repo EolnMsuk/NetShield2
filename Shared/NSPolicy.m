@@ -4,7 +4,7 @@
 @implementation NSPolicy
 + (NSDictionary *)defaultDocument {
     return @{@"schema": @2, @"revision": NSUUID.UUID.UUIDString,
-             @"default": @"ask", @"unattributed": @"allow", @"rules": @{}};
+             @"default": @"ask", @"unattributed": @"allow", @"rules": @{}, @"allowAppleSystemProcesses": @NO};
 }
 + (instancetype)policyWithDocument:(id)document error:(NSError **)error {
     BOOL valid = [document isKindOfClass:NSDictionary.class];
@@ -19,6 +19,11 @@
         [d[@"default"] isKindOfClass:NSString.class] && [defaults containsObject:d[@"default"]] &&
         [d[@"unattributed"] isKindOfClass:NSString.class] && [unknownActions containsObject:d[@"unattributed"]] &&
         [d[@"rules"] isKindOfClass:NSDictionary.class];
+    // Optional for compatibility with policies saved before this switch existed.
+    id appleAllowance = d[@"allowAppleSystemProcesses"];
+    valid = valid && (!appleAllowance ||
+        ([appleAllowance isKindOfClass:NSNumber.class] &&
+         CFGetTypeID((__bridge CFTypeRef)appleAllowance) == CFBooleanGetTypeID()));
     if (valid) {
         valid = [d[@"rules"] count] <= 4096;
         for (id key in d[@"rules"]) {
@@ -42,10 +47,16 @@
     policy->_document = [NSPropertyListSerialization propertyListWithData:encoded options:NSPropertyListImmutable format:NULL error:error];
     return policy->_document ? policy : nil;
 }
+- (BOOL)automaticallyAllowsIdentity:(NSString *)identity {
+    // Match only these leading namespaces, never an embedded or signing-prefixed ID.
+    return [self.document[@"allowAppleSystemProcesses"] boolValue] &&
+        ([identity hasPrefix:@"com.apple."] || [identity hasPrefix:@".com.apple."]);
+}
 - (BOOL)requiresPermissionForIdentity:(NSString *)identity {
-    return identity.length > 0 && !self.document[@"rules"][identity] && [self.document[@"default"] isEqual:@"ask"];
+    return ![self automaticallyAllowsIdentity:identity] && identity.length > 0 && !self.document[@"rules"][identity] && [self.document[@"default"] isEqual:@"ask"];
 }
 - (BOOL)allowsIdentity:(NSString *)identity direction:(NSFlowDirection)direction {
+    if ([self automaticallyAllowsIdentity:identity]) return YES;
     NSString *action = identity.length ? (self.document[@"rules"][identity] ?: self.document[@"default"]) : self.document[@"unattributed"];
     if ([action isEqual:@"allow"]) return YES;
     if ([action isEqual:@"block-inbound"]) return direction == NSFlowDirectionOutbound;
