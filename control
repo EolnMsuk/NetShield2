@@ -1,5 +1,5 @@
 Package: com.eolnmsuk.netshield
-Name: NetShield
+Name: NetShield2
 Version: 2.0.0
 Architecture: iphoneos-arm64
 Description: Control app internet access with permission notifications, saved rules and connection monitoring.
@@ -9,7 +9,7 @@ Section: Networking
 Conflicts: com.netshield.tweak
 Replaces: com.netshield.tweak
 Homepage: https://github.com/EolnMsuk/NetShield2/
-Depends: firmware (>= 15.0), firmware (<< 18.0), uikittools
-Icon: file:///var/jb/Applications/NetShield.app/Icon.png
+Depends: firmware (>= 15.0), firmware (<< 19.0), uikittools
+Icon: file:///var/jb/Applications/NetShield2.app/Icon.png
 Depiction: https://github.com/EolnMsuk/NetShield2/#readme
 SileoDepiction: https://raw.githubusercontent.com/EolnMsuk/NetShield2/HEAD/depiction.json

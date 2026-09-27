@@ -2,7 +2,7 @@
 
 NSString *const NSGroupIdentifier = @"group.com.eolnmsuk.netshield";
 static NSError *NSStorageError(NSString *message) {
-    return [NSError errorWithDomain:@"NetShield.Storage" code:1 userInfo:@{NSLocalizedDescriptionKey: message}];
+    return [NSError errorWithDomain:@"NetShield2.Storage" code:1 userInfo:@{NSLocalizedDescriptionKey: message}];
 }
 NSURL *NSSharedURL(NSString *name) {
     NSURL *root = [NSFileManager.defaultManager containerURLForSecurityApplicationGroupIdentifier:NSGroupIdentifier];
@@ -96,12 +96,12 @@ NSDictionary *NSPermissionResponseDocument(NSDictionary *request, NSDictionary *
         }
     }
     if (!current) {
-        if (error) *error = NSStorageError(@"This request is no longer current or the filter is unavailable. Open NetShield to review it.");
+        if (error) *error = NSStorageError(@"This request is no longer current or the filter is unavailable. Open NetShield2 to review it.");
         return nil;
     }
     // A duplicate/late action must not overwrite an explicit decision already saved.
     if (![policy requiresPermissionForIdentity:request[@"identity"]]) {
-        if (error) *error = NSStorageError(@"A rule already handles this app. Review its current rule in NetShield.");
+        if (error) *error = NSStorageError(@"A rule already handles this app. Review its current rule in NetShield2.");
         return nil;
     }
     NSMutableDictionary *document = [policy.document mutableCopy];

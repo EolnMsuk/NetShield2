@@ -36,7 +36,7 @@
         }
     }
     if (!valid) {
-        if (error) *error = [NSError errorWithDomain:@"NetShield.Policy" code:1
+        if (error) *error = [NSError errorWithDomain:@"NetShield2.Policy" code:1
             userInfo:@{NSLocalizedDescriptionKey: @"Invalid v2 policy. Filtering callbacks will block until a valid policy is readable."}];
         return nil;
     }
@@ -49,7 +49,7 @@
 }
 - (BOOL)automaticallyAllowsIdentity:(NSString *)identity {
     // Match only these leading namespaces, never an embedded or signing-prefixed ID.
-    return [self.document[@"allowAppleSystemProcesses"] boolValue] &&
+    return [identity isKindOfClass:NSString.class] && [self.document[@"allowAppleSystemProcesses"] boolValue] &&
         ([identity hasPrefix:@"com.apple."] || [identity hasPrefix:@".com.apple."]);
 }
 - (BOOL)requiresPermissionForIdentity:(NSString *)identity {

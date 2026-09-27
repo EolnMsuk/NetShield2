@@ -2,7 +2,7 @@
 set -eu
 case "${1:-}" in
     remove|deconfigure)
-        printf '%s\n' 'Before removal, use NetShield > Advanced & support > Prepare for uninstall and verify network access.'
-        /var/jb/usr/bin/uicache -u /var/jb/Applications/NetShield.app
+        printf '%s\n' 'Before removal, use NetShield2 > Advanced Settings > Prepare for uninstall and verify network access.'
+        /var/jb/usr/bin/uicache -u /var/jb/Applications/NetShield2.app
         ;;
 esac

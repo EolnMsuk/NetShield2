@@ -83,6 +83,14 @@ int main(void) {
         [q enqueueIdentity:@".com.apple.test" direction:NSFlowDirectionOutbound now:800 date:date completion:done];
         [q resolveWithPolicy:applePolicy now:830];
         check(callbacks == 2 && allowed == 1 && q.requests.count == 0, "late switch clears request without admitting timed-out flow");
+        appleDocument[@"allowAppleSystemProcesses"] = @NO;
+        NSPolicy *disabledPolicy = [NSPolicy policyWithDocument:appleDocument error:NULL];
+        check([disabledPolicy requiresPermissionForIdentity:@"com.apple.test"], "disabling allowance asks again without a saved rule");
+        NSDictionary *again = [q enqueueIdentity:@"com.apple.test" direction:NSFlowDirectionOutbound now:900 date:date completion:done];
+        check(again != nil && q.requests.count == 1, "resolved Apple identity can create a fresh request after disabling");
+        [q resolveWithPolicy:disabledPolicy now:901];
+        check(callbacks == 2, "fresh Apple flow waits when allowance is off");
+        [q cancelAll];
         printf("Passed %u permission queue checks\n", checks);
     }
     return 0;

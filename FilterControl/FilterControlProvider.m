@@ -17,7 +17,7 @@
 
 @implementation NSFilterControlProvider
 - (NSDictionary *)snapshotWithRunning:(BOOL)running policyError:(NSError *)error {
-    return @{@"engine": @20010, @"schema": @2, @"controlRunning": @(running), @"session": self.session ?: @"",
+    return @{@"engine": @20011, @"schema": @2, @"controlRunning": @(running), @"session": self.session ?: @"",
              @"updated": NSDate.date, @"lastReport": self.lastReport ?: [NSDate dateWithTimeIntervalSince1970:0],
              @"revision": self.revision ?: @"", @"policyError": error.localizedDescription ?: @"",
              @"events": [self.events copy] ?: @[], @"requests": self.permissions.requests ?: @[],
@@ -47,12 +47,13 @@
         NSString *revision = policy.document[@"revision"];
         if (![self.revision isEqual:revision]) {
             self.revision = revision;
+            NSRemoveAutomaticallyAllowedNotifications();
             [self notifyRulesChanged];
         }
         NSError *writeError = nil;
         if (!NSWriteDocument([self snapshotWithRunning:YES policyError:error], @"monitor.plist", &writeError)) {
             // Metadata only. No destinations, payloads, URLs or app identities in system logs.
-            NSLog(@"NetShield monitor storage failed: %@", writeError.localizedDescription);
+            NSLog(@"NetShield2 monitor storage failed: %@", writeError.localizedDescription);
         }
     }
 }
@@ -140,6 +141,11 @@
 }
 - (void)sendNotification:(NSDictionary *)request {
     NSString *identity = request[@"identity"];
+    // A policy edit can resolve a just-enqueued request during refresh, before
+    // this method is reached. Never publish that stale notification.
+    NSPolicy *current = NSReadPolicy(NULL);
+    if (self.stopped || ![current requiresPermissionForIdentity:identity] ||
+        ![[self.permissions.requests valueForKey:@"token"] containsObject:request[@"token"]]) return;
     __weak typeof(self) weakSelf = self;
     UNMutableNotificationContent *content = [UNMutableNotificationContent new];
     content.title = @"Network access requested";
@@ -149,6 +155,18 @@
     content.userInfo = @{@"token": request[@"token"], @"identity": identity};
     UNNotificationRequest *notification = [UNNotificationRequest requestWithIdentifier:request[@"token"] content:content trigger:nil];
     [UNUserNotificationCenter.currentNotificationCenter addNotificationRequest:notification withCompletionHandler:^(NSError *error) {
+        NSFilterControlProvider *provider = weakSelf;
+        if (provider) {
+            @synchronized(provider) {
+                // Submission is asynchronous: an intervening policy change may
+                // have removed the request before notification delivery finished.
+                if (provider.stopped || ![NSReadPolicy(NULL) requiresPermissionForIdentity:identity] ||
+                    ![[provider.permissions.requests valueForKey:@"token"] containsObject:request[@"token"]]) {
+                    [UNUserNotificationCenter.currentNotificationCenter removePendingNotificationRequestsWithIdentifiers:@[request[@"token"]]];
+                    [UNUserNotificationCenter.currentNotificationCenter removeDeliveredNotificationsWithIdentifiers:@[request[@"token"]]];
+                }
+            }
+        }
         [UNUserNotificationCenter.currentNotificationCenter getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings *settings) {
             NSFilterControlProvider *owner = weakSelf;
             if (!owner) return;

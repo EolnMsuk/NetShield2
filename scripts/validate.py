@@ -22,10 +22,11 @@ control = (ROOT / 'control').read_bytes()
 require(b'\r' not in control, 'control must have LF line endings')
 metadata = dict(line.split(': ', 1) for line in control.decode().splitlines() if ': ' in line)
 require(metadata['Version'] == '2.0.0', 'Wrong package version')
+require(metadata['Name'] == 'NetShield2', 'Wrong product name')
 require(metadata['Architecture'] == 'iphoneos-arm64', 'Wrong rootless architecture')
-require(metadata['Depends'] == 'firmware (>= 15.0), firmware (<< 18.0), uikittools', 'Expected iOS 15-17 package range')
+require(metadata['Depends'] == 'firmware (>= 15.0), firmware (<< 19.0), uikittools', 'Expected iOS 15-18 package range')
 require(re.search(r'^export TARGET = iphone:clang:[^:]+:15\.0$', (ROOT / 'Makefile').read_text(), re.M), 'Expected iOS 15.0 deployment target')
-require(metadata.get('Icon') == 'file:///var/jb/Applications/NetShield.app/Icon.png', 'Missing package icon')
+require(metadata.get('Icon') == 'file:///var/jb/Applications/NetShield2.app/Icon.png', 'Missing package icon')
 require((ROOT / 'App/Resources/Icon.png').read_bytes().startswith(b'\x89PNG\r\n\x1a\n'), 'Invalid app icon')
 require('mobilesubstrate' not in metadata['Depends'], 'v1 injection dependency remains')
 
@@ -38,19 +39,20 @@ require((ROOT / 'App/Resources/banner.png').read_bytes().startswith(b'\x89PNG\r\
 
 
 bundles = [
-    ('App', 'NetShield', '', None, None),
-    ('FilterData', 'NetShieldData', '.data', 'com.apple.networkextension.filter-data', 'NSFilterDataProvider'),
-    ('FilterControl', 'NetShieldControl', '.control', 'com.apple.networkextension.filter-control', 'NSFilterControlProvider'),
+    ('App', 'NetShield2', '', None, None),
+    ('FilterData', 'NetShield2Data', '.data', 'com.apple.networkextension.filter-data', 'NSFilterDataProvider'),
+    ('FilterControl', 'NetShield2Control', '.control', 'com.apple.networkextension.filter-control', 'NSFilterControlProvider'),
 ]
 for directory, binary, suffix, point, principal in bundles:
     source = ROOT / directory
     info = plist(source / 'Resources/Info.plist')
+    require(info['CFBundleDisplayName'] == 'NetShield2', 'Wrong display name')
     require(info['CFBundleIdentifier'] == 'com.eolnmsuk.netshield' + suffix, 'Bundle ID mismatch')
     require(info['CFBundleExecutable'] == binary, 'Executable mismatch')
     require(info['MinimumOSVersion'] == '15.0', 'Deployment mismatch')
-    require(info.get('CFBundleVersion') == '20010',
+    require(info.get('CFBundleVersion') == '20011',
             f'{directory}/Resources/Info.plist: CFBundleVersion is '
-            f'{info.get("CFBundleVersion")!r}; expected "20010" for {metadata["Version"]}. '
+            f'{info.get("CFBundleVersion")!r}; expected "20011" for {metadata["Version"]}. '
             'Upload all three release Info.plist files and start a new workflow run on that commit.')
     if point:
         require(info['NSExtension'] == dict(NSExtensionPointIdentifier=point, NSExtensionPrincipalClass=principal), 'Bad extension registration metadata')
@@ -71,11 +73,11 @@ for directory, binary, suffix, point, principal in bundles:
 for script in (ROOT / 'layout/DEBIAN').iterdir():
     raw = script.read_bytes()
     require(raw.startswith(b'#!/bin/sh\n') and b'\r' not in raw, f'{script.name}: invalid shell line endings')
-for old in ('Sources', 'Preferences', 'NetShield.plist', 'projectstructure.md'):
+for old in ('Sources', 'Preferences', 'NetShield.plist', 'NetShield2.plist', 'projectstructure.md'):
     require(not (ROOT / old).exists(), f'Obsolete v1 input remains: {old}')
 
 if args.stage:
-    app = args.stage / 'var/jb/Applications/NetShield.app'
+    app = args.stage / 'var/jb/Applications/NetShield2.app'
     for directory, binary, suffix, point, principal in bundles:
         bundle = app if directory == 'App' else app / f'PlugIns/{binary}.appex'
         require(plist(bundle / 'Info.plist') == plist(ROOT / directory / 'Resources/Info.plist'), f'Bad staged metadata: {binary}')
@@ -86,7 +88,7 @@ if args.stage:
         magic, cputype = struct.unpack_from('<II', raw)
         require(magic == 0xfeedfacf and cputype == 0x100000c, f'Expected arm64 Mach-O: {binary}')
     require(not list(args.stage.rglob('*.dylib')), 'Unexpected injected library in package')
-    allowed = {'var/jb/Applications/NetShield.app', 'DEBIAN'}
+    allowed = {'var/jb/Applications/NetShield2.app', 'DEBIAN'}
     for file in args.stage.rglob('*'):
         if file.is_file():
             relative = file.relative_to(args.stage).as_posix()

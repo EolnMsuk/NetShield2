@@ -3,19 +3,19 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleDisplayName</key>
-	<string>NetShield</string>
+	<string>NetShield2</string>
 	<key>CFBundleExecutable</key>
-	<string>NetShieldData</string>
+	<string>NetShield2Data</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.eolnmsuk.netshield.data</string>
 	<key>CFBundleName</key>
-	<string>NetShieldData</string>
+	<string>NetShield2Data</string>
 	<key>CFBundlePackageType</key>
 	<string>XPC!</string>
 	<key>CFBundleShortVersionString</key>
 	<string>2.0.0</string>
 	<key>CFBundleVersion</key>
-	<string>20010</string>
+	<string>20011</string>
 	<key>MinimumOSVersion</key>
 	<string>15.0</string>
 	<key>NSExtension</key>

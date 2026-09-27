@@ -5,7 +5,7 @@ import sys
 
 root = pathlib.Path(__file__).resolve().parents[1]
 component = sys.argv[2].split('/')[-1]
-directory = {'NetShield': 'App', 'NetShieldData': 'FilterData', 'NetShieldControl': 'FilterControl'}[component]
+directory = {'NetShield2': 'App', 'NetShield2Data': 'FilterData', 'NetShield2Control': 'FilterControl'}[component]
 actual = plistlib.loads(pathlib.Path(sys.argv[1]).read_bytes())
 expected = plistlib.loads((root / directory / 'Entitlements.plist').read_bytes())
 if actual != expected:

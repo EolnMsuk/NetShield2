@@ -23,11 +23,11 @@ output.mkdir(parents=True, exist_ok=True)
 
 common = ['Shared/NSPolicy.m', 'Shared/NSStore.m']
 targets = [
-    ('NetShield', ['App/main.m'] + common,
+    ('NetShield2', ['App/main.m'] + common,
      ['UIKit', 'Foundation', 'NetworkExtension', 'UserNotifications'], False),
-    ('NetShieldData', ['FilterData/FilterDataProvider.m'] + common,
+    ('NetShield2Data', ['FilterData/FilterDataProvider.m'] + common,
      ['Foundation', 'NetworkExtension'], True),
-    ('NetShieldControl', ['FilterControl/FilterControlProvider.m', 'Shared/NSPermissionQueue.m'] + common,
+    ('NetShield2Control', ['FilterControl/FilterControlProvider.m', 'Shared/NSPermissionQueue.m'] + common,
      ['Foundation', 'NetworkExtension', 'UserNotifications'], True),
 ]
 sources = sorted({source for _, files, _, _ in targets for source in files})

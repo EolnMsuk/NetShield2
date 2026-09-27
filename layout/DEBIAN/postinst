@@ -3,15 +3,17 @@ set -eu
 case "${1:-}" in
     configure)
         # App and NE providers only: no injected SpringBoard code to respring.
-        printf '%s\n' 'NetShield 2.0.0: open the app and turn on Firewall. No respring required.'
+        printf '%s\n' 'NetShield2 2.0.0: open the app and turn on Firewall. No respring required.'
         # Re-register changed notification metadata, when upgrading.
         if [ -n "${2:-}" ]; then
-            if ! /var/jb/usr/bin/uicache -u /var/jb/Applications/NetShield.app; then
+            # Retire the previous app-path registration after the product rename.
+            /var/jb/usr/bin/uicache -u /var/jb/Applications/NetShield.app || true
+            if ! /var/jb/usr/bin/uicache -u /var/jb/Applications/NetShield2.app; then
                 printf '%s\n' 'Previous registration could not be removed; attempting registration refresh.'
             fi
         fi
-        /var/jb/usr/bin/uicache -p /var/jb/Applications/NetShield.app
-        printf '%s\n' 'Using Do Not Disturb? Allow NetShield in Settings > Focus > Do Not Disturb > Apps.'
+        /var/jb/usr/bin/uicache -p /var/jb/Applications/NetShield2.app
+        printf '%s\n' 'Using Do Not Disturb? Allow NetShield2 in Settings > Focus > Do Not Disturb > Apps.'
         printf '%s\n' 'When upgrading v1, reboot and re-jailbreak to unload old socket hooks from running processes.'
         ;;
 esac

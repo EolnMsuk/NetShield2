@@ -10,8 +10,8 @@ import tempfile
 root = pathlib.Path(__file__).resolve().parents[1]
 with tempfile.TemporaryDirectory(prefix='netshield-validation-') as temporary:
     stage = pathlib.Path(temporary)
-    app = stage / 'var/jb/Applications/NetShield.app'
-    for directory, binary in [('App', 'NetShield'), ('FilterData', 'NetShieldData'), ('FilterControl', 'NetShieldControl')]:
+    app = stage / 'var/jb/Applications/NetShield2.app'
+    for directory, binary in [('App', 'NetShield2'), ('FilterData', 'NetShield2Data'), ('FilterControl', 'NetShield2Control')]:
         bundle = app if directory == 'App' else app / f'PlugIns/{binary}.appex'
         bundle.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(root / directory / 'Resources/Info.plist', bundle / 'Info.plist')
@@ -21,14 +21,14 @@ with tempfile.TemporaryDirectory(prefix='netshield-validation-') as temporary:
         if (result.returncode == 0) != success:
             raise AssertionError(result.stdout + result.stderr)
     validate(True)
-    provider = app / 'PlugIns/NetShieldData.appex/NetShieldData'
+    provider = app / 'PlugIns/NetShield2Data.appex/NetShield2Data'
     data = provider.read_bytes()
     provider.unlink()
     validate(False)
     provider.write_bytes(b'not a binary')
     validate(False)
     provider.write_bytes(data)
-    leak = stage / 'var/jb/Library/MobileSubstrate/DynamicLibraries/NetShield.dylib'
+    leak = stage / 'var/jb/Library/MobileSubstrate/DynamicLibraries/NetShield2.dylib'
     leak.parent.mkdir(parents=True)
     leak.write_bytes(b'old tweak')
     validate(False)
@@ -37,7 +37,7 @@ with tempfile.TemporaryDirectory(prefix='netshield-validation-') as temporary:
     unexpected.write_text('old')
     validate(False)
     unexpected.unlink()
-    info_path = app / 'PlugIns/NetShieldData.appex/Info.plist'
+    info_path = app / 'PlugIns/NetShield2Data.appex/Info.plist'
     info = plistlib.loads(info_path.read_bytes())
     info['NSExtension']['NSExtensionPointIdentifier'] = 'wrong'
     info_path.write_bytes(plistlib.dumps(info))
