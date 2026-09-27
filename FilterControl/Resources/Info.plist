@@ -15,7 +15,7 @@
 	<key>CFBundleShortVersionString</key>
 	<string>2.0.0</string>
 	<key>CFBundleVersion</key>
-	<string>20001</string>
+	<string>20002</string>
 	<key>MinimumOSVersion</key>
 	<string>16.0</string>
 	<key>NSExtension</key>

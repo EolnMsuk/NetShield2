@@ -1,6 +1,8 @@
 # NetShield 2 device acceptance
 
-Status: **NOT RUN**. Target supplied by owner: **iOS 16.1.1 / Dopamine 3.0.10**; device model, OS build and supervision unknown. A passing GitHub build is not device qualification. Preserve this distinction in release notes.
+Status: **Alpha 1 deployment failed on-device**. Owner confirms build, installation and Home Screen app launch. Filter configuration remains disabled with `NEFilterErrorDomain 5`, absent/stale control heartbeat and no flow reports. Target: **iOS 16.1.1 / Dopamine 3.0.10**; device model, OS build and supervision unknown. Coverage tests below remain NOT RUN.
+
+Alpha 2 tests Apple's documented development configuration exception by adding `get-task-allow` to the containing app. It also labels each failed filter-manager operation. Record whether this changes configuration access and, separately, whether both providers run. This is not a verified production deployment method. A passing GitHub build is not device qualification.
 
 ## 1. Deployment gate
 

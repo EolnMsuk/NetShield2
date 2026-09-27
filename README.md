@@ -4,15 +4,15 @@
 
 This replaces the v1 injected socket hooks with a standalone app and two Network Extension providers. The intended test device is **iOS 16.1.1 / Dopamine 3.0.10**. Its supervision status is unknown. **Supported deployment on that device has not been established. This is not a finished all-traffic firewall.**
 
-The providers implement real OS flow verdicts, but source code and a successful `.deb` build do not prove that iOS will register, authorize or run them. No device or GitHub runner was available during the initial rewrite. Treat `2.0.0~alpha1` as a deployment experiment.
+The providers implement real OS flow verdicts, but source code and a successful `.deb` build do not prove that iOS will register, authorize or run them. The owner confirmed alpha 1 builds and installs, but activation fails on the target with NEFilterErrorDomain 5 and no flow reports. Treat `2.0.0~alpha2` as a deployment experiment.
 
 ## Build with GitHub Actions
 
 Put the contents of this folder at the root of your GitHub repository. Run **Actions > Build NetShield 2 experimental > Run workflow**, or push a commit. The macOS job installs a pinned Theos revision, verifies the iOS 16.5 SDK checksum, runs policy and packaging tests, compiles the app/providers and uploads:
 
-`NetShield-2-experimental-iOS16-rootless` containing `com.eolnmsuk.netshield_2.0.0~alpha1_iphoneos-arm64.deb`.
+`NetShield-2-experimental-iOS16-rootless` containing `com.eolnmsuk.netshield_2.0.0~alpha2_iphoneos-arm64.deb`.
 
-No repository, remote or GitHub authentication is configured in this copied workspace; the workflow has not been dispatched. A local Mac with Theos and the 16.5 SDK can run `make package FINALPACKAGE=1`. Apps and extensions use arm64, which also runs on arm64e devices; no arm64e injected system library is built.
+The owner runs the workflow in EolnMsuk/NetShieldv2. This local workspace has no configured Git remote or authentication; local edits still need to be uploaded. A local Mac with Theos and the 16.5 SDK can run `make package FINALPACKAGE=1`. Apps and extensions use arm64, which also runs on arm64e devices; no arm64e injected system library is built.
 
 ## Deployment is the first acceptance gate
 
@@ -28,6 +28,14 @@ The included entitlement declarations and rootless app registration are **experi
 6. Generate new traffic. Confirm a recent control-provider heartbeat and actual OS flow reports. Neither proves comprehensive coverage; execute [the device tests](Tests/DEVICE_TESTS.md).
 
 If the OS denies the configuration or never launches the providers, stop at that gate. The missing work is a demonstrated deployment method for this target, not more socket hooks. There is no automatic fallback that silently presents partial filtering as protection.
+
+## Alpha 2 activation experiment
+
+Alpha 1 is confirmed inactive on the test device: saved configuration disabled, permission denied (`NEFilterErrorDomain 5`), no provider heartbeat and no flow reports. That error does not distinguish supervision restrictions from entitlement/signing authorization failures.
+
+Alpha 2 adds `get-task-allow` to the containing app. [Apple documents this development-only exception](https://developer.apple.com/documentation/networkextension/nefiltermanager) for creating content-filter configurations on unsupervised devices. It also makes the app debuggable. This is a test of the configuration permission gate; it is **not** proof of provider launch, supported jailbreak deployment or full network coverage. There is no claim that adding an entitlement to an ad-hoc signature is sufficient for iOS to accept it.
+
+The dashboard now identifies whether loading, saving enabled/disabled state, or removing the configuration failed. After installing alpha 2, confirm the title says Alpha 2, enable once, and record the complete status. A saved enabled state with no heartbeat/reports is still a failure of deployment. Alpha 2 still has no connection-permission prompts and does not revoke admitted flows.
 
 ## Rules and monitoring
 
