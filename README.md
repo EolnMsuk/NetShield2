@@ -8,7 +8,7 @@ A firewall & live network filter for jailbroken iOS 16 devices (iOS 15, 17 and 1
 
 1. Install the deb from the releases section. No respring is required.
 2. Open NetShield and turn on **Firewall** + accept the iOS permissions. Leave **New apps** set to **Ask me** to decide as apps connect. Existing rules are kept when upgrading or toggling the firewall.
-3. Enable banners under **Notification settings**. On iOS 15.0-15.3, this opens the app settings page; choose **Notifications** there (or use **Settings > Notifications > NetShield**). If you use **Do Not Disturb**, allow NetShield in **Settings > Focus > Do Not Disturb > Apps**.
+3. Enable banners under **Notification settings**. If you use **Do Not Disturb**, allow NetShield in **Settings > Focus > Do Not Disturb > Apps**.
 4. When a new app connects, touch and hold its NetShield notification and choose **Allow app** or **Keep blocking**. Tapping the notification body opens NetShield instead where you can also allow or block through prompts.
 
 Unanswered connections are blocked after 30 seconds. You can decide later in **Waiting for your decision**, then retry the app. To ask again for a previously decided app, tap its rule and select **Use new-app setting** while New apps is Ask me.
