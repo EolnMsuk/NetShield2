@@ -1,6 +1,6 @@
 # NetShield2 ⛨
 
-A firewall & live network filter for jailbroken iOS 16 devices (iOS 15, 17 and 18 need testing). NetShield2 uses an OS content filter, saved app rules and actionable notifications. Unlike the original [NetShield](https://github.com/EolnMsuk/NetShield) / [NetFence](https://havoc.app/package/netfence), the new [**NetShield2**](https://github.com/EolnMsuk/NetShield2/) does not require app injection to function.
+A firewall & live network filter for jailbroken iOS 16 devices (iOS 15, 17 and 18 need testing). NetShield2 uses an OS content filter, saved app rules and actionable notifications. Unlike the original [NetShield](https://github.com/EolnMsuk/NetShield) / [NetFence](https://havoc.app/package/netfence), the new [**NetShield2**](https://github.com/EolnMsuk/NetShield2/) is system wide and does not require app injection to function.
 
 ![NetShield banner](App/Resources/banner.png)
 
