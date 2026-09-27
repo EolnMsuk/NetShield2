@@ -19,7 +19,10 @@
 	<key>CFBundleShortVersionString</key>
 	<string>2.0.0</string>
 	<key>CFBundleVersion</key>
-	<string>20004</string>
+	<string>20005</string>
+	<!-- Required for local notification registration of a jailbreak-installed system app. -->
+	<key>SBAppUsesLocalNotifications</key>
+	<true/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>MinimumOSVersion</key>

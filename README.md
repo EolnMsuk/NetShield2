@@ -1,14 +1,22 @@
 # NetShield 2
 
-OS-level network access control for rootless iOS 16, with a Home Screen app, a Network Extension data provider and a separate control provider. Current build: **2.0.0~alpha4**.
+OS-level network access control for rootless iOS 16, with a Home Screen app, a Network Extension data provider and a separate control provider. Current build: **2.0.0~alpha5**.
 
-The owner has confirmed that alpha 2 builds, installs, enables both providers, reports OS flows, and blocks the traffic they tried when the default rule is Block on **iOS 16.1.1 / Dopamine 3.0.10**. Comprehensive protocol coverage and reliable attribution of every system flow have not been established. The owner also confirms alpha 3 in-app prompts work. Alpha 4 fixes notification action handling and setup, and adds settings diagnostics, a delivery test and retries. Its background delivery still needs device validation.
+The owner has confirmed that alpha 2 builds, installs, enables both providers, reports OS flows, and blocks the traffic they tried when the default rule is Block on **iOS 16.1.1 / Dopamine 3.0.10**. Comprehensive protocol coverage and reliable attribution of every system flow have not been established. The owner also confirms alpha 3 in-app prompts work. Alpha 5 fixes notification action handling and setup, and adds settings diagnostics, a delivery test and retries. Its background delivery still needs device validation.
+
+## Alpha 5 notification registration and reset
+
+The previous app metadata omitted `SBAppUsesLocalNotifications`, a system-app registration flag used for local notifications in jailbreak-installed apps. Alpha 5 adds this flag and unregisters/re-registers the application with uicache during installation so changed metadata is reread. This is a likely explanation for NetShield being absent from Settings > Notifications; the device result remains unverified.
+
+**Reset NetShield and restart setup...** removes the NE configuration, waits for the control provider to stop (or its heartbeat to become stale), restores default Ask/unknown-Allow policy, removes pending request/history snapshots and app notification requests, then starts permission/filter setup. Reset aborts with an error if configuration removal fails or the provider keeps sending heartbeats. All app decisions are erased, and filtering is off during reset. This does not erase iOS-managed notification authorization or force iOS to display its authorization dialog again.
+
+Registration reference: [libnotifications system-app instructions](https://github.com/CokePokes/libnotifications). No library from that project is bundled or required.
 
 ## Use
 
 See [the complete installation and feature test guide](Tests/USER_GUIDE.md), including notification Settings, the five-second delivery test, and the report-back checklist. No respring or userspace reboot is required for this app/provider-only package.
 
-1. Install the alpha 4 deb and open **NetShield**.
+1. Install the alpha 5 deb and open **NetShield**.
 2. Tap **Start permission prompts**, then allow notifications when iOS asks. This selects Ask for apps without a rule, retains existing app decisions, and starts or restarts the filter through NetworkExtension. Restarting briefly disables filtering.
 3. Open another app and make a new network request. Use **Allow app** or **Block app** in the notification, or open NetShield's **Permission requests** section. Decisions are saved for future incoming and outgoing flows from that exact OS identity.
 4. If a connection has timed out before you answer, save the rule and retry the app's request. Change saved rules under **Apps and OS identities**.
@@ -41,7 +49,7 @@ Upload this source tree at the root of the GitHub repository, including **all th
 
 `NetShield-2-experimental-iOS16-rootless`
 
-containing `com.eolnmsuk.netshield_2.0.0~alpha4_iphoneos-arm64.deb`.
+containing `com.eolnmsuk.netshield_2.0.0~alpha5_iphoneos-arm64.deb`.
 
 A Mac with Theos and the 16.5 SDK can run `make package FINALPACKAGE=1`. Apps/extensions are arm64 and also run on arm64e devices. No socket-hook or SpringBoard injection library is built.
 

@@ -1,4 +1,4 @@
-# Alpha 4 local compiler validation
+# Alpha 5 local compiler validation
 
 Completed on 2026-09-27 using portable Zig 0.14.1 / Clang, targeting arm64 iOS 16.0 with the same iPhoneOS16.5 SDK used by GitHub CI. The Zig archive matched the checksum published in Zig's download index; the SDK matched the checksum pinned in the workflow.
 
@@ -18,4 +18,6 @@ python scripts/cross_compile.py --zig PATH_TO_ZIG --sdk PATH_TO_iPhoneOS16.5.sdk
 
 The command records exact commands and diagnostics in `validation.json` in the output directory. Windows extraction must preserve SDK file aliases, either as symlinks or copies of their archive targets. This affects the temporary SDK, not project source.
 
-These checks do not execute the policy or permission-queue tests, sign entitlement-bearing binaries, build a Theos deb, or exercise the device. GitHub's macOS workflow runs the Foundation tests and builds/verifies the package. Activation, basic blocking and alpha 3 in-app decisions were confirmed by the owner. Alpha 4 notification delivery and background decisions still require iOS execution.
+These checks do not execute the policy or permission-queue tests, sign entitlement-bearing binaries, build a Theos deb, or exercise the device. GitHub's macOS workflow runs the Foundation tests and builds/verifies the package. Activation, basic blocking and alpha 3 in-app decisions were confirmed by the owner. Alpha 5 notification delivery and background decisions still require iOS execution.
+
+Alpha 5 adds system-app notification metadata (required by the validator) and a configuration-removal-first reset. These paths compile/link but their iOS registration and provider-stop behavior cannot be executed by the Windows compiler.

@@ -20,7 +20,7 @@ def plist(path):
 control = (ROOT / 'control').read_bytes()
 require(b'\r' not in control, 'control must have LF line endings')
 metadata = dict(line.split(': ', 1) for line in control.decode().splitlines() if ': ' in line)
-require(metadata['Version'] == '2.0.0~alpha4', 'Wrong package version')
+require(metadata['Version'] == '2.0.0~alpha5', 'Wrong package version')
 require(metadata['Architecture'] == 'iphoneos-arm64', 'Wrong rootless architecture')
 require('mobilesubstrate' not in metadata['Depends'], 'v1 injection dependency remains')
 
@@ -35,16 +35,17 @@ for directory, binary, suffix, point, principal in bundles:
     require(info['CFBundleIdentifier'] == 'com.eolnmsuk.netshield' + suffix, 'Bundle ID mismatch')
     require(info['CFBundleExecutable'] == binary, 'Executable mismatch')
     require(info['MinimumOSVersion'] == '16.0', 'Deployment mismatch')
-    require(info.get('CFBundleVersion') == '20004',
+    require(info.get('CFBundleVersion') == '20005',
             f'{directory}/Resources/Info.plist: CFBundleVersion is '
-            f'{info.get("CFBundleVersion")!r}; expected "20004" for {metadata["Version"]}. '
-            'Upload all three alpha 4 Info.plist files and start a new workflow run on that commit.')
+            f'{info.get("CFBundleVersion")!r}; expected "20005" for {metadata["Version"]}. '
+            'Upload all three alpha 5 Info.plist files and start a new workflow run on that commit.')
     if point:
         require(info['NSExtension'] == dict(NSExtensionPointIdentifier=point, NSExtensionPrincipalClass=principal), 'Bad extension registration metadata')
     ent = plist(source / 'Entitlements.plist')
     require(ent['application-identifier'] == info['CFBundleIdentifier'], 'Entitlement identity mismatch')
     if directory == 'App':
-        require(ent.get('get-task-allow') is True, 'Alpha 4 requires the development configuration entitlement')
+        require(info.get('SBAppUsesLocalNotifications') is True, 'Missing system-app notification registration flag')
+        require(ent.get('get-task-allow') is True, 'Alpha 5 requires the development configuration entitlement')
     require(ent['com.apple.developer.networking.networkextension'] == ['content-filter-provider'], 'Missing NE entitlement')
     require(ent['com.apple.security.application-groups'] == ['group.com.eolnmsuk.netshield'], 'App group mismatch')
     require('com.apple.private.security.no-sandbox' not in ent, 'Do not remove provider isolation')

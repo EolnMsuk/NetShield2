@@ -71,7 +71,7 @@
     [self.deferredRequests intersectSet:tokens];
     [self.tableView reloadData];
     if (UIApplication.sharedApplication.applicationState == UIApplicationStateActive &&
-        !self.presentedViewController && self.loaded && [NEFilterManager sharedManager].enabled && [self hasFreshMonitor]) {
+        !self.busy && !self.presentedViewController && self.loaded && [NEFilterManager sharedManager].enabled && [self hasFreshMonitor]) {
         for (NSDictionary *request in self.monitor[@"requests"]) {
             if (![self.deferredRequests containsObject:request[@"token"]]) { [self presentRequest:request]; break; }
         }
@@ -194,7 +194,7 @@
                     configuration.filterSockets = YES;
                     configuration.filterBrowsers = YES;
                     configuration.organization = @"NetShield";
-                    configuration.vendorConfiguration = @{@"schema": @2, @"engine": @20004};
+                    configuration.vendorConfiguration = @{@"schema": @2, @"engine": @20005};
                     manager.providerConfiguration = configuration;
                     manager.localizedDescription = @"NetShield network access control";
                 }
@@ -227,6 +227,61 @@
                     });
                 }];
             } else saveRequestedState();
+        });
+    }];
+}
+- (void)finishResetWhenStopped:(NSUInteger)attempt {
+    NSDictionary *monitor = NSReadMonitor();
+    NSDate *updated = monitor[@"updated"];
+    BOOL recent = updated && updated.timeIntervalSinceNow <= 0 && updated.timeIntervalSinceNow > -8;
+    if ([monitor[@"controlRunning"] boolValue] && recent) {
+        if (attempt >= 60) {
+            self.busy = NO;
+            self.message = @"Filter removal finished, but the provider is still running. Reset stopped without deleting rules. Try again after it stops.";
+            [self loadConfiguration];
+            return;
+        }
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC / 4), dispatch_get_main_queue(), ^{ [self finishResetWhenStopped:attempt + 1]; });
+        return;
+    }
+    NSError *error = nil;
+    if (!NSWriteDocument([NSPolicy defaultDocument], @"policy.plist", &error)) {
+        self.busy = NO; [self showError:error]; return;
+    }
+    for (NSString *name in @[@"monitor.plist", @"notification-retry.plist"]) {
+        NSURL *url = NSSharedURL(name);
+        if (url && [NSFileManager.defaultManager fileExistsAtPath:url.path] && ![NSFileManager.defaultManager removeItemAtURL:url error:&error]) {
+            self.busy = NO; [self showError:error operation:@"Reset shared state"]; return;
+        }
+    }
+    [UNUserNotificationCenter.currentNotificationCenter removeAllPendingNotificationRequests];
+    [UNUserNotificationCenter.currentNotificationCenter removeAllDeliveredNotifications];
+    [self.deferredRequests removeAllObjects];
+    self.policy = NSReadPolicy(NULL);
+    self.monitor = @{};
+    self.identities = @[];
+    self.loaded = YES;
+    self.busy = NO;
+    self.message = @"NetShield reset. Rules and history cleared. Restarting permission setup; iOS notification settings are retained.";
+    [self.tableView reloadData];
+    [self startPermissionPrompts];
+}
+- (void)resetNetShield {
+    if (self.busy) return;
+    self.busy = YES;
+    self.message = @"Removing filter configuration before resetting NetShield...";
+    [self.tableView reloadData];
+    NEFilterManager *manager = NEFilterManager.sharedManager;
+    [manager loadFromPreferencesWithCompletionHandler:^(NSError *error) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (error) { self.busy = NO; [self showError:error operation:@"Load before reset"]; return; }
+            if (!manager.providerConfiguration) { [self finishResetWhenStopped:0]; return; }
+            [manager removeFromPreferencesWithCompletionHandler:^(NSError *removeError) {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    if (removeError) { self.busy = NO; [self showError:removeError operation:@"Remove before reset"]; return; }
+                    [self finishResetWhenStopped:0];
+                });
+            }];
         });
     }];
 }
@@ -290,7 +345,7 @@
     if (section == 0) return 1;
     if (section == 1) return 4;
     if (section == 2) return MAX((NSUInteger)1, [self.monitor[@"requests"] count]);
-    if (section == 3) return 7;
+    if (section == 3) return 8;
     if (section == 4) return MAX((NSUInteger)1, self.identities.count);
     return MAX((NSUInteger)1, [self.monitor[@"events"] count]);
 }
@@ -320,7 +375,7 @@
         cell.textLabel.text = state;
         cell.textLabel.textColor = [state isEqual:@"Filtering active"] ? UIColor.systemGreenColor : UIColor.labelColor;
         NSString *time = observed ? [NSDateFormatter localizedStringFromDate:last dateStyle:NSDateFormatterShortStyle timeStyle:NSDateFormatterMediumStyle] : @"None yet";
-        cell.detailTextLabel.text = [NSString stringWithFormat:@"Last OS activity: %@\nControl build: %@ (expected 20004)\n%@\n%@\n%@", time, self.monitor[@"engine"] ?: @"older version",
+        cell.detailTextLabel.text = [NSString stringWithFormat:@"Last OS activity: %@\nControl build: %@ (expected 20005)\n%@\n%@\n%@", time, self.monitor[@"engine"] ?: @"older version",
             [self.message isEqual:@"Filter enabled. Waiting for provider activity."] && fresh && observed ? @"Rules are being applied to new connections." : (self.message ?: @""),
             self.monitor[@"policyError"] ?: @"", self.monitor[@"notificationError"] ?: @""];
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
@@ -338,7 +393,7 @@
             cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         }
     } else if (path.section == 3) {
-        cell.textLabel.text = @[@"Apps without a rule", @"Unattributed flows", @"Notification permission", @"Add exact app identity...", @"Reset rules...", @"Test notification (5 seconds)", @"Retry pending notifications"][path.row];
+        cell.textLabel.text = @[@"Apps without a rule", @"Unattributed flows", @"Notification permission", @"Add exact app identity...", @"Reset rules...", @"Test notification (5 seconds)", @"Retry pending notifications", @"Reset NetShield and restart setup..."][path.row];
         if (path.row < 2) cell.detailTextLabel.text = self.policy.document[path.row ? @"unattributed" : @"default"] ?: @"Policy unavailable";
         if (path.row == 2) cell.detailTextLabel.text = self.notificationStatus ?: @"Tap to enable permission notifications";
     } else if (path.section == 4) {
@@ -362,6 +417,7 @@
 }
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)path {
     [tableView deselectRowAtIndexPath:path animated:YES];
+    if (self.busy) return;
     if (path.section == 1 && !self.busy) {
         if (path.row >= 2) { [self changeConfiguration:path.row == 2 ? 0 : 2]; return; }
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Enable NetShield?" message:@"This starts or restarts NetShield and may disable another app's content filter. Existing saved app rules will be kept." preferredStyle:UIAlertControllerStyleAlert];
@@ -376,6 +432,12 @@
         if (path.row < 2) [self chooseActionForIdentity:nil defaultKey:path.row ? @"unattributed" : @"default"];
         else if (path.row == 2) [self requestNotifications];
         else if (path.row == 3) [self addIdentity];
+        else if (path.row == 7) {
+            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Reset NetShield?" message:@"Removes the filter configuration, all app rules, pending requests and activity history, then starts Ask setup again. Filtering is off during reset. iOS notification authorization is retained; this cannot force a new system permission dialog." preferredStyle:UIAlertControllerStyleAlert];
+            [alert addAction:[UIAlertAction actionWithTitle:@"Reset and restart setup" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) { [self resetNetShield]; }]];
+            [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+            [self presentViewController:alert animated:YES completion:nil];
+        }
         else if (path.row == 5) [self testNotification];
         else if (path.row == 6) { NSWriteDocument(@{@"revision": NSUUID.UUID.UUIDString}, @"notification-retry.plist", NULL); self.message = @"Requested notification retry. Check Status for provider results."; [self reloadMonitor]; }
         else {

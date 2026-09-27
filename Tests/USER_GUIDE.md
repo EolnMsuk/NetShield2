@@ -1,6 +1,16 @@
-# NetShield alpha 4: installation, permissions and tests
+# NetShield alpha 5: installation, permissions and tests
 
 Target reported by owner: iOS 16.1.1, Dopamine 3.0.10, rootless.
+
+## Recover from a missing Notifications Settings entry
+
+1. Disable the old filter and close NetShield. Build/install the **alpha 5** deb from the complete source archive. The installer refreshes the app's registration using the new local-notification metadata.
+2. Open NetShield and choose **Reset NetShield and restart setup...**, then **Reset and restart setup**. This erases all NetShield decisions/history and restarts Ask setup. Accept any iOS consent dialogs that appear; iOS may retain an earlier notification decision and show no new dialog.
+3. Tap **Notification permission**. Check whether NetShield now appears in Settings > Notifications; enable notifications and banners if available. If it still does not appear, report that specific result. Do not repeatedly reset unrelated iOS settings.
+4. Run **Test notification (5 seconds)** and immediately switch to another app. Check for the test banner. Then close/reopen a test app and request fresh network content. Long-press its real permission banner for Allow app / Keep blocking.
+5. Check NetShield shows **Control build 20005**. If registration still fails, report the notification authorization/alerts row and whether the test banner appeared; if the test works but real banners fail, report the provider notification result in Status.
+
+Reset clears NetShield's state, not the iOS notification database. The package refreshes registration without a forced respring/userspace reboot; there is no new injected component. This release has compiled successfully but notification registration/delivery and reset still need device verification.
 
 ## What the prompt looks like
 
@@ -10,11 +20,11 @@ Allow and Keep blocking each save a persistent rule for the exact identity iOS r
 
 ## Install or upgrade
 
-1. Upload the entire alpha 4 source tree, including hidden `.github` and all three `Resources/Info.plist` files. Run GitHub Actions **Build NetShield 2 experimental** on that commit. Download the `NetShield-2-experimental-iOS16-rootless` artifact and extract `com.eolnmsuk.netshield_2.0.0~alpha4_iphoneos-arm64.deb`.
+1. Upload the entire alpha 5 source tree, including hidden `.github` and all three `Resources/Info.plist` files. Run GitHub Actions **Build NetShield 2 experimental** on that commit. Download the `NetShield-2-experimental-iOS16-rootless` artifact and extract `com.eolnmsuk.netshield_2.0.0~alpha5_iphoneos-arm64.deb`.
 2. If upgrading, open the installed NetShield and tap **Disable filter**, then close NetShield from the app switcher. Filtering is off during the upgrade. Install the new deb using your package manager.
-3. Open NetShield. The package registers the app/extensions with `uicache`. **Alpha 4 does not require a respring or userspace reboot:** it contains no SpringBoard injection. The next step restarts the providers through NetworkExtension. Do not reboot merely to fix denied notifications.
+3. Open NetShield. The package registers the app/extensions with `uicache`. **Alpha 5 does not require a respring or userspace reboot:** it contains no SpringBoard injection. The next step restarts the providers through NetworkExtension. Do not reboot merely to fix denied notifications.
 4. Tap **Start permission prompts > Enable**. If iOS requests notification permission, choose **Allow**. After this request finishes, NetShield saves/enables the filter; accept the system's filter consent if shown. This sequence retains existing rules and changes Apps without a rule to `ask`.
-5. Return to NetShield if iOS opened Settings. The filter is a **content filter**, not a VPN tunnel: no VPN server, credentials, profile download or Connect button is needed. The app contains no command to open VPN Settings. An empty VPN page is not evidence of failure or success. In NetShield check the control build is **20004** and the status is **Filter enabled: no recent traffic** or **Filtering active**. A missing heartbeat, older build or save error means stop here and report the exact Status text.
+5. Return to NetShield if iOS opened Settings. The filter is a **content filter**, not a VPN tunnel: no VPN server, credentials, profile download or Connect button is needed. The app contains no command to open VPN Settings. An empty VPN page is not evidence of failure or success. In NetShield check the control build is **20005** and the status is **Filter enabled: no recent traffic** or **Filtering active**. A missing heartbeat, older build or save error means stop here and report the exact Status text.
 6. Tap **Notification permission**. If already asked, this now opens NetShield's iOS notification settings. Enable **Allow Notifications**, **Banners**, **Notification Center** and **Sounds**. Choose **Persistent** banners for easier testing. Temporarily turn Focus off and exclude NetShield from Scheduled Summary. Return to NetShield; its notification row should show authorization allowed and alerts on. Returning requests another delivery attempt for pending requests.
 
 An upgrade preserves explicit app rules. An app with an existing Allow or Block rule will not ask. Do not reset all rules just to test one app.
@@ -62,7 +72,7 @@ This tests the containing app's delivery only. It does not establish that iOS ac
 - **Wi-Fi/cellular:** repeat B and C on each interface. A cached page or an existing session is not a valid new-flow test.
 - **Direction rules:** `block-outbound` blocks newly initiated outgoing connections. `block-inbound` concerns newly initiated incoming connections, not replies/downloads in an outgoing connection. Test inbound only with a known listening app and another device initiating the connection; ordinary browsing cannot prove it.
 - **Unattributed traffic:** leave Allow initially. The separate Block option affects flows for which iOS supplies no app identity; these cannot have a reliable named-app prompt. Test only when ready to restore Allow if services stop working.
-- **Disable:** tap Disable filter and verify a formerly blocked app can make a new connection. Enable with current rules restarts the providers and retains decisions. Confirm build 20004 and a current heartbeat again.
+- **Disable:** tap Disable filter and verify a formerly blocked app can make a new connection. Enable with current rules restarts the providers and retains decisions. Confirm build 20005 and a current heartbeat again.
 - **Reset rules:** this clears all explicit decisions, restores Ask and allows unattributed flows; it does not enable/disable the filter. Use only if you want those changes.
 - **Uninstall:** tap Remove filter configuration, verify Filter off, then uninstall. The removal script unregisters the app but cannot independently remove saved NE configuration. If uninstalled first, reinstall NetShield and remove its configuration.
 
@@ -70,7 +80,7 @@ This tests the containing app's delivery only. It does not establish that iOS ac
 
 Copy and fill in:
 
-- Installed package: alpha 4; control build shown:
+- Installed package: alpha 5; control build shown:
 - Status text (including notification result):
 - Notification authorization / alerts:
 - A: banner / Notification Center only / absent:
@@ -81,4 +91,4 @@ Copy and fill in:
 - Interface and test app's exact OS identity:
 - Other feature failures:
 
-Background banner delivery is not yet verified on this device. Alpha 4 corrects the foreground-only action behavior, overlapping setup prompts, missing denied-permission Settings path and inability to retry notifications. It does not claim that notification delivery or every network path has been proved by compiling the code.
+Background banner delivery is not yet verified on this device. Alpha 5 corrects the foreground-only action behavior, overlapping setup prompts, missing denied-permission Settings path and inability to retry notifications. It does not claim that notification delivery or every network path has been proved by compiling the code.
