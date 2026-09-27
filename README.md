@@ -1,4 +1,4 @@
-# NetShield 2.0.0
+# NetShield2
 
 Control app internet access on rootless iOS 16. NetShield uses an OS content filter, saved app rules and actionable notifications. Tested by the owner on iOS 16.1.1 with Dopamine 3.0.10, including background permission decisions.
 
