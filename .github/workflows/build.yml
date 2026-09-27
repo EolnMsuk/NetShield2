@@ -45,6 +45,9 @@ jobs:
           clang -fobjc-arc -Wall -Wextra -Werror -framework Foundation \
             Tests/policy_test.m Shared/NSPolicy.m -o "$RUNNER_TEMP/policy_test"
           "$RUNNER_TEMP/policy_test"
+          clang -fobjc-arc -Wall -Wextra -Werror -framework Foundation \
+            Tests/permission_test.m Shared/NSPolicy.m Shared/NSPermissionQueue.m -o "$RUNNER_TEMP/permission_test"
+          "$RUNNER_TEMP/permission_test"
           sh -n layout/DEBIAN/postinst
           sh -n layout/DEBIAN/prerm
       - name: Compile and package for rootless iOS
@@ -53,7 +56,7 @@ jobs:
           set -euo pipefail
           chmod 755 layout/DEBIAN/postinst layout/DEBIAN/prerm
           gmake clean package FINALPACKAGE=1 2>&1 | tee "$RUNNER_TEMP/netshield-build.log"
-          test -f packages/com.eolnmsuk.netshield_2.0.0~alpha2_iphoneos-arm64.deb
+          test -f packages/com.eolnmsuk.netshield_2.0.0~alpha3_iphoneos-arm64.deb
       - name: Verify signed entitlements
         shell: bash
         run: |
@@ -67,7 +70,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: NetShield-2-experimental-iOS16-rootless
-          path: packages/com.eolnmsuk.netshield_2.0.0~alpha2_iphoneos-arm64.deb
+          path: packages/com.eolnmsuk.netshield_2.0.0~alpha3_iphoneos-arm64.deb
           if-no-files-found: error
       - name: Upload diagnostics
         if: always()
