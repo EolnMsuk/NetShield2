@@ -1,12 +1,13 @@
 Package: com.eolnmsuk.netshield
 Name: NetShield
-Version: 2.0.0~alpha6
+Version: 2.0.0
 Architecture: iphoneos-arm64
-Description: Experimental OS content filter and flow monitor. Requires verified provider deployment; not an all-packet firewall.
+Description: Control app internet access with permission notifications, saved rules and connection monitoring.
 Maintainer: EolnMsuk
 Author: EolnMsuk
 Section: Networking
 Conflicts: com.netshield.tweak
 Replaces: com.netshield.tweak
-Homepage: https://github.com/EolnMsuk/NetShield
+Homepage: https://github.com/EolnMsuk/NetShieldv2
 Depends: firmware (>= 16.0), firmware (<< 17.0), uikittools
+Icon: file:///var/jb/Applications/NetShield.app/Icon.png

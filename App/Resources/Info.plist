@@ -19,7 +19,7 @@
 	<key>CFBundleShortVersionString</key>
 	<string>2.0.0</string>
 	<key>CFBundleVersion</key>
-	<string>20006</string>
+	<string>20010</string>
 	<!-- Required for local notification registration of a jailbreak-installed system app. -->
 	<key>SBAppUsesLocalNotifications</key>
 	<true/>

@@ -3,15 +3,15 @@ set -eu
 case "${1:-}" in
     configure)
         # App and NE providers only: no injected SpringBoard code to respring.
-        printf '%s\n' 'NetShield alpha 6: open the app and Start permission prompts to restart providers. No respring required.'
-        # Re-register changed notification metadata, including upgrades from alpha 4.
+        printf '%s\n' 'NetShield 2.0.0: open the app and turn on Firewall. No respring required.'
+        # Re-register changed notification metadata, when upgrading.
         if [ -n "${2:-}" ]; then
             if ! /var/jb/usr/bin/uicache -u /var/jb/Applications/NetShield.app; then
                 printf '%s\n' 'Previous registration could not be removed; attempting registration refresh.'
             fi
         fi
         /var/jb/usr/bin/uicache -p /var/jb/Applications/NetShield.app
-        printf '%s\n' 'NetShield 2 is experimental. Open the app; verify provider deployment before relying on filtering.'
+        printf '%s\n' 'Using Do Not Disturb? Allow NetShield in Settings > Focus > Do Not Disturb > Apps.'
         printf '%s\n' 'When upgrading v1, reboot and re-jailbreak to unload old socket hooks from running processes.'
         ;;
 esac
