@@ -7,9 +7,9 @@ A firewall & live network filter for jailbroken iOS 16 devices (iOS 15, 17 and 1
 ## Get started
 
 1. Install the deb from the releases section. No respring is required.
-2. Open NetShield and turn on **Firewall** + accept the iOS permissions. Leave **New apps** set to **Ask me** to decide as apps connect. Existing rules are kept when upgrading or toggling the firewall.
-3. Enable banners under **Notification settings**. If you use **Do Not Disturb**, allow NetShield in **Settings > Focus > Do Not Disturb > Apps**.
-4. When a new app connects, touch and hold its NetShield notification and choose **Allow app** or **Keep blocking**. Tapping the notification body opens NetShield instead where you can also allow or block through prompts.
+2. Open NetShield2 and turn on **Firewall** + accept the iOS permissions. Leave **New apps** set to **Ask me** to decide as apps connect. Existing rules are kept when upgrading or toggling the firewall.
+3. Enable banners under **Notification settings**. If you use **Do Not Disturb**, allow NetShield2 in **Settings > Focus > Do Not Disturb > Apps**.
+4. When a new app connects, touch and hold its NetShield2 notification and choose **Allow app** or **Keep blocking**. Tapping the notification body opens NetShield2 instead where you can also allow or block through prompts.
 
 Unanswered connections are blocked after 30 seconds. You can decide later in **Waiting for your decision**, then retry the app. To ask again for a previously decided app, tap its rule and select **Use new-app setting** while New apps is Ask me.
 
@@ -20,12 +20,12 @@ Unanswered connections are blocked after 30 seconds. You can decide later in **W
 - **New apps:** Ask me, Allow or Block for apps without an explicit rule.
 - **App rules:** below Advanced & support, above Recent activity; change saved decisions. Changes apply to new connections; close/reopen an app to end existing connections.
 - **Notifications:** notification settings and instructions for banners and Do Not Disturb.
-- **Advanced & support:** unidentified connections, manual rules, Copy notification diagnostics, Reset NetShield, Prepare for uninstall, GitHub and donation links.
+- **Advanced & support:** unidentified connections, manual rules, Copy notification diagnostics, Reset NetShield2, Prepare for uninstall, GitHub and donation links.
 - **Recent activity:** the latest 20 events from a rolling 300-event record. Data counts arrive when connections close; permission events are not traffic totals.
 
-**Reset NetShield** clears rules, requests and history, restores Ask me and allows unidentified connections, then leaves Firewall off. iOS notification permission is retained.
+**Reset NetShield2** clears rules, requests and history, restores Ask me and allows unidentified connections, then leaves Firewall off. iOS notification permission is retained.
 
-Before uninstalling, use **Advanced & support > Prepare for uninstall** to remove the system filter. Then uninstall NetShield using your package manager.
+Before uninstalling, use **Advanced & support > Prepare for uninstall** to remove the system filter. Then uninstall NetShield2 using your package manager.
 
 ## Coverage
 
