@@ -1,8 +1,8 @@
 # NetShield 2 device acceptance
 
-Status: **Alpha 1 deployment failed on-device**. Owner confirms build, installation and Home Screen app launch. Filter configuration remains disabled with `NEFilterErrorDomain 5`, absent/stale control heartbeat and no flow reports. Target: **iOS 16.1.1 / Dopamine 3.0.10**; device model, OS build and supervision unknown. Coverage tests below remain NOT RUN.
+Status: **Alpha 2 activation and basic blocking confirmed by owner** on **iOS 16.1.1 / Dopamine 3.0.10**. Saved configuration enabled, recent control heartbeat, OS flow report timestamp observed, and default Block prevented the traffic tried. Model, OS build and supervision remain unknown. Protocol-by-protocol coverage and attribution cases below remain NOT RUN.
 
-Alpha 2 tests Apple's documented development configuration exception by adding `get-task-allow` to the containing app. It also labels each failed filter-manager operation. Record whether this changes configuration access and, separately, whether both providers run. This is not a verified production deployment method. A passing GitHub build is not device qualification.
+Alpha 3 adds Ask, bounded asynchronous permission waits, notifications/actions, a request inbox, automatic foreground prompts, and clearer runtime status. Its runtime behavior is NOT YET VERIFIED. CI policy/queue tests do not establish notification delivery or OS timing. This checklist is a maintainer qualification record, not a prerequisite the owner must complete before implementation work continues.
 
 ## 1. Deployment gate
 
@@ -66,3 +66,13 @@ If an enabled configuration survives an unsuccessful uninstall, reinstall the sa
 ## Release decision
 
 Promotion beyond alpha requires evidence that registration, authorization, app groups, both provider lifecycles, app attribution and each claimed coverage case work on the exact target. Unknown or failing cases remain exclusions. Literal all-network-activity coverage, guaranteed attribution of every system flow and supported unsupervised Dopamine deployment remain **unmet requirements** in this version.
+
+## Alpha 3 permission acceptance
+
+- Ask + fresh attributed flow: no unapproved data reaches the peer while waiting; Allow before deadline releases according to the saved rule; Block denies.
+- Parallel flows from one identity: one prompt and consistent decisions. Separate identities remain distinct.
+- Timeout: pending callbacks deny after the deadline. Late consent only authorizes new attempts. Retry loops do not generate repeated banners.
+- Notifications: verify background scheduling, action delivery on cold app launch, unlocking requirement, Focus/denied permission behavior, and visible scheduling errors.
+- Queue saturation: verify bounded memory, denied overflow and shutdown cancellation.
+- Stale notification: after a provider restart, its token must not modify a rule.
+- Upgrade: Start permission prompts restarts existing providers through NE; confirm the new engine starts, and document any unfiltered restart interval.

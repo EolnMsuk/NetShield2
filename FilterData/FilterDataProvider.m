@@ -15,6 +15,9 @@
     // Read an atomic snapshot at admission. A missing/corrupt policy blocks the
     // flow; an old cached allow policy must not silently survive a broken update.
     NSPolicy *policy = NSReadPolicy(NULL);
+    if ([policy requiresPermissionForIdentity:flow.sourceAppIdentifier]) {
+        return [NEFilterNewFlowVerdict needRulesVerdict];
+    }
     NSFlowDirection direction = NSFlowDirectionUnknown;
     if (flow.direction == NETrafficDirectionInbound) direction = NSFlowDirectionInbound;
     if (flow.direction == NETrafficDirectionOutbound) direction = NSFlowDirectionOutbound;

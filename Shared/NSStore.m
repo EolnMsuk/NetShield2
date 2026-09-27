@@ -62,5 +62,18 @@ NSDictionary *NSReadMonitor(void) {
             if (![e[key] isKindOfClass:NSNumber.class]) return @{};
         if (![e[@"time"] isKindOfClass:NSDate.class]) return @{};
     }
+    if (d[@"requests"]) {
+        if (![d[@"requests"] isKindOfClass:NSArray.class] || [d[@"requests"] count] > 64) return @{};
+        for (id request in d[@"requests"]) {
+            if (![request isKindOfClass:NSDictionary.class] ||
+                ![request[@"token"] isKindOfClass:NSString.class] ||
+                ![request[@"identity"] isKindOfClass:NSString.class] ||
+                ![request[@"created"] isKindOfClass:NSDate.class] ||
+                ![request[@"expires"] isKindOfClass:NSDate.class] ||
+                ![request[@"waiting"] isKindOfClass:NSNumber.class] ||
+                ![request[@"expired"] isKindOfClass:NSNumber.class]) return @{};
+        }
+    }
+    if (d[@"notificationError"] && ![d[@"notificationError"] isKindOfClass:NSString.class]) return @{};
     return d;
 }

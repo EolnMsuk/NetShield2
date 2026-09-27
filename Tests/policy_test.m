@@ -19,7 +19,9 @@ int main(void) {
         NSMutableDictionary *d = [[NSPolicy defaultDocument] mutableCopy];
         NSPolicy *policy = parse(d);
         check([policy allowsIdentity:nil direction:NSFlowDirectionUnknown], "fresh unknown policy allows");
-        check([policy allowsIdentity:@"app" direction:NSFlowDirectionOutbound], "fresh app policy allows");
+        check(![policy allowsIdentity:@"app" direction:NSFlowDirectionOutbound], "fresh app cannot bypass consent");
+        check([policy requiresPermissionForIdentity:@"app"], "fresh app requests permission");
+        check(![policy requiresPermissionForIdentity:nil], "unattributed traffic cannot pretend to be an app");
         d[@"default"] = @"block";
         d[@"unattributed"] = @"block";
         NSMutableDictionary *rules = [@{@"TEAM.app": @"allow", @"blocked": @"block",
@@ -27,6 +29,7 @@ int main(void) {
         d[@"rules"] = rules;
         policy = parse(d);
         check([policy allowsIdentity:@"TEAM.app" direction:NSFlowDirectionUnknown], "explicit allow wins");
+        check(![policy requiresPermissionForIdentity:@"TEAM.app"], "saved rule does not prompt");
         check(![policy allowsIdentity:@"app" direction:NSFlowDirectionOutbound], "never strip a signing prefix");
         check(![policy allowsIdentity:nil direction:NSFlowDirectionOutbound], "nil uses unknown policy");
         check(![policy allowsIdentity:@"" direction:NSFlowDirectionInbound], "empty uses unknown policy");

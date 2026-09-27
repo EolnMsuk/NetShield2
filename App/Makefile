@@ -1,7 +1,7 @@
 include $(THEOS)/makefiles/common.mk
 APPLICATION_NAME = NetShield
 NetShield_FILES = main.m ../Shared/NSPolicy.m ../Shared/NSStore.m
-NetShield_FRAMEWORKS = UIKit Foundation NetworkExtension
+NetShield_FRAMEWORKS = UIKit Foundation NetworkExtension UserNotifications
 NetShield_CFLAGS = -fobjc-arc -Wall -Wextra -Wno-unused-parameter
 NetShield_CODESIGN_FLAGS = -SEntitlements.plist
 NetShield_INSTALL_PATH = /Applications

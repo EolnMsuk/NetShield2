@@ -4,19 +4,20 @@
 @implementation NSPolicy
 + (NSDictionary *)defaultDocument {
     return @{@"schema": @2, @"revision": NSUUID.UUID.UUIDString,
-             @"default": @"allow", @"unattributed": @"allow", @"rules": @{}};
+             @"default": @"ask", @"unattributed": @"allow", @"rules": @{}};
 }
 + (instancetype)policyWithDocument:(id)document error:(NSError **)error {
     BOOL valid = [document isKindOfClass:NSDictionary.class];
     NSDictionary *d = valid ? document : @{};
     NSSet *actions = [NSSet setWithArray:@[@"allow", @"block", @"block-inbound", @"block-outbound"]];
-    NSSet *defaults = [NSSet setWithArray:@[@"allow", @"block"]];
+    NSSet *defaults = [NSSet setWithArray:@[@"allow", @"block", @"ask"]];
+    NSSet *unknownActions = [NSSet setWithArray:@[@"allow", @"block"]];
     valid = valid && [d[@"schema"] isKindOfClass:NSNumber.class] &&
         CFGetTypeID((__bridge CFTypeRef)d[@"schema"]) != CFBooleanGetTypeID() &&
         [d[@"schema"] isEqual:@2] && [d[@"revision"] isKindOfClass:NSString.class] &&
         [d[@"revision"] length] > 0 && [d[@"revision"] length] <= 128 &&
         [d[@"default"] isKindOfClass:NSString.class] && [defaults containsObject:d[@"default"]] &&
-        [d[@"unattributed"] isKindOfClass:NSString.class] && [defaults containsObject:d[@"unattributed"]] &&
+        [d[@"unattributed"] isKindOfClass:NSString.class] && [unknownActions containsObject:d[@"unattributed"]] &&
         [d[@"rules"] isKindOfClass:NSDictionary.class];
     if (valid) {
         valid = [d[@"rules"] count] <= 4096;
@@ -40,6 +41,9 @@
     NSPolicy *policy = [NSPolicy new];
     policy->_document = [NSPropertyListSerialization propertyListWithData:encoded options:NSPropertyListImmutable format:NULL error:error];
     return policy->_document ? policy : nil;
+}
+- (BOOL)requiresPermissionForIdentity:(NSString *)identity {
+    return identity.length > 0 && !self.document[@"rules"][identity] && [self.document[@"default"] isEqual:@"ask"];
 }
 - (BOOL)allowsIdentity:(NSString *)identity direction:(NSFlowDirection)direction {
     NSString *action = identity.length ? (self.document[@"rules"][identity] ?: self.document[@"default"]) : self.document[@"unattributed"];

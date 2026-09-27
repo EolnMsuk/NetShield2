@@ -1,78 +1,75 @@
 # NetShield 2
 
-**Experimental OS content filter and flow monitor for rootless iOS 16.**
+OS-level network access control for rootless iOS 16, with a Home Screen app, a Network Extension data provider and a separate control provider. Current build: **2.0.0~alpha3**.
 
-This replaces the v1 injected socket hooks with a standalone app and two Network Extension providers. The intended test device is **iOS 16.1.1 / Dopamine 3.0.10**. Its supervision status is unknown. **Supported deployment on that device has not been established. This is not a finished all-traffic firewall.**
+The owner has confirmed that alpha 2 builds, installs, enables both providers, reports OS flows, and blocks the traffic they tried when the default rule is Block on **iOS 16.1.1 / Dopamine 3.0.10**. Comprehensive protocol coverage and reliable attribution of every system flow have not been established. Alpha 3 adds the permission workflow described below; its on-device behavior has not yet been verified.
 
-The providers implement real OS flow verdicts, but source code and a successful `.deb` build do not prove that iOS will register, authorize or run them. The owner confirmed alpha 1 builds and installs, but activation fails on the target with NEFilterErrorDomain 5 and no flow reports. Treat `2.0.0~alpha2` as a deployment experiment.
+## Use
 
-## Build with GitHub Actions
+1. Install the alpha 3 deb and open **NetShield**.
+2. Tap **Start permission prompts**, then allow notifications when iOS asks. This selects Ask for apps without a rule, retains existing app decisions, and starts or restarts the filter through NetworkExtension. Restarting briefly disables filtering.
+3. Open another app and make a new network request. Use **Allow app** or **Block app** in the notification, or open NetShield's **Permission requests** section. Decisions are saved for future incoming and outgoing flows from that exact OS identity.
+4. If a connection has timed out before you answer, save the rule and retry the app's request. Change saved rules under **Apps and OS identities**.
 
-Put the contents of this folder at the root of your GitHub repository. Run **Actions > Build NetShield 2 experimental > Run workflow**, or push a commit. The macOS job installs a pinned Theos revision, verifies the iOS 16.5 SDK checksum, runs policy and packaging tests, compiles the app/providers and uploads:
+There is no need to enter an app identifier manually for observed requests. NetShield uses the exact identity iOS supplies, including any signing prefix.
 
-`NetShield-2-experimental-iOS16-rootless` containing `com.eolnmsuk.netshield_2.0.0~alpha2_iphoneos-arm64.deb`.
+**Start permission prompts preserves existing explicit rules.** To make a previously decided app ask again, select its identity and choose `use-default`. Reset rules clears all decisions, restores Ask, and allows unattributed traffic. Upgrades otherwise retain existing policy, including the unattributed-flow setting.
 
-The owner runs the workflow in EolnMsuk/NetShieldv2. This local workspace has no configured Git remote or authentication; local edits still need to be uploaded. A local Mac with Theos and the 16.5 SDK can run `make package FINALPACKAGE=1`. Apps and extensions use arm64, which also runs on arm64e devices; no arm64e injected system library is built.
+## Permission behavior
 
-## Deployment is the first acceptance gate
+- With default **Ask**, new attributed flows without an explicit app rule return `needRulesVerdict`. The control provider retains their completion handlers while the user decides.
+- The pending queue has a 30-second monotonic deadline, checked once a second. Unanswered flows are denied. An app can time out sooner. A late Allow saves a rule for a retry; it cannot resurrect a closed connection.
+- Multiple attempts from one identity share one prompt. An expired unresolved request remains in the inbox, and retries are immediately denied until a rule is saved. This prevents repeated notification floods from an app retrying.
+- Limits are 64 unresolved identities, 16 held flows per identity and 256 held flows in total. Overflow is denied. Stopping the control provider resolves outstanding callbacks as denied.
+- Local notifications offer **Allow app** and **Block app** actions. Actions open NetShield and require unlocking. The app validates the request token against the current provider session before saving a rule. Stale notifications cannot change policy.
+- The app also presents requests while it is open. If notification permission is denied, notifications are suppressed by Focus, or iOS rejects scheduling from the control extension, the inbox remains available and the deadline still denies unanswered flows. Scheduling errors appear in Status. **Background notification delivery from this provider is not yet device-verified.**
+- Allow/Block saves an app-wide rule, rather than asking repeatedly for every packet. Unattributed flows cannot be reliably presented as a named app and therefore use their separate Allow/Block setting.
 
-Apple's supported system-wide content-filter path on iOS requires supervision, with a separate Family Controls child-device authorization path. iOS 16 individual Screen Time authorization is insufficient. Per-app managed-device filtering is not an equivalent system-wide deployment.
+## Status and monitoring
 
-The included entitlement declarations and rootless app registration are **experimental jailbreak packaging**, not an Apple provisioning profile and not a verified Dopamine entitlement bypass. Supervision alone also does not prove these ad-hoc signed providers will launch. This package does not spoof supervision, patch `nehelper`/`nesessionmanager`, or alter kernel trust policy.
+**Filtering active** means the saved filter is enabled, a control heartbeat is less than eight seconds old, and OS activity was recorded within 30 seconds. When idle, the display says **Filter enabled: no recent traffic**. A missing heartbeat is shown explicitly. These signals do not certify coverage of every network path.
 
-1. Determine whether Settings displays a supervision message. Record device model, OS build and Dopamine version.
-2. Install the experimental deb. `postinst` registers `/var/jb/Applications/NetShield.app` with `uicache`; this requests registration but does not validate PlugInKit or NE authorization.
-3. If upgrading v1, reboot and re-jailbreak to unload its old hooks from already-running processes. The v2 package contains no injection dylib or Preferences pane.
-4. Open **NetShield** from the Home Screen. Confirm app-group storage is available. Defaults allow attributed and unattributed flows; the filter is initially disabled.
-5. Enable the filter. This may replace another app's active content filter. Any OS error is displayed with its domain and code. A successful save is shown only as a saved configuration.
-6. Generate new traffic. Confirm a recent control-provider heartbeat and actual OS flow reports. Neither proves comprehensive coverage; execute [the device tests](Tests/DEVICE_TESTS.md).
+The monitor retains the latest 300 events per provider session. OS flow-close reports supply byte counts; permission decisions are recorded separately. Payloads, URLs and destinations are not persisted. The data provider only reads shared policy and returns verdicts. It does not send notifications or export flow data through custom IPC.
 
-If the OS denies the configuration or never launches the providers, stop at that gate. The missing work is a demonstrated deployment method for this target, not more socket hooks. There is no automatic fallback that silently presents partial filtering as protection.
+Rules are applied at **new-flow admission**. Existing allowed connections retain their verdict until closed; iOS does not expose the macOS flow-update API. Initially inbound/outbound refers to the direction in which the connection starts, not the direction of reply packets. No protection is promised for raw IP/ICMP, kernel or OS-exempt paths, before provider startup, or while the jailbreak/filter is unavailable.
 
-## Alpha 2 activation experiment
+## Build
 
-Alpha 1 is confirmed inactive on the test device: saved configuration disabled, permission denied (`NEFilterErrorDomain 5`), no provider heartbeat and no flow reports. That error does not distinguish supervision restrictions from entitlement/signing authorization failures.
+Upload this source tree at the root of the GitHub repository, including **all three Resources/Info.plist files**. Run **Actions > Build NetShield 2 experimental** on the new commit. The workflow installs pinned Theos and SDK versions, checks metadata, runs policy and permission-queue tests, builds the app/providers, verifies staged binaries and signed entitlements, and uploads:
 
-Alpha 2 adds `get-task-allow` to the containing app. [Apple documents this development-only exception](https://developer.apple.com/documentation/networkextension/nefiltermanager) for creating content-filter configurations on unsupervised devices. It also makes the app debuggable. This is a test of the configuration permission gate; it is **not** proof of provider launch, supported jailbreak deployment or full network coverage. There is no claim that adding an entitlement to an ad-hoc signature is sufficient for iOS to accept it.
+`NetShield-2-experimental-iOS16-rootless`
 
-The dashboard now identifies whether loading, saving enabled/disabled state, or removing the configuration failed. After installing alpha 2, confirm the title says Alpha 2, enable once, and record the complete status. A saved enabled state with no heartbeat/reports is still a failure of deployment. Alpha 2 still has no connection-permission prompts and does not revoke admitted flows.
+containing `com.eolnmsuk.netshield_2.0.0~alpha3_iphoneos-arm64.deb`.
 
-## Rules and monitoring
+A Mac with Theos and the 16.5 SDK can run `make package FINALPACKAGE=1`. Apps/extensions are arm64 and also run on arm64e devices. No socket-hook or SpringBoard injection library is built.
 
-- Tap an observed OS identity to allow/block it or block initially inbound/outbound flows. Exact `sourceAppIdentifier` values are preserved. Do not assume they equal bundle IDs or remove signing prefixes.
-- Unidentified flows have an explicit allow/block policy. Blocking them can break system services. Shared-daemon attribution is whatever iOS supplies; NetShield does not invent an originating app.
-- Rules apply at **new-flow admission**. Already-admitted flows retain their verdict until closed. Inbound means a flow initiated toward the device, not responses on an outbound connection. Reconnect after rule changes.
-- Invalid/unreadable policy blocks new flows **while a running data provider receives callbacks**. Provider startup errors, crashes, disabled filtering, OS bypasses and pre-jailbreak boot traffic have no fail-closed guarantee.
-- The monitor keeps at most 300 flow reports per control-provider session. Byte totals are supplied at flow close, not continuously. It records no payloads, URLs or destinations. Reports are delayed and may be absent; the display is not a packet capture.
-- No automatic import of v1 rules: the old app-derived identities and direction semantics are incompatible. v1 preferences on the device are ignored.
+Local validation now uses portable Zig/Clang with the pinned iOS SDK. All eight production/test source files compile with warnings treated as errors, and the app plus both providers link successfully as arm64 iOS executables. See [the compiler validation record](Tests/BUILD_VALIDATION.md). The local cross-compiler does not execute iOS binaries or Foundation tests; GitHub runs the tests and builds the signed Theos package. Runtime notification delivery, flow waiting behavior and OS bypasses still require device validation.
 
-## Coverage boundary
+## Deployment and removal
 
-Both `filterSockets` and `filterBrowsers` are requested. Filtering acts on flows the OS delivers, regardless of whether the source app has tweak injection. TCP/UDP, IPv4/IPv6, QUIC, background sessions, shared helpers and daemon attribution still require measured device tests. Raw IP, ICMP, kernel traffic, loopback, VPN interactions and OS-exempt paths are **not claimed covered**. iOS 16 exposes neither `NEFilterPacketProvider` nor the public flow process-audit-token APIs available on macOS.
+Alpha 1's NEFilterErrorDomain 5 activation failure was followed by the owner's successful alpha 2 activation report. The app retains `get-task-allow`, Apple's development-only configuration exception. It makes the app debuggable and is not a production deployment entitlement. Normal iOS distribution of system-wide content filters has supervision/child-authorization restrictions. This is an experimental jailbreak deployment, with evidence limited to the reported device.
 
-Before uninstalling, use **Remove filter configuration**, confirm the saved configuration is disabled and verify connectivity. The removal script unregisters the app; it does not independently prove that the OS removed a lingering NE configuration. If removal was premature, reinstall the app and remove its configuration through the UI. Device restart/re-jailbreak and recovery behavior are acceptance tests, not assumed guarantees.
+Use **Remove filter configuration** before uninstalling. The package removal script unregisters the app, but does not independently remove or verify OS filter preferences. If removed prematurely, reinstall the same app to remove its configuration. Upgrades from v1 still require unloading its old injected dylibs; v2 uses separate OS-hosted providers.
 
-## Source layout and verification
+## Source and tests
 
-| Path | Responsibility |
+| Path | Purpose |
 | --- | --- |
-| `App/` | UIKit dashboard, NE configuration, policy editing, truthful status |
-| `FilterData/` | Sandboxed OS flow decisions; reads atomic policy snapshots |
-| `FilterControl/` | OS reports, bounded metadata history, control heartbeat |
-| `Shared/` | Validated immutable policy, app-group storage |
-| `layout/DEBIAN/` | Rootless registration/removal scripts |
-| `Tests/`, `scripts/` | Policy tests, packaging checks, device acceptance procedure |
-| `.github/workflows/build.yml` | Theos build and experimental deb artifact |
+| App | Dashboard, configuration, foreground prompts and notification decisions |
+| FilterData | OS new-flow decisions and requests for permission |
+| FilterControl | Bounded permission waits, OS reports and local notifications |
+| Shared | Policy validation, permission queue, app-group storage and notification actions |
+| Tests | Policy/queue unit tests, package fixtures and device coverage record |
+| scripts | Metadata, package and signed-entitlement validation |
+| layout/DEBIAN | Rootless registration and removal scripts |
 
-`python scripts/validate.py` and `python Tests/validation_test.py` run without third-party Python packages. Objective-C policy tests need macOS Foundation and run in CI. A package build validates Mach-O architecture, embedded extension metadata, signed entitlements and absence of old injection artifacts. These checks cannot establish OS acceptance or runtime coverage.
+Local checks: `python scripts/validate.py` and `python Tests/validation_test.py`. CI additionally runs `Tests/policy_test.m` and `Tests/permission_test.m`. Queue tests cover coalescing, per-direction decisions, exactly-once completion, timeout, late consent, invalid policy, queue limits and shutdown cancellation.
 
-## Primary references
+## References
 
-- [Apple: Network Extension provider deployment](https://developer.apple.com/documentation/technotes/tn3134-network-extension-provider-deployment)
-- [Apple engineer: iOS 16 individual authorization does not enable content filters](https://developer.apple.com/forums/thread/715226)
-- [Apple: source app identity](https://developer.apple.com/documentation/networkextension/nefilterflow/sourceappidentifier)
-- [Apple: content-filter provider model](https://developer.apple.com/documentation/networkextension/nefilterprovider)
+- [Apple: filter manager and development exception](https://developer.apple.com/documentation/networkextension/nefiltermanager)
+- [Apple: control-provider new-flow decisions](https://developer.apple.com/documentation/networkextension/nefiltercontrolprovider/handlenewflow(_:completionhandler:))
+- [Apple: provider deployment](https://developer.apple.com/documentation/technotes/tn3134-network-extension-provider-deployment)
 - [Theos: rootless packaging](https://theos.dev/docs/rootless)
-- [Dopamine releases](https://github.com/opa334/Dopamine/releases)
 
 MIT License. Copyright 2026 EolnMsuk.

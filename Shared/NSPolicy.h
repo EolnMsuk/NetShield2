@@ -14,5 +14,6 @@ typedef NS_ENUM(NSInteger, NSFlowDirection) {
 + (NSDictionary *)defaultDocument;
 + (nullable instancetype)policyWithDocument:(id)document error:(NSError * _Nullable * _Nullable)error;
 - (BOOL)allowsIdentity:(nullable NSString *)identity direction:(NSFlowDirection)direction;
+- (BOOL)requiresPermissionForIdentity:(nullable NSString *)identity;
 @end
 NS_ASSUME_NONNULL_END

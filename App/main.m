@@ -2,6 +2,7 @@
 #include <float.h>
 #import <NetworkExtension/NetworkExtension.h>
 #import "../Shared/NSStore.h"
+#import "../Shared/NSNotifications.h"
 
 @interface NSDashboard : UITableViewController
 @property(nonatomic, strong) NSPolicy *policy;
@@ -11,12 +12,18 @@
 @property(nonatomic, strong) NSTimer *timer;
 @property(nonatomic) BOOL busy;
 @property(nonatomic) BOOL loaded;
+@property(nonatomic, strong) NSMutableSet<NSString *> *deferredRequests;
+@property(nonatomic, copy) NSString *notificationStatus;
+- (void)answerRequest:(NSDictionary *)request allow:(BOOL)allow;
+- (void)presentRequest:(NSDictionary *)request;
+- (void)reloadMonitor;
 @end
 
 @implementation NSDashboard
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = @"NetShield 2 · Alpha 2";
+    self.title = @"NetShield";
+    self.deferredRequests = [NSMutableSet new];
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemRefresh target:self action:@selector(loadConfiguration)];
     self.tableView.rowHeight = UITableViewAutomaticDimension;
     self.tableView.estimatedRowHeight = 64;
@@ -28,7 +35,7 @@
         (error.code == NSFileReadNoSuchFileError || error.code == NSFileNoSuchFileError)) {
         if (NSWriteDocument([NSPolicy defaultDocument], @"policy.plist", &error)) self.policy = NSReadPolicy(&error);
     }
-    self.message = self.policy ? @"Filter is off until you enable it. Device deployment has not been validated." : error.localizedDescription;
+    self.message = self.policy ? @"Choose Ask for apps without a rule to receive permission requests." : error.localizedDescription;
     [self loadConfiguration];
 }
 - (void)configurationChanged:(NSNotification *)notification {
@@ -50,6 +57,8 @@
     self.timer = nil;
 }
 - (void)reloadMonitor {
+    NSPolicy *latest = NSReadPolicy(NULL);
+    if (latest) self.policy = latest;
     self.monitor = NSReadMonitor();
     NSMutableSet *identities = [NSMutableSet setWithArray:[self.policy.document[@"rules"] allKeys] ?: @[]];
     for (NSDictionary *event in self.monitor[@"events"]) {
@@ -57,13 +66,64 @@
         if ([identity isKindOfClass:NSString.class] && identity.length) [identities addObject:identity];
     }
     self.identities = [[identities allObjects] sortedArrayUsingSelector:@selector(compare:)];
+    NSSet *tokens = [NSSet setWithArray:[self.monitor[@"requests"] valueForKey:@"token"] ?: @[]];
+    [self.deferredRequests intersectSet:tokens];
     [self.tableView reloadData];
+    if (UIApplication.sharedApplication.applicationState == UIApplicationStateActive &&
+        !self.presentedViewController && self.loaded && [NEFilterManager sharedManager].enabled && [self hasFreshMonitor]) {
+        for (NSDictionary *request in self.monitor[@"requests"]) {
+            if (![self.deferredRequests containsObject:request[@"token"]]) { [self presentRequest:request]; break; }
+        }
+    }
+}
+- (BOOL)hasFreshMonitor {
+    NSDate *updated = self.monitor[@"updated"];
+    NSTimeInterval age = [updated isKindOfClass:NSDate.class] ? -updated.timeIntervalSinceNow : DBL_MAX;
+    return age >= 0 && age < 8 && [self.monitor[@"controlRunning"] boolValue];
+}
+- (void)requestNotifications {
+    NSRegisterPermissionActions();
+    [UNUserNotificationCenter.currentNotificationCenter requestAuthorizationWithOptions:UNAuthorizationOptionAlert | UNAuthorizationOptionSound completionHandler:^(BOOL granted, NSError *error) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self.notificationStatus = granted ? @"Notifications allowed" : @"Notifications off — answer requests in NetShield";
+            if (error) self.notificationStatus = error.localizedDescription;
+            [self.tableView reloadData];
+        });
+    }];
+}
+- (void)answerRequest:(NSDictionary *)request allow:(BOOL)allow {
+    // Validate against the current provider session, not a possibly stale notification.
+    NSDictionary *monitor = NSReadMonitor();
+    BOOL current = NO;
+    for (NSDictionary *candidate in monitor[@"requests"]) {
+        if ([candidate[@"token"] isEqual:request[@"token"]] && [candidate[@"identity"] isEqual:request[@"identity"]]) { current = YES; break; }
+    }
+    if (!current) { self.message = @"This request is no longer pending. New requests appear below."; [self reloadMonitor]; return; }
+    NSError *error = nil;
+    NSPolicy *policy = NSReadPolicy(&error);
+    if (!policy) { [self showError:error]; return; }
+    NSMutableDictionary *document = [policy.document mutableCopy];
+    NSMutableDictionary *rules = [document[@"rules"] mutableCopy];
+    rules[request[@"identity"]] = allow ? @"allow" : @"block";
+    document[@"rules"] = rules;
+    [self.deferredRequests addObject:request[@"token"]];
+    [self savePolicy:document];
+}
+- (void)presentRequest:(NSDictionary *)request {
+    if (self.presentedViewController) return;
+    [self.deferredRequests addObject:request[@"token"]];
+    NSString *message = [NSString stringWithFormat:@"%@\n\nSave a rule for this app's incoming and outgoing connections. Unanswered connections are blocked after 30 seconds; retry the app if it has already timed out.", request[@"identity"]];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Allow network access?" message:message preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Allow app" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) { [self answerRequest:request allow:YES]; }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Block app" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) { [self answerRequest:request allow:NO]; }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Not now" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
 }
 - (void)showError:(NSError *)error {
     [self showError:error operation:@"Policy/storage"];
 }
 - (void)showError:(NSError *)error operation:(NSString *)operation {
-    self.message = [NSString stringWithFormat:@"%@: %@ (%@ %ld). Activation and coverage are unverified.", operation, error.localizedDescription, error.domain, (long)error.code];
+    self.message = [NSString stringWithFormat:@"%@: %@ (%@ %ld).", operation, error.localizedDescription, error.domain, (long)error.code];
     [self.tableView reloadData];
 }
 - (void)loadConfiguration {
@@ -96,24 +156,50 @@
                 dispatch_async(dispatch_get_main_queue(), ^{
                     self.busy = NO;
                     if (error) [self showError:error operation:operation == 2 ? @"Remove filter configuration" : (operation == 1 ? @"Save enabled filter" : @"Save disabled filter")];
-                    else self.message = operation == 1 ? @"Enable request saved. This does not prove the providers started or that all traffic is covered. Generate new traffic and inspect reports below." : @"Disable/remove request saved. Verify network access before uninstalling.";
+                    else self.message = operation == 1 ? @"Filter enabled. Waiting for provider activity." : @"Filter disabled or removed.";
                     [self loadConfiguration];
                 });
             };
             if (operation == 2) { [manager removeFromPreferencesWithCompletionHandler:finished]; return; }
-            if (operation == 1) {
-                NEFilterProviderConfiguration *configuration = [NEFilterProviderConfiguration new];
-                configuration.filterSockets = YES;
-                configuration.filterBrowsers = YES;
-                configuration.organization = @"NetShield";
-                configuration.vendorConfiguration = @{@"schema": @2};
-                // iOS locates the embedded providers. Bundle-ID setters and the
-                // packet-filter switch are macOS-only APIs; do not use them here.
-                manager.providerConfiguration = configuration;
-                manager.localizedDescription = @"NetShield experimental flow filter";
-            }
-            manager.enabled = operation == 1;
-            [manager saveToPreferencesWithCompletionHandler:finished];
+            void (^saveRequestedState)(void) = ^{
+                if (operation == 1) {
+                    NEFilterProviderConfiguration *configuration = [NEFilterProviderConfiguration new];
+                    configuration.filterSockets = YES;
+                    configuration.filterBrowsers = YES;
+                    configuration.organization = @"NetShield";
+                    configuration.vendorConfiguration = @{@"schema": @2, @"engine": @20003};
+                    manager.providerConfiguration = configuration;
+                    manager.localizedDescription = @"NetShield network access control";
+                }
+                manager.enabled = operation == 1;
+                [manager saveToPreferencesWithCompletionHandler:finished];
+            };
+            if (operation == 1 && manager.enabled) {
+                // Restart through NE so an upgrade does not keep the old provider
+                // instance alive while the new app writes an Ask policy.
+                manager.enabled = NO;
+                [manager saveToPreferencesWithCompletionHandler:^(NSError *disableError) {
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        if (disableError) {
+                            self.busy = NO;
+                            [self showError:disableError operation:@"Stop filter before restart"];
+                            [self loadConfiguration];
+                            return;
+                        }
+                        [manager loadFromPreferencesWithCompletionHandler:^(NSError *reloadError) {
+                            dispatch_async(dispatch_get_main_queue(), ^{
+                                if (reloadError) {
+                                    self.busy = NO;
+                                    self.loaded = NO;
+                                    [self showError:reloadError operation:@"Reload filter before restart"];
+                                    return;
+                                }
+                                saveRequestedState();
+                            });
+                        }];
+                    });
+                }];
+            } else saveRequestedState();
         });
     }];
 }
@@ -130,7 +216,7 @@
     if (!self.policy) return;
     NSString *title = key ? ([key isEqual:@"default"] ? @"Apps without a rule" : @"Unattributed flows") : identity;
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:title message:@"Inbound/outbound refer to the initial flow direction, not reply packets. Changes apply to new flows." preferredStyle:UIAlertControllerStyleAlert];
-    NSArray *actions = key ? @[@"allow", @"block"] : @[@"allow", @"block", @"block-inbound", @"block-outbound", @"use-default"];
+    NSArray *actions = key ? ([key isEqual:@"default"] ? @[@"ask", @"allow", @"block"] : @[@"allow", @"block"]) : @[@"allow", @"block", @"block-inbound", @"block-outbound", @"use-default"];
     for (NSString *action in actions) {
         [alert addAction:[UIAlertAction actionWithTitle:action style:UIAlertActionStyleDefault handler:^(UIAlertAction *selected) {
             NSMutableDictionary *document = [self.policy.document mutableCopy];
@@ -161,21 +247,36 @@
     [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];
 }
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { return 5; }
+- (void)startPermissionPrompts {
+    NSError *error = nil;
+    NSPolicy *policy = NSReadPolicy(&error);
+    if (!policy) { [self showError:error]; return; }
+    NSMutableDictionary *document = [policy.document mutableCopy];
+    document[@"default"] = @"ask";
+    document[@"revision"] = NSUUID.UUID.UUIDString;
+    if (!NSWriteDocument(document, @"policy.plist", &error)) { [self showError:error]; return; }
+    self.policy = [NSPolicy policyWithDocument:document error:NULL];
+    [self requestNotifications];
+    [self changeConfiguration:1];
+}
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { return 6; }
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     if (section == 0) return 1;
-    if (section == 1) return 3;
-    if (section == 2) return 4;
-    if (section == 3) return MAX((NSUInteger)1, self.identities.count);
+    if (section == 1) return 4;
+    if (section == 2) return MAX((NSUInteger)1, [self.monitor[@"requests"] count]);
+    if (section == 3) return 5;
+    if (section == 4) return MAX((NSUInteger)1, self.identities.count);
     return MAX((NSUInteger)1, [self.monitor[@"events"] count]);
 }
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
-    return @[@"Deployment status", @"Filter configuration", @"Policy for new flows", @"OS identities · tap to edit", @"Recent flow reports · newest first"][section];
+    return @[@"Status", @"Controls", @"Permission requests", @"Rules", @"Apps and OS identities", @"Recent activity"][section];
 }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
-    if (section == 0) return @"Target: iOS 16.1.1 / Dopamine 3.0.10. Supervision, entitlement acceptance, app-group access and provider registration must be verified on-device. No all-traffic or boot-time protection guarantee.";
-    if (section == 2) return @"Unknown attribution has its own policy. Blocking it may interrupt system services. Existing allowed flows are not revoked. Reset restores allow defaults.";
-    if (section == 4) return @"Up to 300 reports per control-provider session. Byte totals appear at flow close. Missing reports do not imply no traffic. Payloads and destinations are not recorded.";
+    if (section == 0) return @"NetShield filters connections delivered by iOS. System-exempt traffic and traffic before the filter starts are not guaranteed covered.";
+    if (section == 2) return @"Allow or block an app once to save its rule. Unanswered connections are blocked after a 30-second deadline; expired requests remain here so you can allow the app and retry.";
+    if (section == 3) return @"Ask prompts for apps without a rule. Unattributed traffic uses its own policy. Existing allowed connections keep their verdict until closed.";
+    if (section == 4) return @"These are the identities iOS supplies. Tap one to change its rule. Shared system services may have no app identity.";
+    if (section == 5) return @"Latest 300 events. Byte totals appear at flow close. Permission decisions are also listed. No payloads or destinations are stored.";
     return nil;
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)path {
@@ -183,22 +284,38 @@
     cell.textLabel.numberOfLines = 0;
     cell.detailTextLabel.numberOfLines = 0;
     if (path.section == 0) {
-        NSDate *updated = self.monitor[@"updated"];
-        NSTimeInterval age = [updated isKindOfClass:NSDate.class] ? -updated.timeIntervalSinceNow : DBL_MAX;
-        BOOL fresh = age >= 0 && age < 8 && [self.monitor[@"controlRunning"] boolValue];
-        NSString *saved = !self.loaded ? @"unknown" : ([NEFilterManager sharedManager].enabled ? @"enabled" : @"disabled");
-        cell.textLabel.text = [NSString stringWithFormat:@"Saved configuration: %@\nControl heartbeat: %@", saved, fresh ? @"recent" : @"absent or stale"];
+        BOOL enabled = self.loaded && [NEFilterManager sharedManager].enabled;
+        BOOL fresh = [self hasFreshMonitor];
         NSDate *last = self.monitor[@"lastReport"];
-        NSString *report = [last isKindOfClass:NSDate.class] && last.timeIntervalSince1970 > 0 ? last.description : @"none";
-        cell.detailTextLabel.text = [NSString stringWithFormat:@"%@\nLast OS flow report: %@\n%@", self.message ?: @"", report, self.monitor[@"policyError"] ?: @""];
+        BOOL observed = [last isKindOfClass:NSDate.class] && last.timeIntervalSince1970 > 0;
+        BOOL recentActivity = observed && last.timeIntervalSinceNow <= 0 && -last.timeIntervalSinceNow < 30;
+        NSString *state = !self.loaded ? @"Unable to read filter state" : !enabled ? @"Filter off" : !fresh ? @"Filter unavailable: no current heartbeat" : !recentActivity ? @"Filter enabled: no recent traffic" : @"Filtering active";
+        if (enabled && [self.monitor[@"policyError"] length]) state = @"Policy error: new flows are blocked";
+        cell.textLabel.text = state;
+        cell.textLabel.textColor = [state isEqual:@"Filtering active"] ? UIColor.systemGreenColor : UIColor.labelColor;
+        NSString *time = observed ? [NSDateFormatter localizedStringFromDate:last dateStyle:NSDateFormatterShortStyle timeStyle:NSDateFormatterMediumStyle] : @"None yet";
+        cell.detailTextLabel.text = [NSString stringWithFormat:@"Last OS activity: %@\n%@\n%@\n%@", time,
+            [self.message isEqual:@"Filter enabled. Waiting for provider activity."] && fresh && observed ? @"Rules are being applied to new connections." : (self.message ?: @""),
+            self.monitor[@"policyError"] ?: @"", self.monitor[@"notificationError"] ?: @""];
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
     } else if (path.section == 1) {
-        cell.textLabel.text = @[@"Enable filter…", @"Disable filter", @"Remove filter configuration"][path.row];
+        cell.textLabel.text = @[@"Start permission prompts", @"Enable filter with current rules", @"Disable filter", @"Remove filter configuration"][path.row];
         cell.textLabel.textColor = self.busy ? UIColor.secondaryLabelColor : self.view.tintColor;
     } else if (path.section == 2) {
-        cell.textLabel.text = @[@"Apps without a rule", @"Unattributed flows", @"Add exact identity…", @"Reset policy to allow defaults…"][path.row];
-        if (path.row < 2) cell.detailTextLabel.text = self.policy.document[path.row ? @"unattributed" : @"default"] ?: @"Policy unavailable";
+        NSArray *requests = self.monitor[@"requests"];
+        if (!requests.count) cell.textLabel.text = @"No apps waiting for permission";
+        else {
+            NSDictionary *request = requests[path.row];
+            cell.textLabel.text = request[@"identity"];
+            cell.detailTextLabel.text = [request[@"expired"] boolValue] ? @"Timed out and blocked: tap to save a rule, then retry the app" :
+                [NSString stringWithFormat:@"%@ connection(s) waiting: tap Allow or Block", request[@"waiting"]];
+            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        }
     } else if (path.section == 3) {
+        cell.textLabel.text = @[@"Apps without a rule", @"Unattributed flows", @"Notification permission", @"Add exact app identity...", @"Reset rules..."][path.row];
+        if (path.row < 2) cell.detailTextLabel.text = self.policy.document[path.row ? @"unattributed" : @"default"] ?: @"Policy unavailable";
+        if (path.row == 2) cell.detailTextLabel.text = self.notificationStatus ?: @"Tap to enable permission notifications";
+    } else if (path.section == 4) {
         if (!self.identities.count) cell.textLabel.text = @"No app identities observed yet";
         else {
             NSString *identity = self.identities[path.row];
@@ -210,10 +327,8 @@
         if (!events.count) cell.textLabel.text = @"No flow reports received";
         else {
             NSDictionary *event = events[events.count - 1 - path.row];
-            cell.textLabel.text = [NSString stringWithFormat:@"%@ · %@", event[@"action"], [event[@"identity"] length] ? event[@"identity"] : @"Unattributed"];
-            cell.detailTextLabel.text = [NSString stringWithFormat:@"%@ · %@ · event %@\nIn %@ B / Out %@ B",
-                event[@"time"], event[@"direction"], event[@"event"],
-                event[@"bytesIn"], event[@"bytesOut"]];
+            cell.textLabel.text = [NSString stringWithFormat:@"%@: %@", event[@"action"], [event[@"identity"] length] ? event[@"identity"] : @"Unattributed"];
+            cell.detailTextLabel.text = [NSString stringWithFormat:@"%@ / %@\nIn %@ B / Out %@ B", event[@"time"], event[@"direction"], event[@"bytesIn"], event[@"bytesOut"]];
         }
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
     }
@@ -222,33 +337,62 @@
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)path {
     [tableView deselectRowAtIndexPath:path animated:YES];
     if (path.section == 1 && !self.busy) {
-        if (path.row) { [self changeConfiguration:path.row == 1 ? 0 : 2]; return; }
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Enable experimental filter?" message:@"iOS may disable another app's content filter. A saved configuration does not prove filtering works. Use the device test checklist before relying on NetShield." preferredStyle:UIAlertControllerStyleAlert];
-        [alert addAction:[UIAlertAction actionWithTitle:@"Enable" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) { [self changeConfiguration:1]; }]];
+        if (path.row >= 2) { [self changeConfiguration:path.row == 2 ? 0 : 2]; return; }
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Enable NetShield?" message:@"This starts or restarts NetShield and may disable another app's content filter. Existing saved app rules will be kept." preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"Enable" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+            if (path.row == 0) [self startPermissionPrompts]; else [self changeConfiguration:1];
+        }]];
         [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
         [self presentViewController:alert animated:YES completion:nil];
-    } else if (path.section == 2) {
+    } else if (path.section == 2 && [self.monitor[@"requests"] count]) {
+        [self presentRequest:self.monitor[@"requests"][path.row]];
+    } else if (path.section == 3) {
         if (path.row < 2) [self chooseActionForIdentity:nil defaultKey:path.row ? @"unattributed" : @"default"];
-        else if (path.row == 2) [self addIdentity];
+        else if (path.row == 2) [self requestNotifications];
+        else if (path.row == 3) [self addIdentity];
         else {
-            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Reset all v2 rules?" message:@"Restores allow for new attributed and unattributed flows. Does not enable or disable the OS filter." preferredStyle:UIAlertControllerStyleAlert];
+            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Reset all rules?" message:@"Removes saved app decisions, asks for unknown apps and allows unattributed traffic. Does not enable or disable the filter." preferredStyle:UIAlertControllerStyleAlert];
             [alert addAction:[UIAlertAction actionWithTitle:@"Reset" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) { [self savePolicy:[[NSPolicy defaultDocument] mutableCopy]]; }]];
             [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
             [self presentViewController:alert animated:YES completion:nil];
         }
-    } else if (path.section == 3 && self.identities.count) [self chooseActionForIdentity:self.identities[path.row] defaultKey:nil];
+    } else if (path.section == 4 && self.identities.count) [self chooseActionForIdentity:self.identities[path.row] defaultKey:nil];
 }
 @end
 
-@interface NSAppDelegate : UIResponder <UIApplicationDelegate>
+@interface NSAppDelegate : UIResponder <UIApplicationDelegate, UNUserNotificationCenterDelegate>
 @property(nonatomic, strong) UIWindow *window;
+@property(nonatomic, strong) NSDashboard *dashboard;
 @end
 @implementation NSAppDelegate
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)options {
+    NSRegisterPermissionActions();
+    UNUserNotificationCenter.currentNotificationCenter.delegate = self;
     self.window = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
-    self.window.rootViewController = [[UINavigationController alloc] initWithRootViewController:[[NSDashboard alloc] initWithStyle:UITableViewStyleInsetGrouped]];
+    self.dashboard = [[NSDashboard alloc] initWithStyle:UITableViewStyleInsetGrouped];
+    self.window.rootViewController = [[UINavigationController alloc] initWithRootViewController:self.dashboard];
     [self.window makeKeyAndVisible];
     return YES;
+}
+- (void)userNotificationCenter:(UNUserNotificationCenter *)center willPresentNotification:(UNNotification *)notification
+        withCompletionHandler:(void (^)(UNNotificationPresentationOptions))completionHandler {
+    // Foreground requests already have a modal and an inbox; avoid duplicate banners.
+    dispatch_async(dispatch_get_main_queue(), ^{ [self.dashboard reloadMonitor]; completionHandler(UNNotificationPresentationOptionNone); });
+}
+- (void)userNotificationCenter:(UNUserNotificationCenter *)center didReceiveNotificationResponse:(UNNotificationResponse *)response
+        withCompletionHandler:(void (^)(void))completionHandler {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        NSDictionary *request = response.notification.request.content.userInfo;
+        if ([response.notification.request.content.categoryIdentifier isEqual:NSPermissionCategory] &&
+            [request[@"token"] isKindOfClass:NSString.class] && [request[@"identity"] isKindOfClass:NSString.class]) {
+            // Force view initialization before handling a cold-start action.
+            [self.dashboard loadViewIfNeeded];
+            if ([response.actionIdentifier isEqual:NSAllowAction] || [response.actionIdentifier isEqual:NSBlockAction]) {
+                [self.dashboard answerRequest:request allow:[response.actionIdentifier isEqual:NSAllowAction]];
+            } else [self.dashboard reloadMonitor];
+        }
+        completionHandler();
+    });
 }
 @end
 
