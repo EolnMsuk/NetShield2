@@ -3,7 +3,7 @@ set -eu
 case "${1:-}" in
     configure)
         # App and NE providers only: no injected SpringBoard code to respring.
-        printf '%s\n' 'NetShield alpha 5: open the app and Start permission prompts to restart providers. No respring required.'
+        printf '%s\n' 'NetShield alpha 6: open the app and Start permission prompts to restart providers. No respring required.'
         # Re-register changed notification metadata, including upgrades from alpha 4.
         if [ -n "${2:-}" ]; then
             if ! /var/jb/usr/bin/uicache -u /var/jb/Applications/NetShield.app; then

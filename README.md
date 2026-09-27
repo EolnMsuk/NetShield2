@@ -1,8 +1,14 @@
 # NetShield 2
 
-OS-level network access control for rootless iOS 16, with a Home Screen app, a Network Extension data provider and a separate control provider. Current build: **2.0.0~alpha5**.
+OS-level network access control for rootless iOS 16, with a Home Screen app, a Network Extension data provider and a separate control provider. Current build: **2.0.0~alpha6**.
 
 The owner has confirmed that alpha 2 builds, installs, enables both providers, reports OS flows, and blocks the traffic they tried when the default rule is Block on **iOS 16.1.1 / Dopamine 3.0.10**. Comprehensive protocol coverage and reliable attribution of every system flow have not been established. The owner also confirms alpha 3 in-app prompts work. Alpha 5 fixes notification action handling and setup, and adds settings diagnostics, a delivery test and retries. Its background delivery still needs device validation.
+
+## Alpha 6 delivery diagnostics
+
+The owner confirms alpha 5 appears in iOS notification settings and filters traffic, but neither the ordinary test banner nor real permission banners appear. Registration is improved; delivery is **not fixed or verified**. Alpha 6 adds **Copy notification diagnostics** with current app authorization/settings, pending/delivered test status, persistent last test scheduling result, and control-provider submission errors plus its own authorization/alert state. No new private entitlements or notification bypass are added without evidence.
+
+To isolate delivery: tap Test notification, go to the **Home Screen**, wait ten seconds, then return and tap Copy notification diagnostics. Paste that report into the support conversation. No reset is necessary. A new Ask flow from an app switched to during the test can independently block that app; the test itself never changes rules. Notifications marked delivered are present in Notification Center, which does not prove a banner was visible. A missing pending/delivered test does not by itself identify the cause (for example, a dismissed notification is no longer delivered).
 
 ## Alpha 5 notification registration and reset
 
@@ -49,7 +55,7 @@ Upload this source tree at the root of the GitHub repository, including **all th
 
 `NetShield-2-experimental-iOS16-rootless`
 
-containing `com.eolnmsuk.netshield_2.0.0~alpha5_iphoneos-arm64.deb`.
+containing `com.eolnmsuk.netshield_2.0.0~alpha6_iphoneos-arm64.deb`.
 
 A Mac with Theos and the 16.5 SDK can run `make package FINALPACKAGE=1`. Apps/extensions are arm64 and also run on arm64e devices. No socket-hook or SpringBoard injection library is built.
 

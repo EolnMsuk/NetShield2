@@ -1,6 +1,6 @@
 Package: com.eolnmsuk.netshield
 Name: NetShield
-Version: 2.0.0~alpha5
+Version: 2.0.0~alpha6
 Architecture: iphoneos-arm64
 Description: Experimental OS content filter and flow monitor. Requires verified provider deployment; not an all-packet firewall.
 Maintainer: EolnMsuk

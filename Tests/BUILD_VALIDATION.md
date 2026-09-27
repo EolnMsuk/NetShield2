@@ -21,3 +21,5 @@ The command records exact commands and diagnostics in `validation.json` in the o
 These checks do not execute the policy or permission-queue tests, sign entitlement-bearing binaries, build a Theos deb, or exercise the device. GitHub's macOS workflow runs the Foundation tests and builds/verifies the package. Activation, basic blocking and alpha 3 in-app decisions were confirmed by the owner. Alpha 5 notification delivery and background decisions still require iOS execution.
 
 Alpha 5 adds system-app notification metadata (required by the validator) and a configuration-removal-first reset. These paths compile/link but their iOS registration and provider-stop behavior cannot be executed by the Windows compiler.
+
+Alpha 6 (2026-09-27): all nine source compiles and three links pass; metadata and six package fixtures pass. Foundation tests are compiled locally, executed only in macOS CI. App and provider notification diagnostics have not been executed on-device. No successful delivery claim is made.

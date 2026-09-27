@@ -17,7 +17,7 @@
 
 @implementation NSFilterControlProvider
 - (NSDictionary *)snapshotWithRunning:(BOOL)running policyError:(NSError *)error {
-    return @{@"engine": @20005, @"schema": @2, @"controlRunning": @(running), @"session": self.session ?: @"",
+    return @{@"engine": @20006, @"schema": @2, @"controlRunning": @(running), @"session": self.session ?: @"",
              @"updated": NSDate.date, @"lastReport": self.lastReport ?: [NSDate dateWithTimeIntervalSince1970:0],
              @"revision": self.revision ?: @"", @"policyError": error.localizedDescription ?: @"",
              @"events": [self.events copy] ?: @[], @"requests": self.permissions.requests ?: @[],
@@ -149,12 +149,15 @@
     content.userInfo = @{@"token": request[@"token"], @"identity": identity};
     UNNotificationRequest *notification = [UNNotificationRequest requestWithIdentifier:request[@"token"] content:content trigger:nil];
     [UNUserNotificationCenter.currentNotificationCenter addNotificationRequest:notification withCompletionHandler:^(NSError *error) {
-        NSFilterControlProvider *owner = weakSelf;
-        if (!owner) return;
-        @synchronized(owner) {
-            if (!owner.stopped) owner.notificationError = error ?
-                [NSString stringWithFormat:@"Notifications unavailable (%@ %ld). Open NetShield to answer requests.", error.domain, (long)error.code] : @"Provider notification accepted by iOS. Banner display is not confirmed.";
-        }
+        [UNUserNotificationCenter.currentNotificationCenter getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings *settings) {
+            NSFilterControlProvider *owner = weakSelf;
+            if (!owner) return;
+            @synchronized(owner) {
+                if (!owner.stopped) owner.notificationError = [NSString stringWithFormat:@"Provider notification at %@: %@. Provider authorization=%ld, alerts=%ld (2=enabled). Banner display is not confirmed.", NSDate.date,
+                    error ? [NSString stringWithFormat:@"%@ (%@ %ld)", error.localizedDescription, error.domain, (long)error.code] : @"submission accepted",
+                    (long)settings.authorizationStatus, (long)settings.alertSetting];
+            }
+        }];
     }];
 }
 

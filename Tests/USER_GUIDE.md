@@ -1,3 +1,15 @@
+# Alpha 6: isolated notification diagnostic
+
+Install alpha 6 and restart providers using Enable filter with current rules. Keep your rules; do not reset again. This is an evidence-gathering build, not a confirmed banner-delivery fix.
+
+1. Tap Test notification (5 seconds), go to the Home Screen, and wait ten seconds. Do not open a network app for this test.
+2. Return to NetShield and tap Copy notification diagnostics. Paste the copied report into the support conversation.
+3. Report separately whether you saw a banner or found the test in Notification Center. Do not dismiss it before collecting diagnostics if present.
+
+The status should show control build 20006. The content filter's enabled state and OS flow reports are the operational evidence; it is not a VPN tunnel and does not require a VPN server entry. In-app prompts are not evidence that iOS delivered notifications.
+
+The previous reset/feature walkthrough follows for reference; repeating reset is not required for this diagnostic.
+
 # NetShield alpha 5: installation, permissions and tests
 
 Target reported by owner: iOS 16.1.1, Dopamine 3.0.10, rootless.
