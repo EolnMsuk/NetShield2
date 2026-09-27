@@ -1,6 +1,6 @@
 # NetShield2
 
-Control internet access on rootless (roothide users use roothide patcher to convert the deb before installing) iOS 15-17 devices. iOS 15 and 17 compatibility is experimental pending device testing. NetShield uses an OS content filter, saved app rules and actionable notifications.
+A firewall & live network filter for jailbroken iOS 15 / 16 / 17 devices. iOS 15 and 17 compatibility is experimental pending device testing. NetShield uses an OS content filter, saved app rules and actionable notifications.
 
 ![NetShield banner](App/Resources/banner.png)
 
