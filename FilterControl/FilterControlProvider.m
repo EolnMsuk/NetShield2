@@ -14,6 +14,8 @@
 @property(nonatomic, strong) NSPermissionQueue *permissions;
 @property(nonatomic, copy) NSString *notificationError;
 @property(nonatomic, copy) NSString *notificationRetry;
+@property(nonatomic, copy) NSString *linkHandoff;
+@property(nonatomic, strong) NSMutableSet<NSString *> *replayedLinkTokens;
 @property(nonatomic, copy) NSString *notificationDeliveryIssue;
 @property(nonatomic, strong) NSMutableSet<NSString *> *submittedNotifications;
 @property(nonatomic, strong) NSMutableSet<NSString *> *submittingNotifications;
@@ -23,7 +25,7 @@
 
 @implementation NSFilterControlProvider
 - (NSDictionary *)snapshotWithRunning:(BOOL)running policyError:(NSError *)error {
-    return @{@"engine": @20013, @"schema": @2, @"controlRunning": @(running), @"session": self.session ?: @"",
+    return @{@"engine": @20014, @"schema": @2, @"controlRunning": @(running), @"session": self.session ?: @"",
              @"updated": NSDate.date, @"lastReport": self.lastReport ?: [NSDate dateWithTimeIntervalSince1970:0],
              @"revision": self.revision ?: @"", @"policyError": error.localizedDescription ?: @"",
              @"events": [self.events copy] ?: @[], @"requests": self.permissions.requests ?: @[],
@@ -58,6 +60,20 @@
             [self.notificationAttempts removeAllObjects];
             [self.notificationAttemptTimes removeAllObjects];
         }
+        NSDictionary *handoff = NSReadDocument(@"notification-handoff.plist", NULL);
+        NSString *handoffID = handoff[@"handoff"];
+        if ([handoffID isKindOfClass:NSString.class] && ![handoffID isEqual:self.linkHandoff]) {
+            self.linkHandoff = handoffID;
+            [self.replayedLinkTokens removeAllObjects];
+        }
+        for (NSDictionary *request in NSLinkHandoffRetries(handoff, self.permissions.requests,
+                self.replayedLinkTokens, self.submittingNotifications, policy, NSDate.date)) {
+            NSString *token = request[@"token"];
+            [self.replayedLinkTokens addObject:token];
+            [self.submittedNotifications removeObject:token];
+            [self.notificationAttempts removeObjectForKey:token];
+            [self.notificationAttemptTimes removeObjectForKey:token];
+        }
         // Submission failures do not get another enqueue callback for this
         // identity. Retry at most three times, with five seconds between attempts.
         // Returning from notification settings starts a fresh retry budget.
@@ -86,6 +102,8 @@
     self.notificationDeliveryIssue = @"";
     self.submittedNotifications = [NSMutableSet new];
     self.submittingNotifications = [NSMutableSet new];
+    self.linkHandoff = nil;
+    self.replayedLinkTokens = [NSMutableSet new];
     self.notificationAttempts = [NSMutableDictionary new];
     self.notificationAttemptTimes = [NSMutableDictionary new];
     NSRegisterPermissionActions();

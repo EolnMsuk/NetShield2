@@ -50,9 +50,9 @@ for directory, binary, suffix, point, principal in bundles:
     require(info['CFBundleIdentifier'] == 'com.eolnmsuk.netshield' + suffix, 'Bundle ID mismatch')
     require(info['CFBundleExecutable'] == binary, 'Executable mismatch')
     require(info['MinimumOSVersion'] == '15.0', 'Deployment mismatch')
-    require(info.get('CFBundleVersion') == '20013',
+    require(info.get('CFBundleVersion') == '20014',
             f'{directory}/Resources/Info.plist: CFBundleVersion is '
-            f'{info.get("CFBundleVersion")!r}; expected "20013" for {metadata["Version"]}. '
+            f'{info.get("CFBundleVersion")!r}; expected "20014" for {metadata["Version"]}. '
             'Upload all three release Info.plist files and start a new workflow run on that commit.')
     if point:
         require(info['NSExtension'] == dict(NSExtensionPointIdentifier=point, NSExtensionPrincipalClass=principal), 'Bad extension registration metadata')
