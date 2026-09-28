@@ -10,6 +10,7 @@
 
 @interface NSPermissionEntry : NSObject
 @property(nonatomic, copy) NSString *identity;
+@property(nonatomic, copy) NSDictionary *destination;
 @property(nonatomic, copy) NSString *token;
 @property(nonatomic, strong) NSDate *created;
 @property(nonatomic) NSTimeInterval deadline;
@@ -22,6 +23,7 @@
     return @{
         @"token" : self.token,
         @"identity" : self.identity,
+        @"destination" : self.destination ?: @{},
         @"created" : self.created,
         @"expires" : [self.created dateByAddingTimeInterval:NSPermissionTimeout],
         @"waiting" : @(self.waiters.count),
@@ -87,6 +89,19 @@
                               now:(NSTimeInterval)now
                              date:(NSDate *)date
                        completion:(void (^)(BOOL))completion {
+    return [self enqueueIdentity:identity
+                       direction:direction
+                     destination:@{}
+                             now:now
+                            date:date
+                      completion:completion];
+}
+- (NSDictionary *)enqueueIdentity:(NSString *)identity
+                        direction:(NSFlowDirection)direction
+                      destination:(NSDictionary *)destination
+                              now:(NSTimeInterval)now
+                             date:(NSDate *)date
+                       completion:(void (^)(BOOL))completion {
     [self expireAtTime:now];
     if (!identity.length || identity.length > NSMaximumIdentityLength) {
         completion(NO);
@@ -116,6 +131,7 @@
     if (created) {
         entry = [NSPermissionEntry new];
         entry.identity = identity;
+        entry.destination = [destination copy];
         entry.token = NSUUID.UUID.UUIDString;
         entry.created = date;
         entry.deadline = now + NSPermissionTimeout;

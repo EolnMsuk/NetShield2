@@ -1,4 +1,5 @@
 #import "NSStore.h"
+#import "NSDestination.h"
 #import "NSPolicyCache.h"
 #include <errno.h>
 
@@ -154,6 +155,16 @@ BOOL NSUpdatePolicy(BOOL (^mutation)(NSMutableDictionary *, NSError **), NSError
         if (!mutation(document, error)) {
             return NO;
         }
+        // Remove stale context when a manually edited rule is deleted.
+        NSMutableDictionary *destinations = [document[@"ruleDestinations"] mutableCopy];
+        for (NSString *identity in destinations.allKeys) {
+            if (!document[@"rules"][identity]) {
+                [destinations removeObjectForKey:identity];
+            }
+        }
+        if (destinations) {
+            document[@"ruleDestinations"] = destinations;
+        }
         document[@"revision"] = NSUUID.UUID.UUIDString;
         NSPolicy *validated = [NSPolicy policyWithDocument:document error:error];
         return validated && NSWriteDocument(validated.document, NSPolicyFile, error);
@@ -162,6 +173,9 @@ BOOL NSUpdatePolicy(BOOL (^mutation)(NSMutableDictionary *, NSError **), NSError
     }
 }
 BOOL NSResetSharedState(BOOL legacyProviderMayBeRunning, NSError **error) {
+    return NSResetSharedStateWithOptions(legacyProviderMayBeRunning, NO, error);
+}
+BOOL NSResetSharedStateWithOptions(BOOL legacyProviderMayBeRunning, BOOL preserveSettings, NSError **error) {
     __attribute__((objc_precise_lifetime)) NSStoreLock *provider = NSAcquireProviderLock(error);
     if (!provider) {
         return NO;
@@ -170,7 +184,7 @@ BOOL NSResetSharedState(BOOL legacyProviderMayBeRunning, NSError **error) {
         NSDictionary *monitor = NSReadMonitor();
         // Older providers did not hold the lifetime lock. Require their explicit stop report.
         if ((legacyProviderMayBeRunning && (!monitor.count || [monitor[@"controlRunning"] boolValue])) ||
-            ([monitor[@"controlRunning"] boolValue] && [monitor[@"engine"] integerValue] < NSEngineVersion)) {
+            ([monitor[@"controlRunning"] boolValue] && [monitor[@"engine"] integerValue] < 20014)) {
             if (error) {
                 *error = [NSError errorWithDomain:NSPOSIXErrorDomain
                                              code:EBUSY
@@ -187,7 +201,18 @@ BOOL NSResetSharedState(BOOL legacyProviderMayBeRunning, NSError **error) {
             return NO;
         }
         @try {
-            if (!NSWriteDocument([NSPolicy defaultDocument], NSPolicyFile, error)) {
+            NSMutableDictionary *replacement = [[NSPolicy defaultDocument] mutableCopy];
+            if (preserveSettings) {
+                NSPolicy *current = NSReadPolicy(error);
+                if (!current) {
+                    return NO;
+                }
+                replacement = [current.document mutableCopy];
+                replacement[@"rules"] = @{};
+                [replacement removeObjectForKey:@"ruleDestinations"];
+                replacement[@"revision"] = NSUUID.UUID.UUIDString;
+            }
+            if (!NSWriteDocument(replacement, NSPolicyFile, error)) {
                 return NO;
             }
             for (NSString *name in @[ NSMonitorFile, NSNotificationRetryFile ]) {
@@ -234,7 +259,8 @@ NSDictionary *NSReadMonitor(void) {
                 return @{};
             }
         }
-        if (![e[@"time"] isKindOfClass:NSDate.class]) {
+        if ((e[@"destination"] && !NSValidDestination(e[@"destination"])) ||
+            ![e[@"time"] isKindOfClass:NSDate.class]) {
             return @{};
         }
     }
@@ -250,7 +276,8 @@ NSDictionary *NSReadMonitor(void) {
                 ![request[@"created"] isKindOfClass:NSDate.class] ||
                 ![request[@"expires"] isKindOfClass:NSDate.class] ||
                 ![request[@"waiting"] isKindOfClass:NSNumber.class] ||
-                ![request[@"expired"] isKindOfClass:NSNumber.class]) {
+                ![request[@"expired"] isKindOfClass:NSNumber.class] ||
+                (request[@"destination"] && !NSValidDestination(request[@"destination"]))) {
                 return @{};
             }
         }
@@ -287,6 +314,7 @@ NSDictionary *NSPermissionResponseDocument(NSDictionary *request, NSDictionary *
                                            NSDate *now, BOOL allow, NSError **error) {
     NSDate *updated = monitor[@"updated"];
     BOOL current = NO;
+    NSDictionary *destination = nil;
     if ([request[@"token"] isKindOfClass:NSString.class] &&
         [request[@"identity"] isKindOfClass:NSString.class] && [monitor[@"controlRunning"] boolValue] &&
         updated && [updated timeIntervalSinceDate:now] <= 0 &&
@@ -295,6 +323,7 @@ NSDictionary *NSPermissionResponseDocument(NSDictionary *request, NSDictionary *
             if ([candidate[@"token"] isEqual:request[@"token"]] &&
                 [candidate[@"identity"] isEqual:request[@"identity"]]) {
                 current = YES;
+                destination = candidate[@"destination"];
                 break;
             }
         }
@@ -317,6 +346,12 @@ NSDictionary *NSPermissionResponseDocument(NSDictionary *request, NSDictionary *
     NSMutableDictionary *rules = [document[@"rules"] mutableCopy];
     rules[request[@"identity"]] = allow ? @"allow" : @"block";
     document[@"rules"] = rules;
+    if (NSValidDestination(destination)) {
+        NSMutableDictionary *destinations =
+            [document[@"ruleDestinations"] mutableCopy] ?: [NSMutableDictionary new];
+        destinations[request[@"identity"]] = destination;
+        document[@"ruleDestinations"] = destinations;
+    }
     document[@"revision"] = NSUUID.UUID.UUIDString;
     NSPolicy *validated = [NSPolicy policyWithDocument:document error:error];
     return validated.document;

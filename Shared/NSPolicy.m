@@ -1,5 +1,6 @@
 #import "NSPolicy.h"
 #import "NSConstants.h"
+#import "NSDestination.h"
 #import <CoreFoundation/CoreFoundation.h>
 
 @implementation NSPolicy
@@ -10,7 +11,8 @@
         @"default" : @"ask",
         @"unattributed" : @"allow",
         @"rules" : @{},
-        @"allowAppleSystemProcesses" : @NO
+        @"allowAppleSystemProcesses" : @NO,
+        @"filterSockets" : @YES
     };
 }
 + (instancetype)policyWithDocument:(id)document error:(NSError **)error {
@@ -31,6 +33,9 @@
     valid = valid &&
             (!appleAllowance || ([appleAllowance isKindOfClass:NSNumber.class] &&
                                  CFGetTypeID((__bridge CFTypeRef)appleAllowance) == CFBooleanGetTypeID()));
+    id sockets = d[@"filterSockets"];
+    valid = valid && (!sockets || ([sockets isKindOfClass:NSNumber.class] &&
+                                   CFGetTypeID((__bridge CFTypeRef)sockets) == CFBooleanGetTypeID()));
     if (valid) {
         valid = [d[@"rules"] count] <= NSMaximumRules;
         for (id key in d[@"rules"]) {
@@ -40,6 +45,19 @@
                 ![actions containsObject:value]) {
                 valid = NO;
                 break;
+            }
+        }
+    }
+    id destinations = d[@"ruleDestinations"];
+    if (valid && destinations) {
+        valid = [destinations isKindOfClass:NSDictionary.class] && [destinations count] <= NSMaximumRules;
+        if (valid) {
+            for (id identity in destinations) {
+                if (![identity isKindOfClass:NSString.class] || !d[@"rules"][identity] ||
+                    !NSValidDestination(destinations[identity])) {
+                    valid = NO;
+                    break;
+                }
             }
         }
     }
@@ -54,6 +72,13 @@
                        }];
         }
         return nil;
+    }
+    // Older policies have no socket preference. Default to full flow coverage,
+    // while preserving an explicit choice to disable socket filtering.
+    if (!sockets) {
+        NSMutableDictionary *normalized = [d mutableCopy];
+        normalized[@"filterSockets"] = @YES;
+        d = normalized;
     }
     NSData *encoded = [NSPropertyListSerialization dataWithPropertyList:d
                                                                  format:NSPropertyListBinaryFormat_v1_0

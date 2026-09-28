@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 #import "../Shared/NSStore.h"
+#import "../Shared/NSDestination.h"
 #import "../Shared/NSPermissionQueue.h"
 #import "../FilterControl/NSPermissionNotifications.h"
 #include <errno.h>
@@ -315,6 +316,77 @@ static void TestAnswersAndReset(void) {
     CHECK(NSResetSharedState(NO, NULL));
 }
 
+static void TestSocketSettingsAndDestinations(void) {
+    NSMutableDictionary *document = [[NSPolicy defaultDocument] mutableCopy];
+    CHECK([document[@"filterSockets"] boolValue]);
+    [document removeObjectForKey:@"filterSockets"];
+    CHECK([NSPolicy policyWithDocument:document error:NULL] != nil);
+    CHECK([[NSPolicy policyWithDocument:document error:NULL].document[@"filterSockets"] boolValue]);
+    CHECK(document[@"filterSockets"] == nil);
+    document[@"filterSockets"] = @NO;
+    CHECK(![[NSPolicy policyWithDocument:document error:NULL].document[@"filterSockets"] boolValue]);
+    document[@"filterSockets"] = @"yes";
+    CHECK([NSPolicy policyWithDocument:document error:NULL] == nil);
+    document[@"filterSockets"] = @YES;
+    document[@"allowAppleSystemProcesses"] = @YES;
+    document[@"unattributed"] = @"block";
+    CHECK(NSWriteDocument(document, NSPolicyFile, NULL));
+    CHECK([NSReadPolicy(NULL).document[@"filterSockets"] boolValue]);
+    CHECK([NSCleanDestinationHost(@"example.com/path?secret") isEqual:@""]);
+    CHECK([NSCleanDestinationHost(@"bad\nexample.com") isEqual:@""]);
+    CHECK([NSDestinationSummary(nil) isEqual:@"Destination unavailable from iOS"]);
+    CHECK(!NSValidDestination(@{@"address" : @123}));
+    NSDictionary *destination = @{@"domain" : @"example.com", @"address" : @"2001:db8::1"};
+    CHECK([NSDestinationSummary(destination) containsString:@"2001:db8::1"]);
+    NSPermissionQueue *queue = [NSPermissionQueue new];
+    NSDictionary *request = [queue enqueueIdentity:@"destination.app"
+                                         direction:NSFlowDirectionOutbound
+                                       destination:destination
+                                               now:0
+                                              date:NSDate.date
+                                        completion:^(BOOL allow){
+                                        }];
+    [queue enqueueIdentity:@"destination.app"
+                 direction:NSFlowDirectionOutbound
+               destination:@{@"domain" : @"second.example"}
+                       now:1
+                      date:NSDate.date
+                completion:^(BOOL allow){
+                }];
+    CHECK([queue.requests.firstObject[@"destination"] isEqual:destination]);
+    [queue resolveWithPolicy:NSReadPolicy(NULL) now:31];
+    CHECK([queue.requests.firstObject[@"destination"] isEqual:destination]);
+    CHECK([queue.requests.firstObject[@"expired"] boolValue]);
+    CHECK(NSWriteDocument(Monitor(queue.requests, YES, NSEngineVersion, NSDate.date), NSMonitorFile, NULL));
+    NSMutableDictionary *forged = [request mutableCopy];
+    forged[@"destination"] = @{@"domain" : @"forged.example"};
+    CHECK(NSAnswerPermissionRequest(forged, YES, NULL));
+    CHECK([NSReadPolicy(NULL).document[@"ruleDestinations"][@"destination.app"] isEqual:destination]);
+    CHECK(NSUpdatePolicy(
+        ^BOOL(NSMutableDictionary *current, NSError **error) {
+            [current[@"rules"] removeObjectForKey:@"destination.app"];
+            return YES;
+        },
+        NULL));
+    CHECK(!NSReadPolicy(NULL).document[@"ruleDestinations"][@"destination.app"]);
+    SaveRule(@"reset.app", @"block");
+    NSStoreLock *running = NSAcquireProviderLock(NULL);
+    CHECK(running != nil);
+    CHECK(!NSResetSharedStateWithOptions(NO, YES, NULL));
+    CHECK(NSReadPolicy(NULL).document[@"rules"][@"reset.app"] != nil);
+    [running unlock];
+    CHECK(NSResetSharedStateWithOptions(NO, YES, NULL));
+    CHECK([NSReadPolicy(NULL).document[@"rules"] count] == 0);
+    CHECK(NSReadMonitor().count == 0);
+    CHECK([NSReadPolicy(NULL).document[@"filterSockets"] boolValue]);
+    CHECK([NSReadPolicy(NULL).document[@"allowAppleSystemProcesses"] boolValue]);
+    CHECK([NSReadPolicy(NULL).document[@"unattributed"] isEqual:@"block"]);
+    CHECK(NSResetSharedState(NO, NULL));
+    CHECK([NSReadPolicy(NULL).document[@"filterSockets"] boolValue]);
+    CHECK(![NSReadPolicy(NULL).document[@"allowAppleSystemProcesses"] boolValue]);
+    CHECK([NSReadPolicy(NULL).document[@"unattributed"] isEqual:@"allow"]);
+}
+
 @interface FakeNotificationCenter : NSObject <NSPermissionNotificationCenter>
 @property(nonatomic, strong) NSMutableArray *requests;
 @property(nonatomic, strong) NSMutableArray *completions;
@@ -354,11 +426,18 @@ static void TestAnswersAndReset(void) {
 @end
 static void TestLateNotifications(void) {
     CHECK(NSWriteDocument([NSPolicy defaultDocument], NSPolicyFile, NULL));
-    NSDictionary *request = @{@"token" : @"old-token", @"identity" : @"notify.app"};
+    NSDictionary *request = @{
+        @"token" : @"old-token",
+        @"identity" : @"notify.app",
+        @"destination" : @{@"domain" : @"notify.example", @"address" : @"192.0.2.1"}
+    };
     FakeNotificationCenter *center = [FakeNotificationCenter new];
     NSPermissionNotifications *old = [[NSPermissionNotifications alloc] initWithCenter:center];
     [old updateRequests:@[ request ] policy:NSReadPolicy(NULL) retryRevision:nil];
     CHECK(center.requests.count == 1);
+    UNNotificationRequest *banner = center.requests.firstObject;
+    CHECK([banner.content.body containsString:@"notify.example"]);
+    CHECK([banner.content.body containsString:@"192.0.2.1"]);
     [old updateRequests:@[] policy:NSReadPolicy(NULL) retryRevision:nil];
     [center.removed removeAllObjects];
     [center finish:0 error:nil];
@@ -409,6 +488,7 @@ int main(void) {
         TestQueueLimitsAndCancellation();
         TestLargePolicyCache();
         TestAnswersAndReset();
+        TestSocketSettingsAndDestinations();
         TestLateNotifications();
         CHECK([NSFileManager.defaultManager removeItemAtURL:root error:NULL]);
         NSLog(@"Passed %lu regression checks", (unsigned long)checks);

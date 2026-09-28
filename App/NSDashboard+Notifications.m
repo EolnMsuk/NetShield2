@@ -62,7 +62,11 @@
     if (!NSAnswerPermissionRequest(request, allow, &error)) {
         [self showError:error];
     } else {
-        self.message = @"Rule saved. Retry the requesting app if its connection timed out.";
+        NSDictionary *destination = NSReadPolicy(NULL).document[@"ruleDestinations"][request[@"identity"]];
+        self.message = [NSString
+            stringWithFormat:@"Rule saved for %@. First requested peer: %@. Applies to all connections from "
+                             @"this app. Retry the app if its connection timed out.",
+                             request[@"identity"], NSDestinationSummary(destination)];
     }
     [self reloadMonitor];
 }
@@ -74,9 +78,10 @@
     [self.deferredRequests addObject:request[@"token"]];
     NSString *message =
         [NSString stringWithFormat:
-                      @"%@\n\nSave a rule for this app's incoming and outgoing connections. Unanswered "
+                      @"%@\nFirst requested peer: %@\nCountry: unavailable\n\nSave a rule for this app's "
+                      @"incoming and outgoing connections. Unanswered "
                       @"connections are blocked after 30 seconds; retry the app if it has already timed out.",
-                      request[@"identity"]];
+                      request[@"identity"], NSDestinationSummary(request[@"destination"])];
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Allow network access?"
                                                                    message:message
                                                             preferredStyle:UIAlertControllerStyleAlert];

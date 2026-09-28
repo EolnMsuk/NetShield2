@@ -2,6 +2,40 @@
 #import "../Shared/NSStore.h"
 #import "../Shared/NSPermissionQueue.h"
 #import "NSPermissionNotifications.h"
+#import "../Shared/NSDestination.h"
+#include <arpa/inet.h>
+
+static NSDictionary *NSDestinationForFlow(NEFilterFlow *flow) {
+    NSString *domain = NSCleanDestinationHost(flow.URL.host);
+    NSString *address = @"";
+    if ([flow isKindOfClass:NEFilterSocketFlow.class]) {
+        NEFilterSocketFlow *socket = (NEFilterSocketFlow *)flow;
+        NSString *hostname = NSCleanDestinationHost(socket.remoteHostname);
+        if (hostname.length) {
+            domain = hostname;
+        }
+        if ([socket.remoteEndpoint isKindOfClass:NWHostEndpoint.class]) {
+            NSString *host = NSCleanDestinationHost(((NWHostEndpoint *)socket.remoteEndpoint).hostname);
+            struct in6_addr bytes;
+            if (inet_pton(AF_INET, host.UTF8String, &bytes) == 1 ||
+                inet_pton(AF_INET6, host.UTF8String, &bytes) == 1) {
+                address = host;
+            } else if (!domain.length) {
+                domain = host;
+            }
+        }
+    }
+    // URL hosts can themselves be literal IP addresses.
+    struct in6_addr bytes;
+    if (inet_pton(AF_INET, domain.UTF8String, &bytes) == 1 ||
+        inet_pton(AF_INET6, domain.UTF8String, &bytes) == 1) {
+        if (!address.length) {
+            address = domain;
+        }
+        domain = @"";
+    }
+    return @{@"domain" : domain, @"address" : address};
+}
 
 @interface NSFilterControlProvider : NEFilterControlProvider
 @property(nonatomic, strong) dispatch_source_t timer;
@@ -157,6 +191,7 @@
             @"time" : self.lastReport,
             @"identity" : identity,
             @"flow" : flow.identifier.UUIDString ?: @"",
+            @"destination" : NSDestinationForFlow(flow),
             @"action" : action,
             @"direction" : direction,
             @"event" : @(report.event),
@@ -193,6 +228,7 @@
         [self.permissions
             enqueueIdentity:identity
                   direction:direction
+                destination:NSDestinationForFlow(flow)
                         now:NSProcessInfo.processInfo.systemUptime
                        date:NSDate.date
                  completion:^(BOOL allow) {
@@ -207,6 +243,7 @@
                              @"time" : NSDate.date,
                              @"identity" : identity,
                              @"flow" : flow.identifier.UUIDString ?: @"",
+                             @"destination" : NSDestinationForFlow(flow),
                              @"action" : allow ? @"permission-allow" : @"permission-block",
                              @"direction" : direction == NSFlowDirectionInbound
                                  ? @"inbound"

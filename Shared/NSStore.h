@@ -17,6 +17,8 @@ FOUNDATION_EXPORT BOOL NSUpdatePolicy(BOOL (^mutation)(NSMutableDictionary *docu
                                       NSError **error);
 FOUNDATION_EXPORT NSStoreLock *_Nullable NSAcquireProviderLock(NSError **error);
 FOUNDATION_EXPORT BOOL NSResetSharedState(BOOL legacyProviderMayBeRunning, NSError **error);
+FOUNDATION_EXPORT BOOL NSResetSharedStateWithOptions(BOOL legacyProviderMayBeRunning, BOOL preserveSettings,
+                                                     NSError **error);
 #ifdef NS_TESTING
 FOUNDATION_EXPORT void NSSetTestContainer(NSURL *url);
 #endif

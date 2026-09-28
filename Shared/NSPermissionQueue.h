@@ -12,6 +12,12 @@ NS_ASSUME_NONNULL_BEGIN
                                        now:(NSTimeInterval)now
                                       date:(NSDate *)date
                                 completion:(void (^)(BOOL allow))completion;
+- (nullable NSDictionary *)enqueueIdentity:(NSString *)identity
+                                 direction:(NSFlowDirection)direction
+                               destination:(NSDictionary *)destination
+                                       now:(NSTimeInterval)now
+                                      date:(NSDate *)date
+                                completion:(void (^)(BOOL allow))completion;
 - (void)resolveWithPolicy:(nullable NSPolicy *)policy now:(NSTimeInterval)now;
 - (void)cancelAll;
 @end

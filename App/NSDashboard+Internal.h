@@ -2,6 +2,7 @@
 #import <NetworkExtension/NetworkExtension.h>
 #import "../Shared/NSStore.h"
 #import "../Shared/NSNotifications.h"
+#import "../Shared/NSDestination.h"
 
 typedef NS_ENUM(NSInteger, NSConfigurationOperation) {
     NSConfigurationDisable,
@@ -37,6 +38,8 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 @property(nonatomic) BOOL loaded;
 @property(nonatomic) BOOL attemptedProviderUpgrade;
 @property(nonatomic) BOOL resetRequiresLegacyStop;
+@property(nonatomic) BOOL resetAllSettings;
+@property(nonatomic) BOOL restoreFirewallAfterReset;
 @property(nonatomic, strong) NSMutableSet<NSString *> *deferredRequests;
 @property(nonatomic, copy) NSString *notificationStatus;
 - (void)reloadMonitor;
@@ -57,6 +60,7 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 - (void)loadConfiguration;
 - (void)changeConfiguration:(NSConfigurationOperation)operation;
 - (void)resetNetShield2;
+- (void)socketFilteringChanged:(UISwitch *)sender;
 @end
 
 @interface NSDashboard (Notifications)
