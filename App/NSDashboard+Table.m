@@ -149,23 +149,23 @@
     if (section == NSDashboardSectionSupport) {
         return @"Developed by EolnMsuk.";
     }
-    return @"NetShield2 2.0.2 / iOS 15-18 rootless. Filters connections provided by iOS; system-exempt "
+    return @"NetShield2 2.0.3 / iOS 15-18 rootless. Filters connections provided by iOS; system-exempt "
            @"traffic is not guaranteed covered.";
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)path {
     UITableViewCell *cached = nil;
     if (path.section == NSDashboardSectionFirewall) {
-        if (path.row == 1) {
+        if (path.row == 0) {
             cached = self.firewallCell;
-        } else if (path.row == 2) {
+        } else if (path.row == 1) {
             cached = self.appleCell;
         }
     }
     if (cached) {
         UISwitch *toggle = (UISwitch *)cached.accessoryView;
-        BOOL on = path.row == 1 ? self.loaded && NEFilterManager.sharedManager.enabled
+        BOOL on = path.row == 0 ? self.loaded && NEFilterManager.sharedManager.enabled
                                 : [self.policy.document[@"allowAppleSystemProcesses"] boolValue];
-        BOOL enabled = (path.row == 1 ? self.loaded : self.policy != nil) && !self.busy;
+        BOOL enabled = (path.row == 0 ? self.loaded : self.policy != nil) && !self.busy;
         if (toggle.on != on) {
             [toggle setOn:on animated:NO];
         }
@@ -179,7 +179,7 @@
     cell.textLabel.numberOfLines = 0;
     cell.detailTextLabel.numberOfLines = 0;
     cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-    if (path.section == NSDashboardSectionFirewall && path.row == 1) {
+    if (path.section == NSDashboardSectionFirewall && path.row == 0) {
         cell.textLabel.text = @"Firewall";
         cell.detailTextLabel.text = @"Control internet access for your apps";
         cell.imageView.image = [UIImage systemImageNamed:@"shield.lefthalf.filled"];
@@ -194,7 +194,7 @@
             forControlEvents:UIControlEventValueChanged];
         cell.accessoryView = toggle;
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
-    } else if (path.section == NSDashboardSectionFirewall && path.row == 0) {
+    } else if (path.section == NSDashboardSectionFirewall && path.row == 2) {
         BOOL enabled = self.loaded && NEFilterManager.sharedManager.enabled;
         BOOL healthy =
             enabled && self.policy && [self hasFreshMonitor] && ![self.monitor[@"policyError"] length];
@@ -225,8 +225,8 @@
             [self.message length] ? [NSString stringWithFormat:@"%@\n%@", detail, self.message] : detail;
         cell.accessoryType = UITableViewCellAccessoryNone;
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
-    } else if (path.section == NSDashboardSectionFirewall && path.row == 2) {
-        cell.textLabel.text = @"Allow all iOS system processes";
+    } else if (path.section == NSDashboardSectionFirewall && path.row == 1) {
+        cell.textLabel.text = @"Allow all iOS system traffic";
         cell.detailTextLabel.text = @"Allow identities starting with com.apple., .com.apple. or "
                                     @"Apple.com.apple. Saved rules are ignored until this is off.";
         UISwitch *toggle = [UISwitch new];
@@ -321,10 +321,10 @@
             cell.textLabel.textColor = UIColor.systemRedColor;
         }
     }
-    if (path.section == NSDashboardSectionFirewall && path.row == 1) {
+    if (path.section == NSDashboardSectionFirewall && path.row == 0) {
         self.firewallCell = cell;
     }
-    if (path.section == NSDashboardSectionFirewall && path.row == 2) {
+    if (path.section == NSDashboardSectionFirewall && path.row == 1) {
         self.appleCell = cell;
     }
     return cell;

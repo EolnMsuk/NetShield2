@@ -217,6 +217,20 @@
         [self changeConfiguration:NSConfigurationDisable];
         return;
     }
+    NSError *error = nil;
+    if (!NSUpdatePolicy(
+            ^BOOL(NSMutableDictionary *document, NSError **mutationError) {
+                document[@"allowAppleSystemProcesses"] = @YES;
+                return YES;
+            },
+            &error)) {
+        [self showError:error];
+        [self reloadMonitor];
+        return;
+    }
+    self.policy = NSReadPolicy(&error);
+    self.policyReadError = self.policy ? @"" : error.localizedDescription;
+    NSRemoveAutomaticallyAllowedNotifications();
     self.busy = YES;
     [self refreshTableKeepingPosition];
     [self authorizeNotificationsThen:^{
