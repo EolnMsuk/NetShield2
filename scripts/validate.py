@@ -99,6 +99,9 @@ if args.stage:
         require(len(raw) >= 12, f'Truncated executable {binary}')
         magic, cputype = struct.unpack_from('<II', raw)
         require(magic == 0xfeedfacf and cputype == 0x100000c, f'Expected arm64 Mach-O: {binary}')
+        if directory == 'FilterControl':
+            require(b'Wants network access. Long-press this banner to allow or keep blocking.\0' in raw,
+                    'Stale control provider: missing the process-only permission banner. Run a clean build.')
     require(not list(args.stage.rglob('*.dylib')), 'Unexpected injected library in package')
     allowed = {'var/jb/Applications/NetShield2.app', 'DEBIAN'}
     for file in args.stage.rglob('*'):

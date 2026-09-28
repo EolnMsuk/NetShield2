@@ -39,6 +39,22 @@
                 [self showError:error operation:@"Load filter configuration"];
             }
             NEFilterManager *manager = NEFilterManager.sharedManager;
+            // A reinstall can retain shared policy data after the system filter
+            // was removed. Restore socket coverage before its first enable.
+            if (!error && !manager.providerConfiguration) {
+                NSError *policyError = nil;
+                NSPolicy *policy = NSReadPolicy(&policyError);
+                if (policy && ![policy.document[@"filterSockets"] boolValue]) {
+                    if (!NSUpdatePolicy(
+                            ^BOOL(NSMutableDictionary *document, NSError **mutationError) {
+                                document[@"filterSockets"] = @YES;
+                                return YES;
+                            },
+                            &policyError)) {
+                        [self showError:policyError operation:@"Initialize socket filtering"];
+                    }
+                }
+            }
             NSInteger configuredEngine =
                 [manager.providerConfiguration.vendorConfiguration[@"engine"] integerValue];
             if (!error && manager.enabled && !self.attemptedProviderUpgrade &&

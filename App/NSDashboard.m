@@ -221,6 +221,7 @@
     if (!NSUpdatePolicy(
             ^BOOL(NSMutableDictionary *document, NSError **mutationError) {
                 document[@"allowAppleSystemProcesses"] = @YES;
+                document[@"filterSockets"] = @YES;
                 return YES;
             },
             &error)) {

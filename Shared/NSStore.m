@@ -210,6 +210,7 @@ BOOL NSResetSharedStateWithOptions(BOOL legacyProviderMayBeRunning, BOOL preserv
                 replacement = [current.document mutableCopy];
                 replacement[@"rules"] = @{};
                 replacement[@"allowAppleSystemProcesses"] = @YES;
+                replacement[@"filterSockets"] = @YES;
                 [replacement removeObjectForKey:@"ruleDestinations"];
                 replacement[@"revision"] = NSUUID.UUID.UUIDString;
             }
