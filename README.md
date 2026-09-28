@@ -23,9 +23,7 @@ Unanswered connections are blocked after 30 seconds. You can decide later in **W
 - **App rules:** change saved decisions. Changes apply to new connections; close/reopen an app to end existing connections.
 - **Recent activity:** the latest 20 events from a rolling 300-event record.
 
-**Reset NetShield2** clears rules, requests and history, restores Ask me and allows unidentified connections, then leaves Firewall off. iOS notification permission is retained.
-
-Before uninstalling, use **Advanced Settings > Prepare for uninstall** to remove the system filter. Then uninstall NetShield2 using your package manager.
+**Reset NetShield2** clears rules and requests / history. Before uninstalling, use **Advanced Settings > Prepare for uninstall** to remove the system filter.
 
 ## Coverage
 
