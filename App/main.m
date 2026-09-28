@@ -451,7 +451,7 @@
     [alert addAction:[UIAlertAction actionWithTitle:@"Venmo" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         [UIApplication.sharedApplication openURL:[NSURL URLWithString:@"https://venmo.com/u/rustonrails"] options:@{} completionHandler:nil];
     }]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"Bitcoin â€” Copy wallet address" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+    [alert addAction:[UIAlertAction actionWithTitle:@"Bitcoin" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         UIPasteboard.generalPasteboard.string = @"31uHLpioo1TbxAmo9kM7rrKcLz3wvcoZaL";
         dispatch_async(dispatch_get_main_queue(), ^{
             UIAlertController *confirmation = [UIAlertController alertControllerWithTitle:@"Bitcoin address copied" message:@"The Bitcoin wallet address has been copied to your clipboard." preferredStyle:UIAlertControllerStyleAlert];
@@ -526,7 +526,7 @@
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
     } else if (path.section == 0 && path.row == 1) {
         cell.textLabel.text = @"Allow all iOS system processes";
-        cell.detailTextLabel.text = @"Allow identities starting with com.apple. or .com.apple. Saved rules are ignored until this is off.";
+        cell.detailTextLabel.text = @"Allow identities starting with com.apple., .com.apple. or Apple.com.apple. Saved rules are ignored until this is off.";
         UISwitch *toggle = [UISwitch new];
         if ([self.policy.document[@"allowAppleSystemProcesses"] boolValue]) [toggle setOn:YES animated:NO];
         toggle.enabled = self.policy != nil && !self.busy;
@@ -626,8 +626,13 @@
 }
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center willPresentNotification:(UNNotification *)notification
         withCompletionHandler:(void (^)(UNNotificationPresentationOptions))completionHandler {
-    // The foreground inbox handles permission requests.
-    dispatch_async(dispatch_get_main_queue(), ^{ [self.dashboard reloadMonitor]; completionHandler(UNNotificationPresentationOptionNone); });
+    // A linked app can connect before iOS finishes backgrounding NetShield2.
+    // Suppressing foreground delivery loses that banner permanently because the
+    // provider has already marked the request as submitted. Keep it actionable
+    // and in Notification Center, including during external-link handoffs.
+    completionHandler(UNNotificationPresentationOptionBanner | UNNotificationPresentationOptionList |
+                      UNNotificationPresentationOptionSound);
+    dispatch_async(dispatch_get_main_queue(), ^{ [self.dashboard reloadMonitor]; });
 }
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center didReceiveNotificationResponse:(UNNotificationResponse *)response
         withCompletionHandler:(void (^)(void))completionHandler {

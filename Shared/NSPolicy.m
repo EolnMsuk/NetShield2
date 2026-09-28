@@ -48,9 +48,11 @@
     return policy->_document ? policy : nil;
 }
 - (BOOL)automaticallyAllowsIdentity:(NSString *)identity {
-    // Match only these leading namespaces, never an embedded or signing-prefixed ID.
+    // Match only the known Apple namespaces, including Apple's signing prefix.
+    // Do not strip arbitrary signing prefixes or match embedded namespaces.
     return [identity isKindOfClass:NSString.class] && [self.document[@"allowAppleSystemProcesses"] boolValue] &&
-        ([identity hasPrefix:@"com.apple."] || [identity hasPrefix:@".com.apple."]);
+        ([identity hasPrefix:@"com.apple."] || [identity hasPrefix:@".com.apple."] ||
+         [identity hasPrefix:@"Apple.com.apple."]);
 }
 - (BOOL)requiresPermissionForIdentity:(NSString *)identity {
     return ![self automaticallyAllowsIdentity:identity] && identity.length > 0 && !self.document[@"rules"][identity] && [self.document[@"default"] isEqual:@"ask"];

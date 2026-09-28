@@ -91,6 +91,12 @@ int main(void) {
         [q resolveWithPolicy:disabledPolicy now:901];
         check(callbacks == 2, "fresh Apple flow waits when allowance is off");
         [q cancelAll];
+        callbacks = allowed = 0;
+        [q enqueueIdentity:@"Apple.com.apple.test" direction:NSFlowDirectionOutbound now:1000 date:date completion:done];
+        [q resolveWithPolicy:applePolicy now:1001];
+        check(callbacks == 1 && allowed == 1 && q.requests.count == 0, "Apple signing prefix resolves pending request when switch enabled");
+        [q resolveWithPolicy:applePolicy now:1002];
+        check(callbacks == 1, "Apple signing prefix resolves each flow exactly once");
         printf("Passed %u permission queue checks\n", checks);
     }
     return 0;

@@ -42,8 +42,9 @@ int main(void) {
         check(!NSShouldWithdrawPermissionNotification(applePolicy, @"app.test"), @"Apple allowance preserves third-party notification");
         check(NSShouldWithdrawPermissionNotification(applePolicy, @"com.apple.test"), @"Apple allowance withdraws Apple notification");
         check(NSShouldWithdrawPermissionNotification(applePolicy, @".com.apple.test"), @"Apple allowance withdraws leading-dot Apple notification");
+        check(NSShouldWithdrawPermissionNotification(applePolicy, @"Apple.com.apple.test"), @"Apple allowance withdraws Apple signing-prefix notification");
         check(NSShouldWithdrawPermissionNotification(decided, @"app.test"), @"Saved decision withdraws answered notification");
-        NSLog(@"Passed 18 notification-response checks");
+        NSLog(@"Passed 19 notification-response checks");
     }
     return 0;
 }

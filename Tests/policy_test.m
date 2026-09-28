@@ -49,14 +49,14 @@ int main(void) {
         [apple removeObjectForKey:@"allowAppleSystemProcesses"];
         check([parse(apple) requiresPermissionForIdentity:@"com.apple.test"], "legacy policy keeps asking");
         apple[@"allowAppleSystemProcesses"] = @YES;
-        apple[@"rules"] = @{@"com.apple.test": @"block", @".com.apple.test": @"block-outbound"};
+        apple[@"rules"] = @{@"com.apple.test": @"block", @".com.apple.test": @"block-outbound", @"Apple.com.apple.test": @"block"};
         NSPolicy *applePolicy = parse(apple);
-        for (NSString *identity in @[@"com.apple.test", @".com.apple.test", @"com.apple.new"]) {
+        for (NSString *identity in @[@"com.apple.test", @".com.apple.test", @"com.apple.new", @"Apple.com.apple.test", @"Apple.com.apple.new"]) {
             check(![applePolicy requiresPermissionForIdentity:identity], "Apple allowance bypasses prompt");
             for (NSNumber *direction in @[@0, @1, @2])
                 check([applePolicy allowsIdentity:identity direction:direction.integerValue], "Apple allowance overrides all directions");
         }
-        for (NSString *identity in @[@"com.appleevil.test", @"com.apple", @"TEAM.com.apple.test", @"other.com.apple.test", @"COM.APPLE.test", @""]) {
+        for (NSString *identity in @[@"com.appleevil.test", @"com.apple", @"TEAM.com.apple.test", @"other.com.apple.test", @"COM.APPLE.test", @"Apple.com.appleevil.test", @"Apple.com.apple", @"TEAM.Apple.com.apple.test", @"apple.com.apple.test", @""]) {
             check(![applePolicy automaticallyAllowsIdentity:identity], "only exact leading namespaces match");
         }
         check(![applePolicy automaticallyAllowsIdentity:nil], "nil is not auto-allowed");
@@ -65,14 +65,18 @@ int main(void) {
         apple[@"unattributed"] = @"block";
         applePolicy = parse(apple);
         check([applePolicy allowsIdentity:@"com.apple.new" direction:NSFlowDirectionOutbound], "allowance overrides default block");
+        check([applePolicy allowsIdentity:@"Apple.com.apple.new" direction:NSFlowDirectionOutbound], "Apple signing prefix overrides default block");
         check(![applePolicy allowsIdentity:@"third.party" direction:NSFlowDirectionOutbound], "other apps still block");
         check(![applePolicy allowsIdentity:nil direction:NSFlowDirectionOutbound], "unidentified policy is preserved");
         apple[@"allowAppleSystemProcesses"] = @NO;
         applePolicy = parse(apple);
         check(![applePolicy allowsIdentity:@"com.apple.test" direction:NSFlowDirectionOutbound], "saved block restored when disabled");
+        check(![applePolicy allowsIdentity:@"Apple.com.apple.test" direction:NSFlowDirectionOutbound], "Apple signing prefix saved block restored when disabled");
         check(![applePolicy allowsIdentity:@".com.apple.test" direction:NSFlowDirectionOutbound], "saved directional block restored");
         check([applePolicy allowsIdentity:@".com.apple.test" direction:NSFlowDirectionInbound], "saved directional allow restored");
         check([applePolicy.document[@"rules"] isEqual:apple[@"rules"]], "original rules remain intact");
+        apple[@"default"] = @"ask";
+        check([parse(apple) requiresPermissionForIdentity:@"Apple.com.apple.new"], "Apple signing prefix asks again when disabled");
         for (id invalid in @[@"yes", @1, @[], NSNull.null]) {
             apple[@"allowAppleSystemProcesses"] = invalid;
             check([NSPolicy policyWithDocument:apple error:NULL] == nil, "malformed allowance rejected");
