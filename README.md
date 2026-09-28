@@ -15,7 +15,7 @@ Unanswered connections are blocked after 30 seconds. You can decide later in **W
 
 ## Options
 
-- **Firewall:** on/off; turning it off keeps your rules.
+- **Firewall:** on/off - enables/disables the firewall feature.
 - **Allow all iOS system processes:** off by default. When enabled, processes starting with `com.apple` are allowed without prompts or permission notifications, overriding saved rules.
 - **Default Rule:** Ask me, Allow or Block for apps without an explicit rule.
 - **Notifications:** notification settings and instructions for banners and Do Not Disturb.
