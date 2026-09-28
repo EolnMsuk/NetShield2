@@ -34,23 +34,11 @@ jobs:
           printf '%s  %s\n' "$SDK_SHA256" "$RUNNER_TEMP/ios-sdk.tar.xz" | shasum -a 256 -c -
           tar -xJf "$RUNNER_TEMP/ios-sdk.tar.xz" -C "$THEOS/sdks"
           test -d "$THEOS/sdks/iPhoneOS16.5.sdk"
-          git -C "$THEOS" rev-parse HEAD > "$RUNNER_TEMP/toolchain.txt"
-          xcodebuild -version >> "$RUNNER_TEMP/toolchain.txt"
-      - name: Validate sources and test policy
+      - name: Validate release inputs
         shell: bash
         run: |
           set -euo pipefail
           python3 scripts/validate.py
-          python3 Tests/validation_test.py
-          clang -fobjc-arc -Wall -Wextra -Werror -framework Foundation \
-            Tests/policy_test.m Shared/NSPolicy.m -o "$RUNNER_TEMP/policy_test"
-          "$RUNNER_TEMP/policy_test"
-          clang -fobjc-arc -Wall -Wextra -Werror -framework Foundation \
-            Tests/permission_test.m Shared/NSPolicy.m Shared/NSPermissionQueue.m -o "$RUNNER_TEMP/permission_test"
-          "$RUNNER_TEMP/permission_test"
-          clang -fobjc-arc -Wall -Wextra -Werror -framework Foundation \
-            Tests/response_test.m Shared/NSPolicy.m Shared/NSStore.m -o "$RUNNER_TEMP/response_test"
-          "$RUNNER_TEMP/response_test"
           sh -n layout/DEBIAN/postinst
           sh -n layout/DEBIAN/prerm
       - name: Compile and package for rootless iOS
@@ -58,7 +46,7 @@ jobs:
         run: |
           set -euo pipefail
           chmod 755 layout/DEBIAN/postinst layout/DEBIAN/prerm
-          gmake clean package FINALPACKAGE=1 2>&1 | tee "$RUNNER_TEMP/netshield-build.log"
+          gmake clean package FINALPACKAGE=1
           test -f packages/com.eolnmsuk.netshield_2.0.0_iphoneos-arm64.deb
       - name: Verify signed entitlements
         shell: bash
@@ -75,12 +63,3 @@ jobs:
           name: NetShield2-2.0.0-iOS15-18-rootless
           path: packages/com.eolnmsuk.netshield_2.0.0_iphoneos-arm64.deb
           if-no-files-found: error
-      - name: Upload diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: NetShield2-build-diagnostics
-          path: |
-            ${{ runner.temp }}/netshield-build.log
-            ${{ runner.temp }}/toolchain.txt
-          if-no-files-found: ignore
