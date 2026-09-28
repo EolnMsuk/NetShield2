@@ -227,8 +227,7 @@
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
     } else if (path.section == NSDashboardSectionFirewall && path.row == 1) {
         cell.textLabel.text = @"Allow all iOS system traffic";
-        cell.detailTextLabel.text = @"Allow identities starting with com.apple., .com.apple. or "
-                                    @"Apple.com.apple. Saved rules are ignored until this is off.";
+        cell.detailTextLabel.text = @"Allow identities starting with com.apple";
         UISwitch *toggle = [UISwitch new];
         if ([self.policy.document[@"allowAppleSystemProcesses"] boolValue]) {
             [toggle setOn:YES animated:NO];
