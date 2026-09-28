@@ -7,23 +7,21 @@ A firewall & live network filter for jailbroken iOS 16 devices. Installation is 
 ## Get started
 
 1. Install the deb from the releases section. No respring is required.
-2. Open NetShield2 and turn on **Firewall** + accept the iOS permissions. Leave **Default Rule** set to **Ask me** to decide as apps connect. Existing rules are kept when upgrading or toggling the firewall.
-3. Enable banners under **Notification settings**. If you use **Do Not Disturb**, allow NetShield2 in **Settings > Focus > Do Not Disturb > Apps**.
+2. Open NetShield2 and turn on **Firewall** + accept the iOS Notification and enter passcode, then close the VPN settings. Leave **Default Rule** set to **Ask me** to decide as apps connect. Existing rules are saved when upgrading or toggling the firewall.
+3. If not already done by step 2, enable banners under **Notification settings**. If you use **Do Not Disturb**, allow NetShield2 in **Settings > Focus > Do Not Disturb > Apps**.
 4. When a new app connects, touch and hold its NetShield2 notification and choose **Allow app** or **Keep blocking**. Tapping the notification body opens NetShield2 instead where you can also allow or block through prompts.
 
-Unanswered connections are blocked after 30 seconds. You can decide later in **Waiting for your decision**, then retry the app. To ask again for a previously decided app, tap its rule and select **Use Default Rule** while Default Rule is Ask me.
+Unanswered connections are blocked after 30 seconds. You can decide later in **Waiting for your decision**, then retry the app. To ask again for a previously decided app, tap its rule and select **Use Default Rule**.
 
 ## Options
 
 - **Firewall:** on/off; turning it off keeps your rules.
-- **Allow all iOS system processes:** directly below Firewall, off by default. When enabled, identities starting with `com.apple.`, `.com.apple.` or `Apple.com.apple.` are allowed without prompts or permission notifications, overriding saved rules. Those rules are preserved and apply again when disabled. Processes without saved rules use Default Rule again, prompting when it is Ask me. Changes affect new connections.
+- **Allow all iOS system processes:** off by default. When enabled, processes starting with `com.apple` are allowed without prompts or permission notifications, overriding saved rules.
 - **Default Rule:** Ask me, Allow or Block for apps without an explicit rule.
-- **Unidentified connections:** below Default Rule in the Firewall section. Allow or Block connections whose app identity is unavailable; Allow is the default.
 - **Notifications:** notification settings and instructions for banners and Do Not Disturb.
 - **Advanced Settings:** manual rules, Reset NetShield2 and Prepare for uninstall.
-- **Support:** GitHub Link and Support Developer. Choose Venmo to open the donation page or Bitcoin to copy the wallet address, with a confirmation.
-- **App rules:** below Support, above Recent activity; change saved decisions. Changes apply to new connections; close/reopen an app to end existing connections.
-- **Recent activity:** the latest 20 events from a rolling 300-event record. Data counts arrive when connections close; permission events are not traffic totals.
+- **App rules:** change saved decisions. Changes apply to new connections; close/reopen an app to end existing connections.
+- **Recent activity:** the latest 20 events from a rolling 300-event record.
 
 **Reset NetShield2** clears rules, requests and history, restores Ask me and allows unidentified connections, then leaves Firewall off. iOS notification permission is retained.
 
@@ -31,7 +29,7 @@ Before uninstalling, use **Advanced Settings > Prepare for uninstall** to remove
 
 ## Coverage
 
-Rules apply to new connections delivered by iOS, not every raw packet or OS-exempt path. Unidentified connections have their own rule. Direction rules refer to who initiates a connection, not reply packets. No VPN server entry is needed: this is a content filter, not a VPN tunnel.
+Rules apply to new connections delivered by iOS, not every raw packet or OS-exempt path. Direction rules refer to who initiates a connection, not reply packets. No VPN server entry is needed: this is a content filter, not a VPN tunnel.
 
 ## Support Developer
 
