@@ -4,6 +4,7 @@ import pathlib
 import plistlib
 import re
 import struct
+from urllib.parse import urlsplit
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
@@ -33,7 +34,16 @@ depiction = json.loads((ROOT / 'depiction.json').read_text())
 require(metadata.get('SileoDepiction') == 'https://raw.githubusercontent.com/EolnMsuk/NetShield2/HEAD/depiction.json', 'Missing Sileo depiction')
 require(metadata.get('Depiction') == 'https://github.com/EolnMsuk/NetShield2/#readme', 'Missing web depiction fallback')
 require(depiction.get('class') == 'DepictionTabView' and depiction.get('minVersion') == '0.4', 'Invalid native depiction root')
-require(depiction.get('headerImage') == 'https://raw.githubusercontent.com/EolnMsuk/NetShield2/HEAD/App/Resources/banner.png', 'Wrong depiction banner')
+banner_url = urlsplit(depiction.get('headerImage', ''))
+banner_paths = {
+    f'/EolnMsuk/NetShield2/{ref}/App/Resources/banner.png'
+    for ref in ('HEAD', 'main', 'refs/heads/main')
+}
+require(banner_url.scheme == 'https' and
+        banner_url.netloc == 'raw.githubusercontent.com' and
+        banner_url.path in banner_paths,
+        'Expected a raw GitHub banner.png URL for NetShield2 on HEAD or main; '
+        'use https://raw.githubusercontent.com/EolnMsuk/NetShield2/main/App/Resources/banner.png')
 require((ROOT / 'App/Resources/banner.png').read_bytes().startswith(b'\x89PNG\r\n\x1a\n'), 'Invalid package banner')
 
 
