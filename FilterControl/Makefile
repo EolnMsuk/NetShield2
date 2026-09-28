@@ -1,6 +1,6 @@
 include $(THEOS)/makefiles/common.mk
 APPEX_NAME = NetShield2Control
-NetShield2Control_FILES = FilterControlProvider.m ../Shared/NSPolicy.m ../Shared/NSStore.m ../Shared/NSPermissionQueue.m
+NetShield2Control_FILES = FilterControlProvider.m NSPermissionNotifications.m ../Shared/NSPolicy.m ../Shared/NSStore.m ../Shared/NSStoreLock.m ../Shared/NSPolicyCache.m ../Shared/NSPermissionQueue.m
 NetShield2Control_FRAMEWORKS = Foundation NetworkExtension UserNotifications
 NetShield2Control_CFLAGS = -fobjc-arc -Wall -Wextra -Wno-unused-parameter -Werror=unguarded-availability
 NetShield2Control_CODESIGN_FLAGS = -SEntitlements.plist

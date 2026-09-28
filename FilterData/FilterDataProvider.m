@@ -16,16 +16,23 @@
         return [NEFilterNewFlowVerdict needRulesVerdict];
     }
     NSFlowDirection direction = NSFlowDirectionUnknown;
-    if (flow.direction == NETrafficDirectionInbound) direction = NSFlowDirectionInbound;
-    if (flow.direction == NETrafficDirectionOutbound) direction = NSFlowDirectionOutbound;
+    if (flow.direction == NETrafficDirectionInbound) {
+        direction = NSFlowDirectionInbound;
+    }
+    if (flow.direction == NETrafficDirectionOutbound) {
+        direction = NSFlowDirectionOutbound;
+    }
     BOOL allow = policy && [policy allowsIdentity:flow.sourceAppIdentifier direction:direction];
-    NEFilterNewFlowVerdict *verdict = allow ? [NEFilterNewFlowVerdict allowVerdict] : [NEFilterNewFlowVerdict dropVerdict];
+    NEFilterNewFlowVerdict *verdict =
+        allow ? [NEFilterNewFlowVerdict allowVerdict] : [NEFilterNewFlowVerdict dropVerdict];
     verdict.shouldReport = YES;
     return verdict;
 }
 - (void)handleRulesChanged {
+    NSInvalidatePolicyCache();
 }
-- (void)stopFilterWithReason:(NEProviderStopReason)reason completionHandler:(void (^)(void))completionHandler {
+- (void)stopFilterWithReason:(NEProviderStopReason)reason
+           completionHandler:(void (^)(void))completionHandler {
     completionHandler();
 }
 @end

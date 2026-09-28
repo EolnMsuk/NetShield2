@@ -37,6 +37,7 @@ require(depiction.get('headerImage') == 'https://raw.githubusercontent.com/EolnM
 require((ROOT / 'App/Resources/banner.png').read_bytes().startswith(b'\x89PNG\r\n\x1a\n'), 'Invalid package banner')
 
 
+engine_version = re.search(r'NSEngineVersion\s*=\s*(\d+)', (ROOT / 'Shared/NSConstants.h').read_text()).group(1)
 bundles = [
     ('App', 'NetShield2', '', None, None),
     ('FilterData', 'NetShield2Data', '.data', 'com.apple.networkextension.filter-data', 'NSFilterDataProvider'),
@@ -49,9 +50,9 @@ for directory, binary, suffix, point, principal in bundles:
     require(info['CFBundleIdentifier'] == 'com.eolnmsuk.netshield' + suffix, 'Bundle ID mismatch')
     require(info['CFBundleExecutable'] == binary, 'Executable mismatch')
     require(info['MinimumOSVersion'] == '15.0', 'Deployment mismatch')
-    require(info.get('CFBundleVersion') == '20013',
+    require(info.get('CFBundleVersion') == engine_version,
             f'{directory}/Resources/Info.plist: CFBundleVersion is '
-            f'{info.get("CFBundleVersion")!r}; expected "20013" for {metadata["Version"]}. '
+            f'{info.get("CFBundleVersion")!r}; expected "{engine_version}" for {metadata["Version"]}. '
             'All app and provider bundle versions must match.')
     if point:
         require(info['NSExtension'] == dict(NSExtensionPointIdentifier=point, NSExtensionPrincipalClass=principal), 'Bad extension registration metadata')

@@ -1,6 +1,6 @@
 include $(THEOS)/makefiles/common.mk
 APPEX_NAME = NetShield2Data
-NetShield2Data_FILES = FilterDataProvider.m ../Shared/NSPolicy.m ../Shared/NSStore.m
+NetShield2Data_FILES = FilterDataProvider.m ../Shared/NSPolicy.m ../Shared/NSStore.m ../Shared/NSStoreLock.m ../Shared/NSPolicyCache.m
 NetShield2Data_FRAMEWORKS = Foundation NetworkExtension
 NetShield2Data_CFLAGS = -fobjc-arc -Wall -Wextra -Wno-unused-parameter -Werror=unguarded-availability
 NetShield2Data_CODESIGN_FLAGS = -SEntitlements.plist
