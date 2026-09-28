@@ -2,12 +2,8 @@
 set -eu
 case "${1:-}" in
     configure)
-        # App and NE providers only: no injected SpringBoard code to respring.
         printf '%s\n' 'NetShield2 2.0.0: open the app and turn on Firewall. No respring required.'
-        # Refresh the registration in place. Unregistering the current bundle on
-        # every upgrade can discard notification/provider registration state.
         if [ -n "${2:-}" ]; then
-            # Retire the previous app-path registration after the product rename.
             if [ -d /var/jb/Applications/NetShield.app ]; then
                 /var/jb/usr/bin/uicache -u /var/jb/Applications/NetShield.app || true
             fi

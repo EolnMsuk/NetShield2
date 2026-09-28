@@ -10,6 +10,6 @@ Conflicts: com.netshield.tweak
 Replaces: com.netshield.tweak
 Homepage: https://github.com/EolnMsuk/NetShield2/
 Depends: firmware (>= 15.0), firmware (<< 19.0), uikittools
-Icon: file:///var/jb/Applications/NetShield2.app/Icon.png
+Icon: https://raw.githubusercontent.com/EolnMsuk/NetShield2/HEAD/App/Resources/Icon.png
 Depiction: https://github.com/EolnMsuk/NetShield2/#readme
 SileoDepiction: https://raw.githubusercontent.com/EolnMsuk/NetShield2/HEAD/depiction.json

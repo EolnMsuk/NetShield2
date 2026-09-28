@@ -5,9 +5,6 @@
 #define NSAllowAction @"NETSHIELD_ALLOW"
 #define NSBlockAction @"NETSHIELD_BLOCK"
 
-// Include notifications left by a previous provider session, which are no
-// longer represented in the current permission queue. Re-read the policy in
-// each asynchronous callback so disabling the allowance keeps new requests.
 static inline void NSRemoveAutomaticallyAllowedNotifications(void) {
     UNUserNotificationCenter *center = UNUserNotificationCenter.currentNotificationCenter;
     [center getPendingNotificationRequestsWithCompletionHandler:^(NSArray<UNNotificationRequest *> *requests) {

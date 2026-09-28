@@ -32,11 +32,6 @@
     [super viewDidLoad];
     self.title = @"NetShield2";
     self.navigationController.navigationBar.prefersLargeTitles = YES;
-    // Remove only the obsolete notification-test artifact from pre-release builds.
-    [UNUserNotificationCenter.currentNotificationCenter removePendingNotificationRequestsWithIdentifiers:@[@"netshield-test"]];
-    [UNUserNotificationCenter.currentNotificationCenter removeDeliveredNotificationsWithIdentifiers:@[@"netshield-test"]];
-    NSURL *oldTest = NSSharedURL(@"notification-test.plist");
-    if (oldTest) [NSFileManager.defaultManager removeItemAtURL:oldTest error:NULL];
     self.deferredRequests = [NSMutableSet new];
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemRefresh target:self action:@selector(loadConfiguration)];
     self.tableView.rowHeight = UITableViewAutomaticDimension;
@@ -74,13 +69,10 @@
     self.timer = nil;
 }
 - (void)reloadMonitor {
-    // Leave the data source and geometry untouched during an active scroll gesture.
     if (self.tableView.dragging || self.tableView.decelerating) return;
     NSPolicy *latest = NSReadPolicy(NULL);
     if (latest) self.policy = latest;
     NSMutableDictionary *monitor = [NSReadMonitor() mutableCopy];
-    // The provider clears resolved requests on its next tick. Hide overridden
-    // Apple requests immediately so saving the switch cannot reopen a stale prompt.
     NSMutableArray *requests = [NSMutableArray new];
     for (NSDictionary *request in monitor[@"requests"]) {
         if ([self.policy requiresPermissionForIdentity:request[@"identity"]]) [requests addObject:request];
@@ -126,8 +118,6 @@
     return height ? height.doubleValue : 64;
 }
 - (void)tableView:(UITableView *)tableView willDisplayCell:(UITableViewCell *)cell forRowAtIndexPath:(NSIndexPath *)path {
-    // Reuse measured geometry across reloads instead of replacing long identity
-    // rows with a generic estimate, which moves content as UIKit lays it out.
     if (self.rowHeights.count > 5000) [self.rowHeights removeAllObjects];
     self.rowHeights[[self heightKey:path]] = @(cell.bounds.size.height);
 }
@@ -140,8 +130,6 @@
     self.displaySignature = signature;
     __block CGPoint offset = self.tableView.contentOffset;
     BOOL atTop = offset.y <= -self.tableView.adjustedContentInset.top + 1;
-    // Save stable keys and geometry for every visible row. If the first one was
-    // removed, another surviving row still anchors the same content on screen.
     NSMutableArray *anchors = [NSMutableArray new];
     for (NSIndexPath *path in self.tableView.indexPathsForVisibleRows) {
         if ((NSUInteger)path.section < self.displayedRows.count && (NSUInteger)path.row < [self.displayedRows[path.section] count]) {
@@ -196,7 +184,6 @@
             [self refreshNotificationSettings];
             if (error) [self showError:error operation:@"Notification authorization"];
             else if (!granted) self.message = @"Notifications are off. Enable Allow Notifications and Banners in notification settings.";
-            // Re-attempt existing requests after a permission change, without restarting the filter.
             NSWriteDocument(@{@"revision": NSUUID.UUID.UUIDString}, @"notification-retry.plist", NULL);
             if (completion) completion();
         });
@@ -207,7 +194,6 @@
         dispatch_async(dispatch_get_main_queue(), ^{
             if (settings.authorizationStatus == UNAuthorizationStatusNotDetermined) [self authorizeNotificationsThen:nil];
             else {
-                // iOS 15.0-15.3 has no public direct link to notification settings.
                 NSString *settingsURL = UIApplicationOpenSettingsURLString;
                 if (@available(iOS 15.4, *)) settingsURL = UIApplicationOpenNotificationSettingsURLString;
                 [UIApplication.sharedApplication openURL:[NSURL URLWithString:settingsURL] options:@{} completionHandler:nil];
@@ -253,8 +239,6 @@
             NEFilterManager *manager = NEFilterManager.sharedManager;
             NSInteger configuredEngine = [manager.providerConfiguration.vendorConfiguration[@"engine"] integerValue];
             if (!error && manager.enabled && !self.attemptedProviderUpgrade && configuredEngine < 20013 && NSReadPolicy(NULL)) {
-                // Installing new files does not replace an already-running NE
-                // provider. Restart once after an upgrade, keeping all app rules.
                 self.attemptedProviderUpgrade = YES;
                 [self changeConfiguration:1];
                 return;
@@ -300,8 +284,6 @@
                 [manager saveToPreferencesWithCompletionHandler:finished];
             };
             if (operation == 1 && manager.enabled) {
-                // Restart through NE so an upgrade does not keep the old provider
-                // instance alive while the new app writes an Ask policy.
                 manager.enabled = NO;
                 [manager saveToPreferencesWithCompletionHandler:^(NSError *disableError) {
                     dispatch_async(dispatch_get_main_queue(), ^{
@@ -346,7 +328,7 @@
     if (!NSWriteDocument([NSPolicy defaultDocument], @"policy.plist", &error)) {
         self.busy = NO; [self showError:error]; return;
     }
-    for (NSString *name in @[@"monitor.plist", @"notification-retry.plist", @"notification-test.plist"]) {
+    for (NSString *name in @[@"monitor.plist", @"notification-retry.plist"]) {
         NSURL *url = NSSharedURL(name);
         if (url && [NSFileManager.defaultManager fileExistsAtPath:url.path] && ![NSFileManager.defaultManager removeItemAtURL:url error:&error]) {
             self.busy = NO; [self showError:error operation:@"Reset shared state"]; return;
@@ -447,8 +429,6 @@
     [self refreshTableKeepingPosition];
 }
 - (void)openSupportURL:(NSURL *)url {
-    // The permission inbox remains the fallback for requests delivered during
-    // a link handoff. Do not guess the destination's OS identity or grant a rule.
     void (^presentOrOpen)(void) = ^{
         if (![NEFilterManager sharedManager].enabled) {
             [UIApplication.sharedApplication openURL:url options:@{} completionHandler:nil];
@@ -463,7 +443,6 @@
         [notice addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
         [self presentViewController:notice animated:YES completion:nil];
     };
-    // Wait for the donation chooser to close before presenting another alert.
     if (self.presentedViewController) [self dismissViewControllerAnimated:YES completion:presentOrOpen];
     else presentOrOpen();
 }
@@ -647,7 +626,6 @@
 }
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center willPresentNotification:(UNNotification *)notification
         withCompletionHandler:(void (^)(UNNotificationPresentationOptions))completionHandler {
-    // The foreground inbox handles permission requests.
     dispatch_async(dispatch_get_main_queue(), ^{ [self.dashboard reloadMonitor]; completionHandler(UNNotificationPresentationOptionNone); });
 }
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center didReceiveNotificationResponse:(UNNotificationResponse *)response

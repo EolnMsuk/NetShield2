@@ -1,4 +1,3 @@
-"""Validate source metadata or the staged deb tree; does not emulate iOS."""
 import argparse
 import json
 import pathlib
@@ -26,7 +25,7 @@ require(metadata['Name'] == 'NetShield2', 'Wrong product name')
 require(metadata['Architecture'] == 'iphoneos-arm64', 'Wrong rootless architecture')
 require(metadata['Depends'] == 'firmware (>= 15.0), firmware (<< 19.0), uikittools', 'Expected iOS 15-18 package range')
 require(re.search(r'^export TARGET = iphone:clang:[^:]+:15\.0$', (ROOT / 'Makefile').read_text(), re.M), 'Expected iOS 15.0 deployment target')
-require(metadata.get('Icon') == 'file:///var/jb/Applications/NetShield2.app/Icon.png', 'Missing package icon')
+require(metadata.get('Icon') == 'https://raw.githubusercontent.com/EolnMsuk/NetShield2/HEAD/App/Resources/Icon.png', 'Expected hosted package icon URL')
 require((ROOT / 'App/Resources/Icon.png').read_bytes().startswith(b'\x89PNG\r\n\x1a\n'), 'Invalid app icon')
 require('mobilesubstrate' not in metadata['Depends'], 'v1 injection dependency remains')
 
@@ -53,7 +52,7 @@ for directory, binary, suffix, point, principal in bundles:
     require(info.get('CFBundleVersion') == '20013',
             f'{directory}/Resources/Info.plist: CFBundleVersion is '
             f'{info.get("CFBundleVersion")!r}; expected "20013" for {metadata["Version"]}. '
-            'Upload all three release Info.plist files and start a new workflow run on that commit.')
+            'All app and provider bundle versions must match.')
     if point:
         require(info['NSExtension'] == dict(NSExtensionPointIdentifier=point, NSExtensionPrincipalClass=principal), 'Bad extension registration metadata')
     ent = plist(source / 'Entitlements.plist')

@@ -41,7 +41,6 @@ BOOL NSWriteDocument(NSDictionary *document, NSString *name, NSError **error) {
         if (error) *error = NSStorageError(@"Shared document exceeds the 2 MiB limit.");
         return NO;
     }
-    // Rename an entire snapshot atomically. No preferences cache and no partial rules.
     return [data writeToURL:url options:NSDataWritingAtomic | NSDataWritingFileProtectionNone error:error];
 }
 NSPolicy *NSReadPolicy(NSError **error) {
@@ -74,13 +73,10 @@ NSDictionary *NSReadMonitor(void) {
                 ![request[@"expired"] isKindOfClass:NSNumber.class]) return @{};
         }
     }
-    if (d[@"notificationError"] && ![d[@"notificationError"] isKindOfClass:NSString.class]) return @{};
     if (d[@"notificationDeliveryIssue"] && ![d[@"notificationDeliveryIssue"] isKindOfClass:NSString.class]) return @{};
     return d;
 }
 
-// Called on the application's main queue by both the inbox and background actions.
-// No view creation or application foreground transition is required.
 BOOL NSAnswerPermissionRequest(NSDictionary *request, BOOL allow, NSError **error) {
     NSPolicy *policy = NSReadPolicy(error);
     if (!policy) return NO;
@@ -100,7 +96,6 @@ NSDictionary *NSPermissionResponseDocument(NSDictionary *request, NSDictionary *
         if (error) *error = NSStorageError(@"This request is no longer current or the filter is unavailable. Open NetShield2 to review it.");
         return nil;
     }
-    // A duplicate/late action must not overwrite an explicit decision already saved.
     if (![policy requiresPermissionForIdentity:request[@"identity"]]) {
         if (error) *error = NSStorageError(@"A rule already handles this app. Review its current rule in NetShield2.");
         return nil;

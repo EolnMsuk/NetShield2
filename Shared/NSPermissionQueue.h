@@ -2,9 +2,6 @@
 #import "NSPolicy.h"
 
 NS_ASSUME_NONNULL_BEGIN
-// Caller serializes access. Deadlines use monotonic time; dates are display only.
-// A timed-out request remains visible, but subsequent attempts are denied until
-// the user saves a rule. This prevents repeated notifications from retry loops.
 @interface NSPermissionQueue : NSObject
 @property(nonatomic, readonly) NSArray<NSDictionary *> *requests;
 @property(nonatomic, readonly) NSUInteger waitingCount;

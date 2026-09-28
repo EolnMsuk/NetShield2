@@ -65,7 +65,6 @@
     for (NSPermissionEntry *entry in [self.entries copy]) {
         BOOL resolved = !policy || ![policy requiresPermissionForIdentity:entry.identity];
         if (!resolved && now < entry.deadline) continue;
-        // Deadline wins over a late allow: permission must arrive while waiting.
         BOOL timedOut = now >= entry.deadline;
         for (NSDictionary *waiter in entry.waiters) {
             BOOL allow = !timedOut && policy && resolved && [policy allowsIdentity:entry.identity direction:[waiter[@"direction"] integerValue]];
@@ -75,7 +74,6 @@
         entry.expired = YES;
         if (resolved) [self.entries removeObject:entry];
     }
-    // Remove state before callbacks; each queued flow is completed exactly once.
     for (NSDictionary *callback in callbacks) {
         void (^finish)(BOOL) = callback[@"completion"];
         finish([callback[@"allow"] boolValue]);

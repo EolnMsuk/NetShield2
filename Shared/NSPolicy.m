@@ -19,7 +19,6 @@
         [d[@"default"] isKindOfClass:NSString.class] && [defaults containsObject:d[@"default"]] &&
         [d[@"unattributed"] isKindOfClass:NSString.class] && [unknownActions containsObject:d[@"unattributed"]] &&
         [d[@"rules"] isKindOfClass:NSDictionary.class];
-    // Optional for compatibility with policies saved before this switch existed.
     id appleAllowance = d[@"allowAppleSystemProcesses"];
     valid = valid && (!appleAllowance ||
         ([appleAllowance isKindOfClass:NSNumber.class] &&
@@ -40,7 +39,6 @@
             userInfo:@{NSLocalizedDescriptionKey: @"Invalid v2 policy. Filtering callbacks will block until a valid policy is readable."}];
         return nil;
     }
-    // Deep immutable snapshot: callers cannot change a live policy via mutable input.
     NSData *encoded = [NSPropertyListSerialization dataWithPropertyList:d format:NSPropertyListBinaryFormat_v1_0 options:0 error:error];
     if (!encoded) return nil;
     NSPolicy *policy = [NSPolicy new];
@@ -48,8 +46,6 @@
     return policy->_document ? policy : nil;
 }
 - (BOOL)automaticallyAllowsIdentity:(NSString *)identity {
-    // Match only the known Apple namespaces, including Apple's signing prefix.
-    // Do not strip arbitrary signing prefixes or match embedded namespaces.
     return [identity isKindOfClass:NSString.class] && [self.document[@"allowAppleSystemProcesses"] boolValue] &&
         ([identity hasPrefix:@"com.apple."] || [identity hasPrefix:@".com.apple."] ||
          [identity hasPrefix:@"Apple.com.apple."]);
@@ -63,6 +59,6 @@
     if ([action isEqual:@"allow"]) return YES;
     if ([action isEqual:@"block-inbound"]) return direction == NSFlowDirectionOutbound;
     if ([action isEqual:@"block-outbound"]) return direction == NSFlowDirectionInbound;
-    return NO; // Includes unknown direction on a directional rule.
+    return NO;
 }
 @end

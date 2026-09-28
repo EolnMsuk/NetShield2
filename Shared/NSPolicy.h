@@ -1,8 +1,6 @@
 #import <Foundation/Foundation.h>
 
 NS_ASSUME_NONNULL_BEGIN
-// Identity strings are supplied by NetworkExtension. Never guess a bundle ID from
-// a process name, strip a signing prefix, or attribute a shared daemon to an app.
 typedef NS_ENUM(NSInteger, NSFlowDirection) {
     NSFlowDirectionUnknown = 0,
     NSFlowDirectionInbound = 1,

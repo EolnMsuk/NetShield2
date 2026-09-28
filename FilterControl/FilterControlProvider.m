@@ -12,7 +12,6 @@
 @property(nonatomic, strong) NSDate *lastReport;
 @property(nonatomic) BOOL stopped;
 @property(nonatomic, strong) NSPermissionQueue *permissions;
-@property(nonatomic, copy) NSString *notificationError;
 @property(nonatomic, copy) NSString *notificationRetry;
 @property(nonatomic, copy) NSString *notificationDeliveryIssue;
 @property(nonatomic, strong) NSMutableSet<NSString *> *submittedNotifications;
@@ -27,7 +26,6 @@
              @"updated": NSDate.date, @"lastReport": self.lastReport ?: [NSDate dateWithTimeIntervalSince1970:0],
              @"revision": self.revision ?: @"", @"policyError": error.localizedDescription ?: @"",
              @"events": [self.events copy] ?: @[], @"requests": self.permissions.requests ?: @[],
-             @"notificationError": self.notificationError ?: @"",
              @"notificationDeliveryIssue": self.notificationDeliveryIssue ?: @""};
 }
 - (void)refresh {
@@ -58,9 +56,6 @@
             [self.notificationAttempts removeAllObjects];
             [self.notificationAttemptTimes removeAllObjects];
         }
-        // Submission failures do not get another enqueue callback for this
-        // identity. Retry at most three times, with five seconds between attempts.
-        // Returning from notification settings starts a fresh retry budget.
         for (NSDictionary *request in self.permissions.requests) [self sendNotification:request];
         NSString *revision = policy.document[@"revision"];
         if (![self.revision isEqual:revision]) {
@@ -68,11 +63,7 @@
             NSRemoveAutomaticallyAllowedNotifications();
             [self notifyRulesChanged];
         }
-        NSError *writeError = nil;
-        if (!NSWriteDocument([self snapshotWithRunning:YES policyError:error], @"monitor.plist", &writeError)) {
-            // Metadata only. No destinations, payloads, URLs or app identities in system logs.
-            NSLog(@"NetShield2 monitor storage failed: %@", writeError.localizedDescription);
-        }
+        NSWriteDocument([self snapshotWithRunning:YES policyError:error], @"monitor.plist", NULL);
     }
 }
 - (void)startFilterWithCompletionHandler:(void (^)(NSError *))completionHandler {
@@ -82,7 +73,6 @@
     self.lastReport = nil;
     self.revision = nil;
     self.permissions = [NSPermissionQueue new];
-    self.notificationError = @"";
     self.notificationDeliveryIssue = @"";
     self.submittedNotifications = [NSMutableSet new];
     self.submittingNotifications = [NSMutableSet new];
@@ -113,8 +103,6 @@
         NSString *direction = @"unknown";
         if (flow && flow.direction == NETrafficDirectionInbound) direction = @"inbound";
         if (flow && flow.direction == NETrafficDirectionOutbound) direction = @"outbound";
-        // Identity is exactly the OS-supplied sourceAppIdentifier, including any
-        // signing prefix. Empty is explicitly unattributed, never a guessed app.
         NSString *identity = flow.sourceAppIdentifier ?: @"";
         if (identity.length > 1024) identity = @"";
         [self.events addObject:@{@"time": self.lastReport, @"identity": identity,
@@ -139,13 +127,10 @@
             completionHandler([NEFilterControlVerdict updateRules]);
             return;
         }
-        // Receiving this request itself demonstrates a live data-provider callback.
         self.lastReport = NSDate.date;
         __weak typeof(self) weakSelf = self;
         NSDictionary *request = [self.permissions enqueueIdentity:identity direction:direction
             now:NSProcessInfo.processInfo.systemUptime date:NSDate.date completion:^(BOOL allow) {
-                // For allowed flows, send the data provider back through its latest
-                // policy so shouldReport is applied there. Timeouts always drop.
                 completionHandler(allow ? [NEFilterControlVerdict updateRules] : [NEFilterControlVerdict dropVerdictWithUpdateRules:NO]);
                 NSFilterControlProvider *owner = weakSelf;
                 if (!owner) return;
@@ -158,14 +143,11 @@
                 }
             }];
         [self refresh];
-        // refresh submits each queued identity once, including transient retries.
         (void)request;
     }
 }
 - (void)sendNotification:(NSDictionary *)request {
     NSString *identity = request[@"identity"];
-    // A policy edit can resolve a just-enqueued request during refresh, before
-    // this method is reached. Never publish that stale notification.
     NSPolicy *current = NSReadPolicy(NULL);
     if (self.stopped || ![current requiresPermissionForIdentity:identity] ||
         ![[self.permissions.requests valueForKey:@"token"] containsObject:request[@"token"]]) return;
@@ -194,8 +176,6 @@
                     [provider.submittedNotifications addObject:token];
                 if (!provider.stopped) provider.notificationDeliveryIssue = error
                     ? [NSString stringWithFormat:@"Notification delivery failed: %@. Reopen notification settings, then return to retry.", error.localizedDescription] : @"";
-                // Submission is asynchronous. Only a known policy decision may
-                // withdraw it; a failed read or missing queue entry proves nothing.
                 if (provider.stopped || NSShouldWithdrawPermissionNotification(NSReadPolicy(NULL), identity)) {
                     [UNUserNotificationCenter.currentNotificationCenter removePendingNotificationRequestsWithIdentifiers:@[request[@"token"]]];
                     [UNUserNotificationCenter.currentNotificationCenter removeDeliveredNotificationsWithIdentifiers:@[request[@"token"]]];
@@ -210,9 +190,6 @@
                     settings.authorizationStatus == UNAuthorizationStatusNotDetermined || settings.alertSetting == UNNotificationSettingDisabled)) {
                     owner.notificationDeliveryIssue = @"iOS is not allowing alerts from the filter provider. Enable Allow Notifications and Banners in Notification settings, then return to retry.";
                 }
-                if (!owner.stopped) owner.notificationError = [NSString stringWithFormat:@"Provider notification at %@: %@. Provider authorization=%ld, alerts=%ld (2=enabled). Banner display is not confirmed.", NSDate.date,
-                    error ? [NSString stringWithFormat:@"%@ (%@ %ld)", error.localizedDescription, error.domain, (long)error.code] : @"submission accepted",
-                    (long)settings.authorizationStatus, (long)settings.alertSetting];
             }
         }];
     }];
