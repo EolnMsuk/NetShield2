@@ -41,6 +41,7 @@ jobs:
           python3 scripts/validate.py
           sh -n layout/DEBIAN/postinst
           sh -n layout/DEBIAN/prerm
+          python3 scripts/test_uninstall.py
       - name: Check Objective-C formatting
         shell: bash
         run: |
