@@ -41,6 +41,15 @@ jobs:
           python3 scripts/validate.py
           sh -n layout/DEBIAN/postinst
           sh -n layout/DEBIAN/prerm
+      - name: Check Objective-C formatting
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/netshield-format"
+          "$RUNNER_TEMP/netshield-format/bin/pip" install clang-format==19.1.7
+          python3 scripts/check_format.py "$RUNNER_TEMP/netshield-format/bin/clang-format"
+      - name: Run native regression tests
+        run: python3 scripts/test.py
       - name: Compile and package for rootless iOS
         shell: bash
         run: |
