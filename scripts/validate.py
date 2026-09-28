@@ -20,7 +20,7 @@ def plist(path):
 control = (ROOT / 'control').read_bytes()
 require(b'\r' not in control, 'control must have LF line endings')
 metadata = dict(line.split(': ', 1) for line in control.decode().splitlines() if ': ' in line)
-require(metadata['Version'] == '2.0.0', 'Wrong package version')
+require(metadata['Version'] == '2.0.1', 'Wrong package version')
 require(metadata['Name'] == 'NetShield2', 'Wrong product name')
 require(metadata['Architecture'] == 'iphoneos-arm64', 'Wrong rootless architecture')
 require(metadata['Depends'] == 'firmware (>= 15.0), firmware (<< 19.0), uikittools', 'Expected iOS 15-18 package range')
@@ -50,6 +50,8 @@ for directory, binary, suffix, point, principal in bundles:
     require(info['CFBundleIdentifier'] == 'com.eolnmsuk.netshield' + suffix, 'Bundle ID mismatch')
     require(info['CFBundleExecutable'] == binary, 'Executable mismatch')
     require(info['MinimumOSVersion'] == '15.0', 'Deployment mismatch')
+    require(info.get('CFBundleShortVersionString') == metadata['Version'],
+            f'{directory}: bundle release version must match the package version')
     require(info.get('CFBundleVersion') == engine_version,
             f'{directory}/Resources/Info.plist: CFBundleVersion is '
             f'{info.get("CFBundleVersion")!r}; expected "{engine_version}" for {metadata["Version"]}. '
