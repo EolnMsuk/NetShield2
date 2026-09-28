@@ -16,7 +16,7 @@ Unanswered connections are blocked after 30 seconds. You can decide later in **W
 ## Options
 
 - **Firewall:** on/off - enables/disables the firewall feature.
-- **Allow all iOS system processes:** when enabled, stock iOS processes are allowed without prompts or permission notifications, overriding saved rules.
+- **Allow all iOS system traffic:** when enabled, stock iOS processes are allowed without prompts or permission notifications, overriding saved rules.
 - **Default Rule:** Ask me, Allow or Block for apps without an explicit rule.
 - **Notifications:** notification settings and instructions for banners and Do Not Disturb.
 - **Advanced Settings:** manual rules, Reset NetShield2 and Prepare for uninstall.
