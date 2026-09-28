@@ -23,7 +23,7 @@
 
 @implementation NSFilterControlProvider
 - (NSDictionary *)snapshotWithRunning:(BOOL)running policyError:(NSError *)error {
-    return @{@"engine": @20012, @"schema": @2, @"controlRunning": @(running), @"session": self.session ?: @"",
+    return @{@"engine": @20013, @"schema": @2, @"controlRunning": @(running), @"session": self.session ?: @"",
              @"updated": NSDate.date, @"lastReport": self.lastReport ?: [NSDate dateWithTimeIntervalSince1970:0],
              @"revision": self.revision ?: @"", @"policyError": error.localizedDescription ?: @"",
              @"events": [self.events copy] ?: @[], @"requests": self.permissions.requests ?: @[],

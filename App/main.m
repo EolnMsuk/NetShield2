@@ -252,7 +252,7 @@
             if (error) [self showError:error operation:@"Load filter configuration"];
             NEFilterManager *manager = NEFilterManager.sharedManager;
             NSInteger configuredEngine = [manager.providerConfiguration.vendorConfiguration[@"engine"] integerValue];
-            if (!error && manager.enabled && !self.attemptedProviderUpgrade && configuredEngine < 20012 && NSReadPolicy(NULL)) {
+            if (!error && manager.enabled && !self.attemptedProviderUpgrade && configuredEngine < 20013 && NSReadPolicy(NULL)) {
                 // Installing new files does not replace an already-running NE
                 // provider. Restart once after an upgrade, keeping all app rules.
                 self.attemptedProviderUpgrade = YES;
@@ -292,7 +292,7 @@
                     configuration.filterSockets = YES;
                     configuration.filterBrowsers = YES;
                     configuration.organization = @"NetShield2";
-                    configuration.vendorConfiguration = @{@"schema": @2, @"engine": @20012};
+                    configuration.vendorConfiguration = @{@"schema": @2, @"engine": @20013};
                     manager.providerConfiguration = configuration;
                     manager.localizedDescription = @"NetShield2 network access control";
                 }
@@ -446,10 +446,31 @@
     [self savePolicy:document];
     [self refreshTableKeepingPosition];
 }
+- (void)openSupportURL:(NSURL *)url {
+    // The permission inbox remains the fallback for requests delivered during
+    // a link handoff. Do not guess the destination's OS identity or grant a rule.
+    void (^presentOrOpen)(void) = ^{
+        if (![NEFilterManager sharedManager].enabled) {
+            [UIApplication.sharedApplication openURL:url options:@{} completionHandler:nil];
+            return;
+        }
+        UIAlertController *notice = [UIAlertController alertControllerWithTitle:@"Opening a link with Firewall enabled"
+            message:@"If the destination app or browser needs network permission, the link may not load and a banner may not appear. Return to NetShield2, choose Allow app under Waiting for your decision, then open the link again. If you previously blocked that app, change its rule under App rules."
+            preferredStyle:UIAlertControllerStyleAlert];
+        [notice addAction:[UIAlertAction actionWithTitle:@"Open link" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+            [UIApplication.sharedApplication openURL:url options:@{} completionHandler:nil];
+        }]];
+        [notice addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+        [self presentViewController:notice animated:YES completion:nil];
+    };
+    // Wait for the donation chooser to close before presenting another alert.
+    if (self.presentedViewController) [self dismissViewControllerAnimated:YES completion:presentOrOpen];
+    else presentOrOpen();
+}
 - (void)supportDeveloper {
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Support Developer" message:@"Thank you for supporting EolnMsuk. Choose a donation method." preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"Venmo" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-        [UIApplication.sharedApplication openURL:[NSURL URLWithString:@"https://venmo.com/u/rustonrails"] options:@{} completionHandler:nil];
+        [self openSupportURL:[NSURL URLWithString:@"https://venmo.com/u/rustonrails"]];
     }]];
     [alert addAction:[UIAlertAction actionWithTitle:@"Bitcoin" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         UIPasteboard.generalPasteboard.string = @"31uHLpioo1TbxAmo9kM7rrKcLz3wvcoZaL";
@@ -587,7 +608,7 @@
     else if (path.section == 2) { if (path.row == 0) [self requestNotifications]; else [self showNotificationHelp]; }
     else if (path.section == 0 && path.row == 3) [self chooseActionForIdentity:nil defaultKey:@"unattributed"];
     else if (path.section == 4) {
-        if (path.row == 0) [UIApplication.sharedApplication openURL:[NSURL URLWithString:@"https://github.com/EolnMsuk/NetShield2/"] options:@{} completionHandler:nil];
+        if (path.row == 0) [self openSupportURL:[NSURL URLWithString:@"https://github.com/EolnMsuk/NetShield2/"]];
         else [self supportDeveloper];
     } else if (path.section == 3) {
         if (path.row == 0) [self addIdentity];
@@ -626,13 +647,8 @@
 }
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center willPresentNotification:(UNNotification *)notification
         withCompletionHandler:(void (^)(UNNotificationPresentationOptions))completionHandler {
-    // A linked app can connect before iOS finishes backgrounding NetShield2.
-    // Suppressing foreground delivery loses that banner permanently because the
-    // provider has already marked the request as submitted. Keep it actionable
-    // and in Notification Center, including during external-link handoffs.
-    completionHandler(UNNotificationPresentationOptionBanner | UNNotificationPresentationOptionList |
-                      UNNotificationPresentationOptionSound);
-    dispatch_async(dispatch_get_main_queue(), ^{ [self.dashboard reloadMonitor]; });
+    // The foreground inbox handles permission requests.
+    dispatch_async(dispatch_get_main_queue(), ^{ [self.dashboard reloadMonitor]; completionHandler(UNNotificationPresentationOptionNone); });
 }
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center didReceiveNotificationResponse:(UNNotificationResponse *)response
         withCompletionHandler:(void (^)(void))completionHandler {

@@ -51,7 +51,7 @@ int main(void) {
         apple[@"allowAppleSystemProcesses"] = @YES;
         apple[@"rules"] = @{@"com.apple.test": @"block", @".com.apple.test": @"block-outbound", @"Apple.com.apple.test": @"block"};
         NSPolicy *applePolicy = parse(apple);
-        for (NSString *identity in @[@"com.apple.test", @".com.apple.test", @"com.apple.new", @"Apple.com.apple.test", @"Apple.com.apple.new"]) {
+        for (NSString *identity in @[@"com.apple.test", @".com.apple.test", @"com.apple.new", @"Apple.com.apple.test", @"Apple.com.apple.new", @"Apple.com.apple.Preferences"]) {
             check(![applePolicy requiresPermissionForIdentity:identity], "Apple allowance bypasses prompt");
             for (NSNumber *direction in @[@0, @1, @2])
                 check([applePolicy allowsIdentity:identity direction:direction.integerValue], "Apple allowance overrides all directions");
