@@ -96,8 +96,7 @@ static void NSWithdrawNotifications(id<NSPermissionNotificationCenter> center, N
     UNMutableNotificationContent *content = [UNMutableNotificationContent new];
     content.title = @"Network access requested";
     content.body = [NSString
-        stringWithFormat:@"%@ wants to connect. Long-press this banner for Allow app or Keep blocking.",
-                         identity];
+        stringWithFormat:@"%@ is requesting network access. Long-press to allow or block.", identity];
     content.categoryIdentifier = NSPermissionCategory;
     content.sound = UNNotificationSound.defaultSound;
     content.userInfo = @{@"token" : token, @"identity" : identity};

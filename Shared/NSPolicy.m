@@ -11,7 +11,7 @@
         @"default" : @"ask",
         @"unattributed" : @"allow",
         @"rules" : @{},
-        @"allowAppleSystemProcesses" : @NO,
+        @"allowAppleSystemProcesses" : @YES,
         @"filterSockets" : @YES
     };
 }

@@ -2,12 +2,21 @@
 set -eu
 case "${1:-}" in
     remove|deconfigure)
-        printf '%s\n' 'NetShield2: removing the system filter before uninstalling...'
-        if ! /var/jb/Applications/NetShield2.app/NetShield2 --remove-filter; then
-            printf '%s\n' 'NetShield2: uninstall cancelled because filter removal could not be verified.' >&2
-            printf '%s\n' 'Open NetShield2 > Advanced Settings > Reset ALL Settings, then retry removal. If it still fails, retain the package and report the error above.' >&2
+        # Capture startup output too: injected tweaks can log before main().
+        # Successful cleanup is silent; retain our own diagnostics on failure.
+        if cleanup_output=$(/var/jb/Applications/NetShield2.app/NetShield2 --remove-filter 2>&1); then
+            :
+        else
+            cleanup_status=$?
+            printf '%s\n' "$cleanup_output" | while IFS= read -r line; do
+                case "$line" in
+                    NetShield2:*) printf '%s\n' "$line" >&2 ;;
+                esac
+            done
+            printf 'NetShield2: filter cleanup failed (exit %s); uninstall cancelled.\n' "$cleanup_status" >&2
+            printf '%s\n' 'Open NetShield2 > Advanced Settings > Reset ALL Settings, then retry removal.' >&2
             exit 1
         fi
-        /var/jb/usr/bin/uicache -u /var/jb/Applications/NetShield2.app || true
+        /var/jb/usr/bin/uicache -u /var/jb/Applications/NetShield2.app >/dev/null 2>&1 || true
         ;;
 esac

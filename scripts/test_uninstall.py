@@ -17,8 +17,19 @@ with tempfile.TemporaryDirectory(prefix="netshield-uninstall-") as directory:
     log = temporary / "calls"
     app = temporary / "app"
     cache = temporary / "uicache"
-    app.write_text('#!/bin/sh\nprintf "app:%s\\n" "$*" >> "$TEST_LOG"\nexit "$APP_STATUS"\n')
-    cache.write_text('#!/bin/sh\nprintf "cache:%s\\n" "$*" >> "$TEST_LOG"\nexit "$CACHE_STATUS"\n')
+    app.write_text(
+        '#!/bin/sh\nprintf "app:%s\\n" "$*" >> "$TEST_LOG"\n'
+        'printf "%s\\n" "LYNX DEBUG startup noise"\n'
+        'printf "%s\\n" "SnowBoard startup noise" >&2\n'
+        'if [ "$APP_STATUS" != 0 ]; then\n'
+        '    printf "%s\\n" "NetShield2: filter removal failed: mock error." >&2\n'
+        'else\n'
+        '    printf "%s\\n" "NetShield2: verified system filter is removed."\n'
+        'fi\nexit "$APP_STATUS"\n')
+    cache.write_text(
+        '#!/bin/sh\nprintf "cache:%s\\n" "$*" >> "$TEST_LOG"\n'
+        'printf "%s\\n" "Icon cache noise"\n'
+        'printf "%s\\n" "Icon cache stderr noise" >&2\nexit "$CACHE_STATUS"\n')
     app.chmod(0o755)
     cache.chmod(0o755)
     script = temporary / "prerm"
@@ -29,6 +40,7 @@ with tempfile.TemporaryDirectory(prefix="netshield-uninstall-") as directory:
         ("remove", 0, 0, 0, 2),
         ("deconfigure", 0, 0, 0, 2),
         ("remove", 1, 0, 1, 1),
+        ("remove", 137, 0, 1, 1),
         ("deconfigure", 1, 0, 1, 1),
         ("remove", 0, 1, 0, 2),
         ("upgrade", 0, 0, 0, 0),
@@ -45,8 +57,15 @@ with tempfile.TemporaryDirectory(prefix="netshield-uninstall-") as directory:
         assert len(calls) == expected_calls, (action, calls)
         if calls:
             assert calls[0] == "app:--remove-filter", calls
+        assert result.stdout == "", (action, result.stdout)
+        assert "LYNX" not in result.stderr and "SnowBoard" not in result.stderr
+        assert "Icon cache" not in result.stderr
         if expected_status:
             assert "Reset ALL Settings" in result.stderr
+            assert "NetShield2: filter removal failed: mock error." in result.stderr
+            assert f"exit {app_status}" in result.stderr
+        else:
+            assert result.stderr == "", (action, result.stderr)
         if len(calls) == 2:
             assert calls[1] == "cache:-u /var/jb/Applications/NetShield2.app", calls
     app.unlink()
@@ -54,4 +73,6 @@ with tempfile.TemporaryDirectory(prefix="netshield-uninstall-") as directory:
     result = subprocess.run([shell, str(script), "remove"], env=environment,
                             capture_output=True, text=True, timeout=5)
     assert result.returncode != 0 and not log.read_text(), "Missing helper must stop removal"
+    assert result.stdout == "" and "filter cleanup failed" in result.stderr
+    assert "Reset ALL Settings" in result.stderr
 print("Passed uninstall hook checks: cleanup ordering, failures, missing helper and upgrade preservation")

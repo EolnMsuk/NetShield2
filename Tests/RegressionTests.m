@@ -320,6 +320,7 @@ static void TestAnswersAndReset(void) {
 static void TestSocketSettingsAndDestinations(void) {
     NSMutableDictionary *document = [[NSPolicy defaultDocument] mutableCopy];
     CHECK([document[@"filterSockets"] boolValue]);
+    CHECK([document[@"allowAppleSystemProcesses"] boolValue]);
     [document removeObjectForKey:@"filterSockets"];
     CHECK([NSPolicy policyWithDocument:document error:NULL] != nil);
     CHECK([[NSPolicy policyWithDocument:document error:NULL].document[@"filterSockets"] boolValue]);
@@ -329,7 +330,7 @@ static void TestSocketSettingsAndDestinations(void) {
     document[@"filterSockets"] = @"yes";
     CHECK([NSPolicy policyWithDocument:document error:NULL] == nil);
     document[@"filterSockets"] = @YES;
-    document[@"allowAppleSystemProcesses"] = @YES;
+    document[@"allowAppleSystemProcesses"] = @NO;
     document[@"unattributed"] = @"block";
     CHECK(NSWriteDocument(document, NSPolicyFile, NULL));
     CHECK([NSReadPolicy(NULL).document[@"filterSockets"] boolValue]);
@@ -384,7 +385,7 @@ static void TestSocketSettingsAndDestinations(void) {
     CHECK([NSReadPolicy(NULL).document[@"unattributed"] isEqual:@"block"]);
     CHECK(NSResetSharedState(NO, NULL));
     CHECK([NSReadPolicy(NULL).document[@"filterSockets"] boolValue]);
-    CHECK(![NSReadPolicy(NULL).document[@"allowAppleSystemProcesses"] boolValue]);
+    CHECK([NSReadPolicy(NULL).document[@"allowAppleSystemProcesses"] boolValue]);
     CHECK([NSReadPolicy(NULL).document[@"unattributed"] isEqual:@"allow"]);
 }
 
@@ -437,9 +438,14 @@ static void TestLateNotifications(void) {
     [old updateRequests:@[ request ] policy:NSReadPolicy(NULL) retryRevision:nil];
     CHECK(center.requests.count == 1);
     UNNotificationRequest *banner = center.requests.firstObject;
-    CHECK([banner.content.body containsString:@"notify.app"]);
-    CHECK([banner.content.body containsString:@"Long-press"]);
-    CHECK([banner.content.body containsString:@"Allow app or Keep blocking"]);
+    CHECK([banner.content.title isEqual:@"Network access requested"]);
+    CHECK([banner.content.body
+        isEqual:@"notify.app is requesting network access. Long-press to allow or block."]);
+    CHECK(banner.content.subtitle.length == 0);
+    CHECK(banner.content.attachments.count == 0);
+    CHECK([banner.content.userInfo isEqual:@{@"token" : @"old-token", @"identity" : @"notify.app"}]);
+    CHECK([request[@"destination"][@"domain"] isEqual:@"notify.example"]);
+    CHECK([request[@"destination"][@"address"] isEqual:@"192.0.2.1"]);
     CHECK(![banner.content.body containsString:@"notify.example"]);
     CHECK(![banner.content.body containsString:@"192.0.2.1"]);
     [old updateRequests:@[] policy:NSReadPolicy(NULL) retryRevision:nil];
