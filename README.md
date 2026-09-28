@@ -16,7 +16,7 @@ Unanswered connections are blocked after 30 seconds. You can decide later in **W
 ## Options
 
 - **Firewall:** on/off; turning it off keeps your rules.
-- **Allow all iOS system processes:** directly below Firewall, off by default. When enabled, identities starting with `com.apple.` or `.com.apple.` are allowed without prompts or permission notifications, overriding saved rules. Those rules are preserved and apply again when disabled. Processes without saved rules use Default Rule again, prompting when it is Ask me. Changes affect new connections.
+- **Allow all iOS system processes:** directly below Firewall, off by default. When enabled, identities starting with `com.apple.`, `.com.apple.` or `Apple.com.apple.` are allowed without prompts or permission notifications, overriding saved rules. Those rules are preserved and apply again when disabled. Processes without saved rules use Default Rule again, prompting when it is Ask me. Changes affect new connections.
 - **Default Rule:** Ask me, Allow or Block for apps without an explicit rule.
 - **Unidentified connections:** below Default Rule in the Firewall section. Allow or Block connections whose app identity is unavailable; Allow is the default.
 - **Notifications:** notification settings and instructions for banners and Do Not Disturb.
