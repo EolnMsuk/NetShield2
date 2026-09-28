@@ -141,7 +141,7 @@
                       @"decide from a notification.";
         actions = @[ @"ask", @"allow", @"block" ];
     } else if ([key isEqual:@"unattributed"]) {
-        title = @"Unidentified connections";
+        title = @"Unidentified";
         explanation = @"These connections have no app identity from iOS. Allow is recommended to avoid "
                       @"interrupting system services.";
         actions = @[ @"allow", @"block" ];

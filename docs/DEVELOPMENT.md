@@ -37,7 +37,7 @@ Use clang-format 19.1.7. Include the hidden `.clang-format` file at the reposito
 
 The native suite covers policy mutation preservation and concurrent writers; cache reuse, replacement, corruption, removal, and oversize files; queue capacity, history eviction, directions, exact deadlines, and cancellation; stale/missing monitor reset while the lifetime lock is held; and notification completions after removal, stop, or dispatcher release.
 
-`Shared/NSConstants.h` defines the engine/build number and shared limits. Update all three bundle versions when changing the engine; `scripts/validate.py` checks them against that constant. The release version is 2.0.1 and the engine/build remains 20014. The validator also checks that all three bundle release versions match the package version. The existing root-level `.deb` contains version 2.0.0 / build 20014; rebuild it to produce version 2.0.1.
+`Shared/NSConstants.h` defines the engine/build number and shared limits. Update all three bundle versions when changing the engine; `scripts/validate.py` checks them against that constant. The release version is 2.0.2 and the engine/build remains 20014. The validator also checks that all three bundle release versions match the package version. The existing root-level `.deb` files are older releases; rebuild to produce `com.eolnmsuk.netshield_2.0.2_iphoneos-arm64.deb`. The package filename is generated from the version in `control`.
 
 ## Device verification before release
 
