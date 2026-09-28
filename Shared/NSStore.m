@@ -75,6 +75,7 @@ NSDictionary *NSReadMonitor(void) {
         }
     }
     if (d[@"notificationError"] && ![d[@"notificationError"] isKindOfClass:NSString.class]) return @{};
+    if (d[@"notificationDeliveryIssue"] && ![d[@"notificationDeliveryIssue"] isKindOfClass:NSString.class]) return @{};
     return d;
 }
 

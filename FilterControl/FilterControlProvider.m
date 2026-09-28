@@ -2,6 +2,7 @@
 #import "../Shared/NSStore.h"
 #import "../Shared/NSPermissionQueue.h"
 #import "../Shared/NSNotifications.h"
+#import "../Shared/NSNotificationPolicy.h"
 
 @interface NSFilterControlProvider : NEFilterControlProvider
 @property(nonatomic, strong) dispatch_source_t timer;
@@ -13,15 +14,21 @@
 @property(nonatomic, strong) NSPermissionQueue *permissions;
 @property(nonatomic, copy) NSString *notificationError;
 @property(nonatomic, copy) NSString *notificationRetry;
+@property(nonatomic, copy) NSString *notificationDeliveryIssue;
+@property(nonatomic, strong) NSMutableSet<NSString *> *submittedNotifications;
+@property(nonatomic, strong) NSMutableSet<NSString *> *submittingNotifications;
+@property(nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *notificationAttempts;
+@property(nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *notificationAttemptTimes;
 @end
 
 @implementation NSFilterControlProvider
 - (NSDictionary *)snapshotWithRunning:(BOOL)running policyError:(NSError *)error {
-    return @{@"engine": @20011, @"schema": @2, @"controlRunning": @(running), @"session": self.session ?: @"",
+    return @{@"engine": @20012, @"schema": @2, @"controlRunning": @(running), @"session": self.session ?: @"",
              @"updated": NSDate.date, @"lastReport": self.lastReport ?: [NSDate dateWithTimeIntervalSince1970:0],
              @"revision": self.revision ?: @"", @"policyError": error.localizedDescription ?: @"",
              @"events": [self.events copy] ?: @[], @"requests": self.permissions.requests ?: @[],
-             @"notificationError": self.notificationError ?: @""};
+             @"notificationError": self.notificationError ?: @"",
+             @"notificationDeliveryIssue": self.notificationDeliveryIssue ?: @""};
 }
 - (void)refresh {
     @synchronized(self) {
@@ -35,6 +42,11 @@
         for (NSDictionary *request in before) {
             if (![remaining containsObject:request[@"token"]]) [removed addObject:request[@"token"]];
         }
+        for (NSString *token in removed) {
+            [self.submittedNotifications removeObject:token];
+            [self.notificationAttempts removeObjectForKey:token];
+            [self.notificationAttemptTimes removeObjectForKey:token];
+        }
         if (removed.count) {
             [UNUserNotificationCenter.currentNotificationCenter removePendingNotificationRequestsWithIdentifiers:removed];
             [UNUserNotificationCenter.currentNotificationCenter removeDeliveredNotificationsWithIdentifiers:removed];
@@ -42,8 +54,14 @@
         NSString *retry = NSReadDocument(@"notification-retry.plist", NULL)[@"revision"];
         if ([retry isKindOfClass:NSString.class] && ![retry isEqual:self.notificationRetry]) {
             self.notificationRetry = retry;
-            for (NSDictionary *request in self.permissions.requests) [self sendNotification:request];
+            [self.submittedNotifications removeAllObjects];
+            [self.notificationAttempts removeAllObjects];
+            [self.notificationAttemptTimes removeAllObjects];
         }
+        // Submission failures do not get another enqueue callback for this
+        // identity. Retry at most three times, with five seconds between attempts.
+        // Returning from notification settings starts a fresh retry budget.
+        for (NSDictionary *request in self.permissions.requests) [self sendNotification:request];
         NSString *revision = policy.document[@"revision"];
         if (![self.revision isEqual:revision]) {
             self.revision = revision;
@@ -65,6 +83,11 @@
     self.revision = nil;
     self.permissions = [NSPermissionQueue new];
     self.notificationError = @"";
+    self.notificationDeliveryIssue = @"";
+    self.submittedNotifications = [NSMutableSet new];
+    self.submittingNotifications = [NSMutableSet new];
+    self.notificationAttempts = [NSMutableDictionary new];
+    self.notificationAttemptTimes = [NSMutableDictionary new];
     NSRegisterPermissionActions();
     self.session = NSUUID.UUID.UUIDString;
     self.stopped = NO;
@@ -135,8 +158,8 @@
                 }
             }];
         [self refresh];
-        if (!request) return; // Already queued, timed out, or over capacity.
-        [self sendNotification:request];
+        // refresh submits each queued identity once, including transient retries.
+        (void)request;
     }
 }
 - (void)sendNotification:(NSDictionary *)request {
@@ -146,6 +169,14 @@
     NSPolicy *current = NSReadPolicy(NULL);
     if (self.stopped || ![current requiresPermissionForIdentity:identity] ||
         ![[self.permissions.requests valueForKey:@"token"] containsObject:request[@"token"]]) return;
+    NSString *token = request[@"token"];
+    NSUInteger attempts = [self.notificationAttempts[token] unsignedIntegerValue];
+    NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
+    if ([self.submittedNotifications containsObject:token] || [self.submittingNotifications containsObject:token] ||
+        attempts >= 3 || (attempts && now - [self.notificationAttemptTimes[token] doubleValue] < 5)) return;
+    self.notificationAttempts[token] = @(attempts + 1);
+    self.notificationAttemptTimes[token] = @(now);
+    [self.submittingNotifications addObject:token];
     __weak typeof(self) weakSelf = self;
     UNMutableNotificationContent *content = [UNMutableNotificationContent new];
     content.title = @"Network access requested";
@@ -158,10 +189,14 @@
         NSFilterControlProvider *provider = weakSelf;
         if (provider) {
             @synchronized(provider) {
-                // Submission is asynchronous: an intervening policy change may
-                // have removed the request before notification delivery finished.
-                if (provider.stopped || ![NSReadPolicy(NULL) requiresPermissionForIdentity:identity] ||
-                    ![[provider.permissions.requests valueForKey:@"token"] containsObject:request[@"token"]]) {
+                [provider.submittingNotifications removeObject:token];
+                if (!error && !provider.stopped && [[provider.permissions.requests valueForKey:@"token"] containsObject:token])
+                    [provider.submittedNotifications addObject:token];
+                if (!provider.stopped) provider.notificationDeliveryIssue = error
+                    ? [NSString stringWithFormat:@"Notification delivery failed: %@. Reopen notification settings, then return to retry.", error.localizedDescription] : @"";
+                // Submission is asynchronous. Only a known policy decision may
+                // withdraw it; a failed read or missing queue entry proves nothing.
+                if (provider.stopped || NSShouldWithdrawPermissionNotification(NSReadPolicy(NULL), identity)) {
                     [UNUserNotificationCenter.currentNotificationCenter removePendingNotificationRequestsWithIdentifiers:@[request[@"token"]]];
                     [UNUserNotificationCenter.currentNotificationCenter removeDeliveredNotificationsWithIdentifiers:@[request[@"token"]]];
                 }
@@ -171,6 +206,10 @@
             NSFilterControlProvider *owner = weakSelf;
             if (!owner) return;
             @synchronized(owner) {
+                if (!owner.stopped && !error && (settings.authorizationStatus == UNAuthorizationStatusDenied ||
+                    settings.authorizationStatus == UNAuthorizationStatusNotDetermined || settings.alertSetting == UNNotificationSettingDisabled)) {
+                    owner.notificationDeliveryIssue = @"iOS is not allowing alerts from the filter provider. Enable Allow Notifications and Banners in Notification settings, then return to retry.";
+                }
                 if (!owner.stopped) owner.notificationError = [NSString stringWithFormat:@"Provider notification at %@: %@. Provider authorization=%ld, alerts=%ld (2=enabled). Banner display is not confirmed.", NSDate.date,
                     error ? [NSString stringWithFormat:@"%@ (%@ %ld)", error.localizedDescription, error.domain, (long)error.code] : @"submission accepted",
                     (long)settings.authorizationStatus, (long)settings.alertSetting];

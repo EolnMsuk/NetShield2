@@ -19,6 +19,7 @@
 @property(nonatomic, copy) NSDictionary *presentedRequest;
 @property(nonatomic) BOOL busy;
 @property(nonatomic) BOOL loaded;
+@property(nonatomic) BOOL attemptedProviderUpgrade;
 @property(nonatomic, strong) NSMutableSet<NSString *> *deferredRequests;
 @property(nonatomic, copy) NSString *notificationStatus;
 - (void)answerRequest:(NSDictionary *)request allow:(BOOL)allow;
@@ -132,7 +133,7 @@
 }
 - (void)refreshTableKeepingPosition {
     NSArray *signature = @[self.policy.document ?: @{}, self.monitor[@"requests"] ?: @[],
-        self.monitor[@"events"] ?: @[], self.monitor[@"policyError"] ?: @"",
+        self.monitor[@"events"] ?: @[], self.monitor[@"policyError"] ?: @"", self.monitor[@"notificationDeliveryIssue"] ?: @"",
         @([self hasFreshMonitor]), @(self.loaded), @(self.busy), @(NEFilterManager.sharedManager.enabled),
         self.message ?: @"", self.notificationStatus ?: @""];
     if ([signature isEqual:self.displaySignature]) return;
@@ -249,6 +250,15 @@
             self.busy = NO;
             self.loaded = error == nil;
             if (error) [self showError:error operation:@"Load filter configuration"];
+            NEFilterManager *manager = NEFilterManager.sharedManager;
+            NSInteger configuredEngine = [manager.providerConfiguration.vendorConfiguration[@"engine"] integerValue];
+            if (!error && manager.enabled && !self.attemptedProviderUpgrade && configuredEngine < 20012 && NSReadPolicy(NULL)) {
+                // Installing new files does not replace an already-running NE
+                // provider. Restart once after an upgrade, keeping all app rules.
+                self.attemptedProviderUpgrade = YES;
+                [self changeConfiguration:1];
+                return;
+            }
             [self reloadMonitor];
         });
     }];
@@ -282,7 +292,7 @@
                     configuration.filterSockets = YES;
                     configuration.filterBrowsers = YES;
                     configuration.organization = @"NetShield2";
-                    configuration.vendorConfiguration = @{@"schema": @2, @"engine": @20011};
+                    configuration.vendorConfiguration = @{@"schema": @2, @"engine": @20012};
                     manager.providerConfiguration = configuration;
                     manager.localizedDescription = @"NetShield2 network access control";
                 }
@@ -541,6 +551,8 @@
     } else if (path.section == 2) {
         cell.textLabel.text = path.row == 0 ? @"Notification settings" : @"Banners & Do Not Disturb";
         cell.detailTextLabel.text = path.row == 0 ? self.notificationStatus : @"How to answer while using another app";
+        if (path.row == 0 && [self hasFreshMonitor] && [self.monitor[@"notificationDeliveryIssue"] length])
+            cell.detailTextLabel.text = self.monitor[@"notificationDeliveryIssue"];
     } else if (path.section == 6) {
         NSArray *events = self.monitor[@"events"];
         cell.accessoryType = UITableViewCellAccessoryNone;

@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 #import "../Shared/NSStore.h"
+#import "../Shared/NSNotificationPolicy.h"
 
 static void check(BOOL value, NSString *message) {
     if (!value) { NSLog(@"FAIL: %@", message); exit(1); }
@@ -36,7 +37,13 @@ int main(void) {
         appleDocument[@"allowAppleSystemProcesses"] = @YES;
         NSPolicy *applePolicy = [NSPolicy policyWithDocument:appleDocument error:NULL];
         check(!NSPermissionResponseDocument(appleRequest, monitor, applePolicy, now, NO, NULL), @"Stale notification cannot save a block while Apple allowance is on");
-        NSLog(@"Passed 12 notification-response checks");
+        check(!NSShouldWithdrawPermissionNotification(nil, @"app.test"), @"Failed policy read must not withdraw an unanswered notification");
+        check(!NSShouldWithdrawPermissionNotification(policy, @"app.test"), @"Ask policy preserves third-party notification");
+        check(!NSShouldWithdrawPermissionNotification(applePolicy, @"app.test"), @"Apple allowance preserves third-party notification");
+        check(NSShouldWithdrawPermissionNotification(applePolicy, @"com.apple.test"), @"Apple allowance withdraws Apple notification");
+        check(NSShouldWithdrawPermissionNotification(applePolicy, @".com.apple.test"), @"Apple allowance withdraws leading-dot Apple notification");
+        check(NSShouldWithdrawPermissionNotification(decided, @"app.test"), @"Saved decision withdraws answered notification");
+        NSLog(@"Passed 18 notification-response checks");
     }
     return 0;
 }

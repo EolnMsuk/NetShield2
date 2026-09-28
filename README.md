@@ -1,6 +1,6 @@
 # NetShield2 ⛨
 
-A firewall & live network filter for jailbroken iOS 16 devices. Installation is enabled for rootless iOS 15–18; **iOS 15, 17 and 18 are untested** and require device testing. NetShield2 uses an OS content filter, saved app rules and actionable notifications. Unlike the original [NetShield](https://github.com/EolnMsuk/NetShield) and paid [NetFence](https://havoc.app/package/netfence), the new [**NetShield2**](https://github.com/EolnMsuk/NetShield2/) is system wide and does not require app injection to function.
+A firewall & live network filter for jailbroken iOS 16 devices. Installation is enabled for rootless iOS 15–18; **iOS 15, 17 and 18 are untested** and require device testing. NetShield2 uses an OS content filter, saved app rules and actionable notifications. Unlike the [original tweak](https://github.com/EolnMsuk/NetShield) / [NetFence](https://havoc.app/package/netfence), [**NetShield2**](https://github.com/EolnMsuk/NetShield2/) is system wide and does not require app injection to function.
 
 ![NetShield2 banner](App/Resources/banner.png)
 
@@ -35,4 +35,6 @@ Rules apply to new connections delivered by iOS, not every raw packet or OS-exem
 
 ## Support Developer
 
-[Venmo](https://venmo.com/u/rustonrails) | Bitcoin: `31uHLpioo1TbxAmo9kM7rrKcLz3wvcoZaL`
+[GitHub](https://github.com/EolnMsuk/NetShield2/) | [Venmo](https://venmo.com/u/rustonrails)
+
+Bitcoin: `31uHLpioo1TbxAmo9kM7rrKcLz3wvcoZaL`
