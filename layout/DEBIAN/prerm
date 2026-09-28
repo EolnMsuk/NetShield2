@@ -2,7 +2,12 @@
 set -eu
 case "${1:-}" in
     remove|deconfigure)
-        printf '%s\n' 'Before removal, use NetShield2 > Advanced Settings > Prepare for uninstall and verify network access.'
-        /var/jb/usr/bin/uicache -u /var/jb/Applications/NetShield2.app
+        printf '%s\n' 'NetShield2: removing the system filter before uninstalling...'
+        if ! /var/jb/Applications/NetShield2.app/NetShield2 --remove-filter; then
+            printf '%s\n' 'NetShield2: uninstall cancelled because filter removal could not be verified.' >&2
+            printf '%s\n' 'Open NetShield2 > Advanced Settings > Reset ALL Settings, then retry removal. If it still fails, retain the package and report the error above.' >&2
+            exit 1
+        fi
+        /var/jb/usr/bin/uicache -u /var/jb/Applications/NetShield2.app || true
         ;;
 esac

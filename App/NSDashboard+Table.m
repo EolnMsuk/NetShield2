@@ -96,7 +96,7 @@
 }
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     if (section == NSDashboardSectionFirewall) {
-        return 5;
+        return 6;
     }
     if (section == NSDashboardSectionRequests) {
         return MAX((NSUInteger)1, [self.monitor[@"requests"] count]);
@@ -108,7 +108,7 @@
         return 2;
     }
     if (section == NSDashboardSectionAdvanced) {
-        return 4;
+        return 3;
     }
     if (section == NSDashboardSectionSupport) {
         return 2;
@@ -158,7 +158,7 @@
     if (path.section == NSDashboardSectionFirewall) {
         if (path.row == 0) {
             cached = self.firewallCell;
-        } else if (path.row == 1) {
+        } else if (path.row == 2) {
             cached = self.appleCell;
         }
     }
@@ -195,7 +195,7 @@
             forControlEvents:UIControlEventValueChanged];
         cell.accessoryView = toggle;
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
-    } else if (path.section == NSDashboardSectionFirewall && path.row == 2) {
+    } else if (path.section == NSDashboardSectionFirewall && path.row == 3) {
         BOOL enabled = self.loaded && NEFilterManager.sharedManager.enabled;
         BOOL healthy =
             enabled && self.policy && [self hasFreshMonitor] && ![self.monitor[@"policyError"] length];
@@ -216,8 +216,13 @@
         } else if (healthy) {
             detail = NEFilterManager.sharedManager.providerConfiguration.filterSockets
                          ? @"Your rules apply to new browser and socket connections supplied by iOS."
-                         : @"Browser filtering only. Enable Filter system sockets in Advanced Settings for "
+                         : @"Browser filtering only. Enable Filter System Sockets below Firewall for "
                            @"other app connections.";
+        }
+        if (enabled && NEFilterManager.sharedManager.providerConfiguration.filterSockets !=
+                           [self.policy.document[@"filterSockets"] boolValue]) {
+            detail = [detail stringByAppendingString:
+                                 @" Pending: toggle Firewall off and on to apply the saved socket setting."];
         }
         if ([self.monitor[@"policyError"] length]) {
             detail = self.monitor[@"policyError"];
@@ -229,7 +234,7 @@
             [self.message length] ? [NSString stringWithFormat:@"%@\n%@", detail, self.message] : detail;
         cell.accessoryType = UITableViewCellAccessoryNone;
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
-    } else if (path.section == NSDashboardSectionFirewall && path.row == 1) {
+    } else if (path.section == NSDashboardSectionFirewall && path.row == 2) {
         cell.textLabel.text = @"Allow all iOS system traffic";
         cell.detailTextLabel.text = @"Allow identities starting with com.apple";
         UISwitch *toggle = [UISwitch new];
@@ -243,10 +248,23 @@
             forControlEvents:UIControlEventValueChanged];
         cell.accessoryView = toggle;
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
-    } else if (path.section == NSDashboardSectionFirewall) {
-        cell.textLabel.text = path.row == 4 ? @"Default Rule" : @"Unidentified";
+    } else if (path.section == NSDashboardSectionFirewall && path.row == 1) {
+        cell.textLabel.text = @"Filter System Sockets";
         cell.detailTextLabel.text =
-            self.policy ? [self ruleTitle:self.policy.document[path.row == 4 ? @"default" : @"unattributed"]]
+            @"Required to filter all app network. Only disable if an app crashes on launch";
+        UISwitch *toggle = [UISwitch new];
+        toggle.on = [self.policy.document[@"filterSockets"] boolValue];
+        toggle.enabled = self.policy != nil && self.loaded && !self.busy;
+        toggle.accessibilityLabel = cell.textLabel.text;
+        [toggle addTarget:self
+                      action:@selector(socketFilteringChanged:)
+            forControlEvents:UIControlEventValueChanged];
+        cell.accessoryView = toggle;
+        cell.selectionStyle = UITableViewCellSelectionStyleNone;
+    } else if (path.section == NSDashboardSectionFirewall) {
+        cell.textLabel.text = path.row == 5 ? @"Default Rule" : @"Unidentified";
+        cell.detailTextLabel.text =
+            self.policy ? [self ruleTitle:self.policy.document[path.row == 5 ? @"default" : @"unattributed"]]
                         : @"Policy unavailable";
         if (!self.policy) {
             cell.accessoryType = UITableViewCellAccessoryNone;
@@ -286,7 +304,7 @@
             }
         }
     } else if (path.section == NSDashboardSectionNotifications) {
-        cell.textLabel.text = path.row == 0 ? @"Notification settings" : @"Banners & Do Not Disturb";
+        cell.textLabel.text = path.row == 0 ? @"Notification Settings" : @"Banners & Do Not Disturb";
         cell.detailTextLabel.text =
             path.row == 0 ? self.notificationStatus : @"How to answer while using another app";
         if (path.row == 0 && [self hasFreshMonitor] && [self.monitor[@"notificationDeliveryIssue"] length]) {
@@ -324,33 +342,12 @@
         cell.detailTextLabel.text =
             path.row == 0 ? @"Source code, releases and issues" : @"Choose Venmo or Bitcoin";
         cell.textLabel.textColor = UIColor.systemBlueColor;
-    } else if (path.section == NSDashboardSectionAdvanced && path.row == 3) {
-        cell.textLabel.text = @"Filter system sockets";
-        cell.detailTextLabel.text =
-            @"On by default. Required to filter non-browser socket connections supplied by iOS without app "
-            @"injection. May cause certain apps to crash. When off, only browser "
-            @"filtering remains. Changing this restarts the active filter.";
-        if (self.loaded && NEFilterManager.sharedManager.enabled &&
-            NEFilterManager.sharedManager.providerConfiguration.filterSockets !=
-                [self.policy.document[@"filterSockets"] boolValue]) {
-            cell.detailTextLabel.text = [cell.detailTextLabel.text
-                stringByAppendingString:@" Pending: toggle Firewall off and on to apply the saved setting."];
-        }
-        UISwitch *toggle = [UISwitch new];
-        toggle.on = [self.policy.document[@"filterSockets"] boolValue];
-        toggle.enabled = self.policy != nil && self.loaded && !self.busy;
-        toggle.accessibilityLabel = cell.textLabel.text;
-        [toggle addTarget:self
-                      action:@selector(socketFilteringChanged:)
-            forControlEvents:UIControlEventValueChanged];
-        cell.accessoryView = toggle;
-        cell.selectionStyle = UITableViewCellSelectionStyleNone;
     } else {
         cell.textLabel.text =
             @[ @"Add a rule by app identity", @"Reset Rules & History", @"Reset ALL Settings" ][path.row];
         cell.detailTextLabel.text = @[
             @"For an exact identity supplied by iOS", @"Reset rules and history only",
-            @"Removes all rules and permissions, run before uninstalling NetShield2"
+            @"Removes all rules, permissions and filters. Runs automatically during uninstall."
         ][path.row];
         if (path.row > 0) {
             cell.textLabel.textColor = UIColor.systemRedColor;
@@ -359,7 +356,7 @@
     if (path.section == NSDashboardSectionFirewall && path.row == 0) {
         self.firewallCell = cell;
     }
-    if (path.section == NSDashboardSectionFirewall && path.row == 1) {
+    if (path.section == NSDashboardSectionFirewall && path.row == 2) {
         self.appleCell = cell;
     }
     return cell;
@@ -369,7 +366,7 @@
     if (self.busy) {
         return;
     }
-    if (path.section == NSDashboardSectionFirewall && path.row == 4) {
+    if (path.section == NSDashboardSectionFirewall && path.row == 5) {
         [self chooseActionForIdentity:nil defaultKey:@"default"];
     } else if (path.section == NSDashboardSectionRequests && [self.monitor[@"requests"] count]) {
         [self presentRequest:self.monitor[@"requests"][path.row]];
@@ -381,7 +378,7 @@
         } else {
             [self showNotificationHelp];
         }
-    } else if (path.section == NSDashboardSectionFirewall && path.row == 3) {
+    } else if (path.section == NSDashboardSectionFirewall && path.row == 4) {
         [self chooseActionForIdentity:nil defaultKey:@"unattributed"];
     } else if (path.section == NSDashboardSectionSupport) {
         if (path.row == 0) {
@@ -401,7 +398,8 @@
                                                  @"on/off state after stopping it to reset."
                                                : @"Removes all NetShield2 rules, permissions and history, "
                                                  @"restores default settings, and removes the system filter. "
-                                                 @"Run before uninstalling. iOS notification authorization "
+                                                 @"Package-manager uninstall removes the filter "
+                                                 @"automatically. iOS notification authorization "
                                                  @"must be managed in Settings."
                           preferredStyle:UIAlertControllerStyleAlert];
             [alert addAction:[UIAlertAction

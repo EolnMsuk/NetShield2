@@ -1,5 +1,4 @@
 #import "NSPermissionNotifications.h"
-#import "../Shared/NSDestination.h"
 #import "../Shared/NSNotifications.h"
 #import "../Shared/NSNotificationPolicy.h"
 
@@ -97,10 +96,8 @@ static void NSWithdrawNotifications(id<NSPermissionNotificationCenter> center, N
     UNMutableNotificationContent *content = [UNMutableNotificationContent new];
     content.title = @"Network access requested";
     content.body = [NSString
-        stringWithFormat:
-            @"%@ wants to connect. First requested peer: %@. Long-press this banner for Allow app or Keep "
-            @"blocking. Unanswered connections are blocked after 30 seconds.",
-            identity, NSDestinationSummary(request[@"destination"])];
+        stringWithFormat:@"%@ wants to connect. Long-press this banner for Allow app or Keep blocking.",
+                         identity];
     content.categoryIdentifier = NSPermissionCategory;
     content.sound = UNNotificationSound.defaultSound;
     content.userInfo = @{@"token" : token, @"identity" : identity};

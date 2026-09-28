@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 #import "../Shared/NSStore.h"
+#import "../App/NSFilterRemoval.h"
 #import "../Shared/NSDestination.h"
 #import "../Shared/NSPermissionQueue.h"
 #import "../FilterControl/NSPermissionNotifications.h"
@@ -436,8 +437,11 @@ static void TestLateNotifications(void) {
     [old updateRequests:@[ request ] policy:NSReadPolicy(NULL) retryRevision:nil];
     CHECK(center.requests.count == 1);
     UNNotificationRequest *banner = center.requests.firstObject;
-    CHECK([banner.content.body containsString:@"notify.example"]);
-    CHECK([banner.content.body containsString:@"192.0.2.1"]);
+    CHECK([banner.content.body containsString:@"notify.app"]);
+    CHECK([banner.content.body containsString:@"Long-press"]);
+    CHECK([banner.content.body containsString:@"Allow app or Keep blocking"]);
+    CHECK(![banner.content.body containsString:@"notify.example"]);
+    CHECK(![banner.content.body containsString:@"192.0.2.1"]);
     [old updateRequests:@[] policy:NSReadPolicy(NULL) retryRevision:nil];
     [center.removed removeAllObjects];
     [center finish:0 error:nil];
@@ -471,6 +475,61 @@ static void TestLateNotifications(void) {
     CHECK([center.removed containsObject:@"old-token"]);
     [old stop];
 }
+@interface FakeFilterRemovalManager : NSObject <NSFilterRemovalManager>
+@property(nonatomic, strong) id providerConfiguration;
+@property(nonatomic, getter=isEnabled) BOOL enabled;
+@property(nonatomic, strong) NSError *loadError;
+@property(nonatomic, strong) NSError *removeError;
+@property(nonatomic, strong) NSError *verifyError;
+@property(nonatomic) BOOL retainConfiguration;
+@property(nonatomic) BOOL retainEnabled;
+@property(nonatomic) NSUInteger loads;
+@property(nonatomic) NSUInteger removals;
+@end
+@implementation FakeFilterRemovalManager
+- (void)loadFromPreferencesWithCompletionHandler:(void (^)(NSError *))completion {
+    self.loads++;
+    if (self.loads > 1 && !self.verifyError && !self.removeError) {
+        if (!self.retainConfiguration) {
+            self.providerConfiguration = nil;
+        }
+        self.enabled = self.retainEnabled;
+    }
+    completion(self.loads == 1 ? self.loadError : self.verifyError);
+}
+- (void)removeFromPreferencesWithCompletionHandler:(void (^)(NSError *))completion {
+    self.removals++;
+    // Like NEFilterManager, leave the cached configuration until reload.
+    completion(self.removeError);
+}
+@end
+static void TestFilterRemoval(void) {
+    NSError *failure = [NSError errorWithDomain:@"test.removal" code:1 userInfo:nil];
+    for (NSUInteger scenario = 0; scenario < 8; scenario++) {
+        FakeFilterRemovalManager *manager = [FakeFilterRemovalManager new];
+        manager.providerConfiguration = scenario == 0 ? nil : @{};
+        manager.enabled = scenario != 0 && scenario != 7;
+        manager.loadError = scenario == 2 ? failure : nil;
+        manager.removeError = scenario == 3 ? failure : nil;
+        manager.verifyError = scenario == 4 ? failure : nil;
+        manager.retainConfiguration = scenario == 5;
+        manager.retainEnabled = scenario == 6;
+        __block NSUInteger completions = 0;
+        __block NSError *result = nil;
+        NSRemoveInstalledFilter(manager, ^(NSError *error) {
+            completions++;
+            result = error;
+        });
+        CHECK(completions == 1);
+        CHECK((result == nil) == (scenario == 0 || scenario == 1 || scenario == 7));
+        CHECK(manager.removals == (scenario == 0 || scenario == 2 ? 0 : 1));
+        CHECK(manager.loads == (scenario == 0 || scenario == 2 || scenario == 3 ? 1 : 2));
+        if (scenario >= 2 && scenario <= 4) {
+            CHECK(result == failure);
+        }
+    }
+}
+
 int main(void) {
     @autoreleasepool {
         NSURL *root = [NSURL
@@ -490,6 +549,7 @@ int main(void) {
         TestAnswersAndReset();
         TestSocketSettingsAndDestinations();
         TestLateNotifications();
+        TestFilterRemoval();
         CHECK([NSFileManager.defaultManager removeItemAtURL:root error:NULL]);
         NSLog(@"Passed %lu regression checks", (unsigned long)checks);
     }

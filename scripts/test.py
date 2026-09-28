@@ -10,6 +10,7 @@ if sys.platform != "darwin":
 
 sources = [
     "Tests/RegressionTests.m",
+    "App/NSFilterRemoval.m",
     "Shared/NSPolicy.m",
     "Shared/NSPermissionQueue.m",
     "Shared/NSPolicyCache.m",
