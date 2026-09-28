@@ -4,16 +4,6 @@
 #import "../Shared/NSStore.h"
 #import "../Shared/NSNotifications.h"
 
-@class NSDashboard;
-@interface NSAppDelegate : UIResponder <UIApplicationDelegate, UNUserNotificationCenterDelegate>
-@property(nonatomic, strong) UIWindow *window;
-@property(nonatomic, strong) NSDashboard *dashboard;
-@property(nonatomic, copy) NSString *linkHandoff;
-@property(nonatomic, strong) NSDate *linkHandoffStarted;
-@property(nonatomic, strong) NSMutableSet<NSString *> *suppressedLinkTokens;
-- (void)openExternalURL:(NSURL *)url;
-@end
-
 @interface NSDashboard : UITableViewController
 @property(nonatomic, strong) NSPolicy *policy;
 @property(nonatomic, copy) NSDictionary *monitor;
@@ -262,7 +252,7 @@
             if (error) [self showError:error operation:@"Load filter configuration"];
             NEFilterManager *manager = NEFilterManager.sharedManager;
             NSInteger configuredEngine = [manager.providerConfiguration.vendorConfiguration[@"engine"] integerValue];
-            if (!error && manager.enabled && !self.attemptedProviderUpgrade && configuredEngine < 20014 && NSReadPolicy(NULL)) {
+            if (!error && manager.enabled && !self.attemptedProviderUpgrade && configuredEngine < 20013 && NSReadPolicy(NULL)) {
                 // Installing new files does not replace an already-running NE
                 // provider. Restart once after an upgrade, keeping all app rules.
                 self.attemptedProviderUpgrade = YES;
@@ -302,7 +292,7 @@
                     configuration.filterSockets = YES;
                     configuration.filterBrowsers = YES;
                     configuration.organization = @"NetShield2";
-                    configuration.vendorConfiguration = @{@"schema": @2, @"engine": @20014};
+                    configuration.vendorConfiguration = @{@"schema": @2, @"engine": @20013};
                     manager.providerConfiguration = configuration;
                     manager.localizedDescription = @"NetShield2 network access control";
                 }
@@ -356,7 +346,7 @@
     if (!NSWriteDocument([NSPolicy defaultDocument], @"policy.plist", &error)) {
         self.busy = NO; [self showError:error]; return;
     }
-    for (NSString *name in @[@"monitor.plist", @"notification-retry.plist", @"notification-test.plist", @"notification-handoff.plist"]) {
+    for (NSString *name in @[@"monitor.plist", @"notification-retry.plist", @"notification-test.plist"]) {
         NSURL *url = NSSharedURL(name);
         if (url && [NSFileManager.defaultManager fileExistsAtPath:url.path] && ![NSFileManager.defaultManager removeItemAtURL:url error:&error]) {
             self.busy = NO; [self showError:error operation:@"Reset shared state"]; return;
@@ -457,11 +447,25 @@
     [self refreshTableKeepingPosition];
 }
 - (void)openSupportURL:(NSURL *)url {
-    void (^open)(void) = ^{
-        [(NSAppDelegate *)UIApplication.sharedApplication.delegate openExternalURL:url];
+    // The permission inbox remains the fallback for requests delivered during
+    // a link handoff. Do not guess the destination's OS identity or grant a rule.
+    void (^presentOrOpen)(void) = ^{
+        if (![NEFilterManager sharedManager].enabled) {
+            [UIApplication.sharedApplication openURL:url options:@{} completionHandler:nil];
+            return;
+        }
+        UIAlertController *notice = [UIAlertController alertControllerWithTitle:@"Opening a link with Firewall enabled"
+            message:@"If the destination app or browser needs network permission, the link may not load and a banner may not appear. Return to NetShield2, choose Allow app under Waiting for your decision, then open the link again. If you previously blocked that app, change its rule under App rules."
+            preferredStyle:UIAlertControllerStyleAlert];
+        [notice addAction:[UIAlertAction actionWithTitle:@"Open link" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+            [UIApplication.sharedApplication openURL:url options:@{} completionHandler:nil];
+        }]];
+        [notice addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+        [self presentViewController:notice animated:YES completion:nil];
     };
-    if (self.presentedViewController) [self dismissViewControllerAnimated:YES completion:open];
-    else open();
+    // Wait for the donation chooser to close before presenting another alert.
+    if (self.presentedViewController) [self dismissViewControllerAnimated:YES completion:presentOrOpen];
+    else presentOrOpen();
 }
 - (void)supportDeveloper {
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Support Developer" message:@"Thank you for supporting EolnMsuk. Choose a donation method." preferredStyle:UIAlertControllerStyleAlert];
@@ -620,43 +624,12 @@
 
 @end
 
+@interface NSAppDelegate : UIResponder <UIApplicationDelegate, UNUserNotificationCenterDelegate>
+@property(nonatomic, strong) UIWindow *window;
+@property(nonatomic, strong) NSDashboard *dashboard;
+@end
 @implementation NSAppDelegate
-- (void)publishLinkHandoff {
-    NSDictionary *document = self.linkHandoff ?
-        @{@"handoff": self.linkHandoff, @"started": self.linkHandoffStarted,
-          @"background": @(UIApplication.sharedApplication.applicationState == UIApplicationStateBackground),
-          @"tokens": self.suppressedLinkTokens.allObjects} : @{};
-    NSError *error = nil;
-    if (!NSWriteDocument(document, @"notification-handoff.plist", &error))
-        NSLog(@"NetShield2 link handoff storage failed: %@", error.localizedDescription);
-}
-- (void)cancelLinkHandoff {
-    self.linkHandoff = nil;
-    self.linkHandoffStarted = nil;
-    self.suppressedLinkTokens = nil;
-    [self publishLinkHandoff];
-}
-- (void)openExternalURL:(NSURL *)url {
-    self.linkHandoff = NSUUID.UUID.UUIDString;
-    self.linkHandoffStarted = NSDate.date;
-    self.suppressedLinkTokens = [NSMutableSet new];
-    [self publishLinkHandoff];
-    NSString *handoff = self.linkHandoff;
-    [UIApplication.sharedApplication openURL:url options:@{} completionHandler:^(BOOL success) {
-        dispatch_async(dispatch_get_main_queue(), ^{
-            if (!success && [self.linkHandoff isEqual:handoff]) [self cancelLinkHandoff];
-        });
-    }];
-}
-- (void)applicationDidEnterBackground:(UIApplication *)application {
-    // Persist synchronously before suspension; the provider performs the retry.
-    if (self.linkHandoff) [self publishLinkHandoff];
-}
-- (void)applicationWillEnterForeground:(UIApplication *)application {
-    [self cancelLinkHandoff];
-}
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)options {
-    [self cancelLinkHandoff];
     NSRegisterPermissionActions();
     UNUserNotificationCenter.currentNotificationCenter.delegate = self;
     if (application.applicationState != UIApplicationStateBackground) [self createInterface];
@@ -670,26 +643,12 @@
     [self.window makeKeyAndVisible];
 }
 - (void)applicationDidBecomeActive:(UIApplication *)application {
-    [self cancelLinkHandoff];
     [self createInterface];
 }
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center willPresentNotification:(UNNotification *)notification
         withCompletionHandler:(void (^)(UNNotificationPresentationOptions))completionHandler {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        UNNotificationRequest *request = notification.request;
-        NSString *token = request.content.userInfo[@"token"];
-        // Record only actual foreground suppression during this link launch.
-        // Replayed callbacks carry the same token, so they cannot create a loop.
-        if (self.linkHandoff && [request.content.categoryIdentifier isEqual:NSPermissionCategory] &&
-            [token isKindOfClass:NSString.class] && token.length &&
-            self.suppressedLinkTokens.count < 64 &&
-            [NSReadPolicy(NULL) requiresPermissionForIdentity:request.content.userInfo[@"identity"]]) {
-            [self.suppressedLinkTokens addObject:token];
-            [self publishLinkHandoff];
-        }
-        completionHandler(UNNotificationPresentationOptionNone);
-        [self.dashboard reloadMonitor];
-    });
+    // The foreground inbox handles permission requests.
+    dispatch_async(dispatch_get_main_queue(), ^{ [self.dashboard reloadMonitor]; completionHandler(UNNotificationPresentationOptionNone); });
 }
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center didReceiveNotificationResponse:(UNNotificationResponse *)response
         withCompletionHandler:(void (^)(void))completionHandler {
