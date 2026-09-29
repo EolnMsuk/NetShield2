@@ -156,7 +156,7 @@
     if (section == NSDashboardSectionSupport) {
         return @"Developed by EolnMsuk.";
     }
-    return @"NetShield2 2.1.0 / iOS 15-18 rootless. Filters connections provided by iOS; system-exempt "
+    return @"NetShield2 2.1.1 / iOS 15-18 rootless. Filters connections provided by iOS; system-exempt "
            @"traffic is not guaranteed covered.";
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)path {

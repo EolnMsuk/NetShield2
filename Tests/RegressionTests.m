@@ -330,32 +330,37 @@ static void TestActivityGrouping(void) {
     CHECK([NSGroupedActivity(@[ ActivityEvent(@"", @{}, @"unknown", @"other", 0, 0, 0) ])[0][@"action"]
         isEqual:@"other"]);
 }
-static void TestIncomingPermissionAnswer(void) {
-    CHECK(NSWriteDocument([NSPolicy defaultDocument], NSPolicyFile, NULL));
-    NSPermissionQueue *queue = [NSPermissionQueue new];
-    NSDictionary *destination = @{@"domain" : @"incoming.example"};
-    NSDictionary *request = [queue enqueueIdentity:@"incoming.app"
-                                         direction:NSFlowDirectionOutbound
-                                       destination:destination
-                                               now:0
-                                              date:NSDate.date
-                                        completion:^(BOOL allow){
-                                        }];
-    CHECK(NSWriteDocument(Monitor(queue.requests, YES, NSEngineVersion, NSDate.date), NSMonitorFile, NULL));
-    CHECK(!NSAnswerPermissionRequestWithRule(request, @"invalid", NULL));
-    NSMutableDictionary *forged = [request mutableCopy];
-    forged[@"token"] = @"stale-token";
-    CHECK(!NSAnswerPermissionRequestWithRule(forged, @"block-inbound", NULL));
-    CHECK(!NSReadPolicy(NULL).document[@"rules"][@"incoming.app"]);
-    forged = [request mutableCopy];
-    forged[@"destination"] = @{@"domain" : @"forged.example"};
-    CHECK(NSAnswerPermissionRequestWithRule(forged, @"block-inbound", NULL));
-    NSPolicy *policy = NSReadPolicy(NULL);
-    CHECK([policy.document[@"rules"][@"incoming.app"] isEqual:@"block-inbound"]);
-    CHECK([policy.document[@"ruleDestinations"][@"incoming.app"] isEqual:destination]);
-    CHECK(![policy allowsIdentity:@"incoming.app" direction:NSFlowDirectionInbound]);
-    CHECK([policy allowsIdentity:@"incoming.app" direction:NSFlowDirectionOutbound]);
-    CHECK(!NSAnswerPermissionRequestWithRule(request, @"block-inbound", NULL));
+static void TestDirectionalPermissionAnswers(void) {
+    for (NSString *rule in @[ @"block-inbound", @"block-outbound" ]) {
+        CHECK(NSWriteDocument([NSPolicy defaultDocument], NSPolicyFile, NULL));
+        NSPermissionQueue *queue = [NSPermissionQueue new];
+        NSDictionary *destination = @{@"domain" : @"incoming.example"};
+        NSDictionary *request = [queue enqueueIdentity:@"incoming.app"
+                                             direction:NSFlowDirectionOutbound
+                                           destination:destination
+                                                   now:0
+                                                  date:NSDate.date
+                                            completion:^(BOOL allow){
+                                            }];
+        CHECK(
+            NSWriteDocument(Monitor(queue.requests, YES, NSEngineVersion, NSDate.date), NSMonitorFile, NULL));
+        CHECK(!NSAnswerPermissionRequestWithRule(request, @"invalid", NULL));
+        NSMutableDictionary *forged = [request mutableCopy];
+        forged[@"token"] = @"stale-token";
+        CHECK(!NSAnswerPermissionRequestWithRule(forged, rule, NULL));
+        CHECK(!NSReadPolicy(NULL).document[@"rules"][@"incoming.app"]);
+        forged = [request mutableCopy];
+        forged[@"destination"] = @{@"domain" : @"forged.example"};
+        CHECK(NSAnswerPermissionRequestWithRule(forged, rule, NULL));
+        NSPolicy *policy = NSReadPolicy(NULL);
+        CHECK([policy.document[@"rules"][@"incoming.app"] isEqual:rule]);
+        CHECK([policy.document[@"ruleDestinations"][@"incoming.app"] isEqual:destination]);
+        CHECK([policy allowsIdentity:@"incoming.app"
+                           direction:NSFlowDirectionInbound] == [rule isEqual:@"block-outbound"]);
+        CHECK([policy allowsIdentity:@"incoming.app"
+                           direction:NSFlowDirectionOutbound] == [rule isEqual:@"block-inbound"]);
+        CHECK(!NSAnswerPermissionRequestWithRule(request, rule, NULL));
+    }
 }
 
 static void TestAnswersAndReset(void) {
@@ -646,7 +651,7 @@ int main(void) {
         TestQueueLimitsAndCancellation();
         TestLargePolicyCache();
         TestActivityGrouping();
-        TestIncomingPermissionAnswer();
+        TestDirectionalPermissionAnswers();
         TestAnswersAndReset();
         TestSocketSettingsAndDestinations();
         TestLateNotifications();

@@ -68,7 +68,7 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 - (void)refreshNotificationSettings;
 - (void)authorizeNotificationsThen:(void (^)(void))completion;
 - (void)requestNotifications;
-- (void)answerRequest:(NSDictionary *)request allow:(BOOL)allow;
+- (void)answerRequest:(NSDictionary *)request rule:(NSString *)rule;
 - (void)presentRequest:(NSDictionary *)request;
 @end
 

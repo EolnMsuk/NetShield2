@@ -87,6 +87,11 @@
             [identities addObject:identity];
         }
     }
+    for (NSString *identity in [identities allObjects]) {
+        if ([self.policy automaticallyAllowsIdentity:identity]) {
+            [identities removeObject:identity];
+        }
+    }
     self.identities = [[identities allObjects] sortedArrayUsingSelector:@selector(compare:)];
     NSSet *tokens = [NSSet setWithArray:[self.monitor[@"requests"] valueForKey:@"token"] ?: @[]];
     [self.deferredRequests intersectSet:tokens];
@@ -134,7 +139,7 @@
     NSString *title = identity;
     NSString *explanation = @"Choose a rule for new connections. Incoming/outgoing describes who starts the "
                             @"connection, not downloads or reply traffic.";
-    NSArray *actions = @[ @"allow", @"block", @"block-inbound", @"block-outbound", @"use-default" ];
+    NSArray *actions = @[ @"allow", @"block-inbound", @"block-outbound", @"block", @"use-default" ];
     if ([key isEqual:@"default"]) {
         title = @"Default Rule";
         explanation = @"Choose what happens when an app without a saved rule connects. Ask me lets you "
@@ -203,8 +208,8 @@
         @"ask" : @"Ask me",
         @"allow" : @"Allow",
         @"block" : @"Block",
-        @"block-inbound" : @"Block incoming connections",
-        @"block-outbound" : @"Block outgoing connections",
+        @"block-inbound" : @"Block incoming",
+        @"block-outbound" : @"Block outgoing",
         @"use-default" : @"Use Default Rule"
     }[rule ?: @""]
                ?: @"Use Default Rule";
@@ -261,7 +266,7 @@
                              message:
                                  @"If the destination app or browser needs network permission, the link may "
                                  @"not load and a banner may not appear. Return to NetShield2, choose Allow "
-                                 @"app under Waiting for your decision, then open the link again. If you "
+                                 @"under Waiting for your decision, then open the link again. If you "
                                  @"previously blocked that app, change its rule under App rules."
                       preferredStyle:UIAlertControllerStyleAlert];
         [notice addAction:[UIAlertAction actionWithTitle:@"Open link"

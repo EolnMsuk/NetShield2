@@ -53,13 +53,13 @@
             });
         }];
 }
-- (void)answerRequest:(NSDictionary *)request allow:(BOOL)allow {
+- (void)answerRequest:(NSDictionary *)request rule:(NSString *)rule {
     if ([NSReadPolicy(NULL) automaticallyAllowsIdentity:request[@"identity"]]) {
         [self reloadMonitor];
         return;
     }
     NSError *error = nil;
-    if (!NSAnswerPermissionRequest(request, allow, &error)) {
+    if (!NSAnswerPermissionRequestWithRule(request, rule, &error)) {
         [self showError:error];
     } else {
         NSDictionary *destination = NSReadPolicy(NULL).document[@"ruleDestinations"][request[@"identity"]];
@@ -85,16 +85,15 @@
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Allow network access?"
                                                                    message:message
                                                             preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"Allow app"
-                                              style:UIAlertActionStyleDefault
-                                            handler:^(UIAlertAction *action) {
-                                                [self answerRequest:request allow:YES];
-                                            }]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"Block app"
-                                              style:UIAlertActionStyleDestructive
-                                            handler:^(UIAlertAction *action) {
-                                                [self answerRequest:request allow:NO];
-                                            }]];
+    for (NSString *rule in @[ @"allow", @"block-inbound", @"block-outbound", @"block" ]) {
+        UIAlertActionStyle style =
+            [rule isEqual:@"block"] ? UIAlertActionStyleDestructive : UIAlertActionStyleDefault;
+        [alert addAction:[UIAlertAction actionWithTitle:[self ruleTitle:rule]
+                                                  style:style
+                                                handler:^(UIAlertAction *action) {
+                                                    [self answerRequest:request rule:rule];
+                                                }]];
+    }
     [alert addAction:[UIAlertAction actionWithTitle:@"Not now" style:UIAlertActionStyleCancel handler:nil]];
     self.permissionAlert = alert;
     self.presentedRequest = request;

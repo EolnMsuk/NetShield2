@@ -299,7 +299,7 @@ BOOL NSAnswerPermissionRequest(NSDictionary *request, BOOL allow, NSError **erro
     return NSAnswerPermissionRequestWithRule(request, allow ? @"allow" : @"block", error);
 }
 BOOL NSAnswerPermissionRequestWithRule(NSDictionary *request, NSString *rule, NSError **error) {
-    if (![@[ @"allow", @"block", @"block-inbound" ] containsObject:rule ?: @""]) {
+    if (![@[ @"allow", @"block", @"block-inbound", @"block-outbound" ] containsObject:rule ?: @""]) {
         if (error) {
             *error = NSStorageError(@"Unsupported permission rule.");
         }
