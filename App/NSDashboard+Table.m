@@ -156,7 +156,7 @@
     if (section == NSDashboardSectionSupport) {
         return @"Developed by EolnMsuk.";
     }
-    return @"NetShield2 2.1.2 / iOS 15-18 rootless. Filters connections provided by iOS; system-exempt "
+    return @"NetShield2 2.1.3 / iOS 15-18 rootless. Filters connections provided by iOS; system-exempt "
            @"traffic is not guaranteed covered.";
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)path {
@@ -297,11 +297,11 @@
         } else {
             NSString *identity = self.identities[path.row];
             NSString *rule = self.policy.document[@"rules"][identity];
-            UIColor *color = [rule isEqual:@"allow"]   ? UIColor.systemGreenColor
-                             : [rule isEqual:@"block"] ? UIColor.systemRedColor
-                             : [@[ @"block-inbound", @"block-outbound" ] containsObject:rule ?: @""]
-                                 ? UIColor.systemOrangeColor
-                                 : nil;
+            UIColor *color = [rule isEqual:@"allow"] ? UIColor.systemGreenColor
+                             : [rule isEqual:@"block"] || [rule isEqual:@"block-outbound"]
+                                 ? UIColor.systemRedColor
+                             : [rule isEqual:@"block-inbound"] ? UIColor.systemOrangeColor
+                                                               : nil;
             if (color) {
                 cell.backgroundColor = [color colorWithAlphaComponent:0.14];
             }

@@ -48,6 +48,7 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 - (void)chooseActionForIdentity:(NSString *)identity defaultKey:(NSString *)key;
 - (void)addIdentity;
 - (NSString *)ruleTitle:(NSString *)rule;
+- (UIAlertActionStyle)ruleActionStyle:(NSString *)rule;
 - (void)firewallChanged:(UISwitch *)sender;
 - (void)appleSystemProcessesChanged:(UISwitch *)sender;
 - (void)openSupportURL:(NSURL *)url;

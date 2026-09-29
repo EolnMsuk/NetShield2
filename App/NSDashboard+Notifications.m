@@ -86,15 +86,13 @@
                                                                    message:message
                                                             preferredStyle:UIAlertControllerStyleAlert];
     for (NSString *rule in @[ @"allow", @"block-inbound", @"block-outbound", @"block" ]) {
-        UIAlertActionStyle style =
-            [rule isEqual:@"block"] ? UIAlertActionStyleDestructive : UIAlertActionStyleDefault;
         [alert addAction:[UIAlertAction actionWithTitle:[self ruleTitle:rule]
-                                                  style:style
+                                                  style:[self ruleActionStyle:rule]
                                                 handler:^(UIAlertAction *action) {
                                                     [self answerRequest:request rule:rule];
                                                 }]];
     }
-    [alert addAction:[UIAlertAction actionWithTitle:@"Not now" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Not Now" style:UIAlertActionStyleCancel handler:nil]];
     self.permissionAlert = alert;
     self.presentedRequest = request;
     [self presentViewController:alert animated:YES completion:nil];
