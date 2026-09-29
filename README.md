@@ -11,7 +11,7 @@ A firewall & live network filter for jailbroken iOS 15 - 18 devices. NetShield2 
 3. If not already done by step 2, enable **Persistent Banners** under **Notification Settings**. If you use **Do Not Disturb**, allow NetShield2 in **Settings > Focus > Do Not Disturb > Apps**.
 4. When a new app connects, touch and hold its NetShield2 notification and choose **Allow app** or **Keep blocking**. Tapping the notification body opens NetShield2 instead where you can also allow or block through prompts.
 
-Unanswered connections are blocked after 30 seconds. The latest 64 expired requests remain in **Waiting for your decision**, where you can decide later and retry the app. Older requests are removed as history fills; retry an app to request a new decision if it is no longer listed. To ask again for a previously decided app, tap its rule and select **Use Default Rule**.
+Unanswered connections are blocked by default. The latest 64 expired requests remain in **Waiting for your decision**, where you can decide later and retry the app. Older requests are removed as history fills; retry an app to request a new decision if it is no longer listed. To ask again for a previously decided app, tap its rule and select **Use Default Rule**.
 
 ## Options
 
