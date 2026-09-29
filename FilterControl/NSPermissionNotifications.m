@@ -96,7 +96,7 @@ static void NSWithdrawNotifications(id<NSPermissionNotificationCenter> center, N
     UNMutableNotificationContent *content = [UNMutableNotificationContent new];
     // Keep destination details in the request/history, never in the system banner.
     content.title = identity;
-    content.body = @"Wants network access. Long-press this banner to allow or keep blocking.";
+    content.body = @"Wants network access. Long-press this banner to allow, block incoming or keep blocking.";
     content.categoryIdentifier = NSPermissionCategory;
     content.sound = UNNotificationSound.defaultSound;
     content.userInfo = @{@"token" : token, @"identity" : identity};
