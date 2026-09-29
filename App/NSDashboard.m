@@ -2,6 +2,31 @@
 #include <float.h>
 
 @implementation NSDashboard
+- (void)presentViewController:(UIViewController *)viewControllerToPresent
+                     animated:(BOOL)animated
+                   completion:(void (^)(void))completion {
+    if ([viewControllerToPresent isKindOfClass:UIAlertController.class]) {
+        UIAlertController *alert = (UIAlertController *)viewControllerToPresent;
+        NSDictionary<NSString *, UIColor *> *colors = @{
+            @"Allow" : UIColor.systemGreenColor,
+            @"Block incoming" : UIColor.systemOrangeColor,
+            @"Block outgoing" : UIColor.systemRedColor,
+            @"Block" : UIColor.systemRedColor,
+            @"Use Default Rule" : UIColor.systemBlueColor,
+            @"Cancel" : UIColor.systemBlueColor,
+            @"Not now" : UIColor.systemBlueColor
+        };
+        alert.view.tintColor = UIColor.systemBlueColor;
+        for (UIAlertAction *action in alert.actions) {
+            UIColor *color = colors[action.title];
+            // UIKit's per-action color setter is private; retain native styling if unavailable.
+            if (color && [action respondsToSelector:NSSelectorFromString(@"setTitleTextColor:")]) {
+                [action setValue:color forKey:@"titleTextColor"];
+            }
+        }
+    }
+    [super presentViewController:viewControllerToPresent animated:animated completion:completion];
+}
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.title = @"NetShield2";
@@ -327,14 +352,14 @@
 - (void)showNotificationHelp {
     UIAlertController *alert = [UIAlertController
         alertControllerWithTitle:@"Answer without leaving your app"
-                         message:@"Touch and hold a NetShield2 notification, then choose Allow app, Block "
-                                 @"incoming or "
-                                 @"Keep blocking. Tapping the notification body opens NetShield2.\n\nUsing "
-                                 @"Do Not "
-                                 @"Disturb? In Settings > Focus > Do Not Disturb > Apps, allow notifications "
-                                 @"from NetShield2. Do the same for any other Focus you use.\n\nUnanswered "
-                                 @"requests are blocked after 30 seconds. You can allow them later and retry "
-                                 @"the connection."
+                         message:
+                             @"Touch and hold a NetShield2 notification, then choose Block incoming, Allow, "
+                             @"or Keep Blocking. Tapping the notification body opens NetShield2.\n\nUsing "
+                             @"Do Not "
+                             @"Disturb? In Settings > Focus > Do Not Disturb > Apps, allow notifications "
+                             @"from NetShield2. Do the same for any other Focus you use.\n\nUnanswered "
+                             @"requests are blocked after 30 seconds. You can allow them later and retry "
+                             @"the connection."
                   preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleCancel handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];

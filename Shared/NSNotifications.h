@@ -41,17 +41,17 @@ static inline void NSRemoveAutomaticallyAllowedNotifications(void) {
 static inline void NSRegisterPermissionActions(void) {
     UNNotificationActionOptions options = UNNotificationActionOptionAuthenticationRequired;
     UNNotificationAction *allow = [UNNotificationAction actionWithIdentifier:NSAllowAction
-                                                                       title:@"Allow app"
+                                                                       title:@"Allow"
                                                                      options:options];
     UNNotificationAction *blockIncoming = [UNNotificationAction actionWithIdentifier:NSBlockIncomingAction
                                                                                title:@"Block incoming"
                                                                              options:options];
     UNNotificationAction *block = [UNNotificationAction actionWithIdentifier:NSBlockAction
-                                                                       title:@"Keep blocking"
+                                                                       title:@"Keep Blocking"
                                                                      options:options];
     UNNotificationCategory *category =
         [UNNotificationCategory categoryWithIdentifier:NSPermissionCategory
-                                               actions:@[ allow, blockIncoming, block ]
+                                               actions:@[ blockIncoming, allow, block ]
                                      intentIdentifiers:@[]
                                                options:UNNotificationCategoryOptionNone];
     [UNUserNotificationCenter.currentNotificationCenter

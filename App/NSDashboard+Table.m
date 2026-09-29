@@ -156,7 +156,7 @@
     if (section == NSDashboardSectionSupport) {
         return @"Developed by EolnMsuk.";
     }
-    return @"NetShield2 2.1.1 / iOS 15-18 rootless. Filters connections provided by iOS; system-exempt "
+    return @"NetShield2 2.1.2 / iOS 15-18 rootless. Filters connections provided by iOS; system-exempt "
            @"traffic is not guaranteed covered.";
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)path {
@@ -221,7 +221,7 @@
             detail = @"Turn on Firewall to apply your rules.";
         } else if (healthy) {
             detail = NEFilterManager.sharedManager.providerConfiguration.filterSockets
-                         ? @"Your rules apply to new browser and socket connections supplied by iOS."
+                         ? @"Browser and socket filtering active."
                          : @"Browser filtering only. Enable Filter System Sockets below Firewall for "
                            @"other app connections.";
         }
@@ -351,9 +351,10 @@
                                                             dateStyle:NSDateFormatterShortStyle
                                                             timeStyle:NSDateFormatterShortStyle];
             cell.detailTextLabel.text =
-                [NSString stringWithFormat:@"%@ / %@\nConnections: %@\nReceived %@ B / Sent %@ B", time,
-                                           event[@"direction"], event[@"connections"], event[@"bytesIn"],
-                                           event[@"bytesOut"]];
+                [NSString stringWithFormat:@"%@ / %@\nConnections: %@\nReceived %.1f MB / Sent %.1f MB", time,
+                                           event[@"direction"], event[@"connections"],
+                                           [event[@"bytesIn"] unsignedLongLongValue] / 1000000.0,
+                                           [event[@"bytesOut"] unsignedLongLongValue] / 1000000.0];
             cell.detailTextLabel.text = [cell.detailTextLabel.text
                 stringByAppendingFormat:@"\n%@", NSDestinationSummary(event[@"destination"])];
         }
