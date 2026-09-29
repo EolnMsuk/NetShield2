@@ -7,9 +7,9 @@ A firewall & live network filter for jailbroken iOS 15 - 18 devices. NetShield2 
 ## Get started
 
 1. Install the deb from the releases section (roothide users must convert rootless deb with patcher before installing). No respring is required.
-2. Open NetShield2 and turn on **Firewall** + accept the iOS Notification and enter passcode, then close the VPN settings. Leave **Default Rule** set to **Ask me** to decide as apps connect.
-3. If not already done by step 2, enable **Persistent Banners** under **Notification Settings**. If you use **Do Not Disturb**, allow NetShield2 in **Settings > Focus > Do Not Disturb > Apps**.
-4. When a new app connects, touch and hold its NetShield2 notification and choose **Allow app** or **Keep blocking**. Tapping the notification body opens NetShield2 instead where you can also allow or block through prompts.
+2. Open NetShield2 and turn on **Firewall** + accept the iOS Notification and Allow content filter / type passcode, then close the VPN settings.
+3. Recommended: Within NetShield2 tap **Notification Settings** and enable **Persistent Banners**. If you use **Do Not Disturb**, allow NetShield2 in **Settings > Focus > Do Not Disturb > Apps**.
+4. When a new process requests internet, NetShield2's notification banner will appear, long press it to choose **Allow In & Out**, **Block Incoming**, **Keep blocking**. Tapping the notification body instead opens NetShield2 where you can also assign rules to the pending requests.
 
 Unanswered connections are blocked by default. The latest 64 expired requests remain in **Waiting for your decision**, where you can decide later and retry the app. Older requests are removed as history fills; retry an app to request a new decision if it is no longer listed. To ask again for a previously decided app, tap its rule and select **Use Default Rule**.
 
