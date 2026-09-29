@@ -22,6 +22,8 @@ FOUNDATION_EXPORT BOOL NSResetSharedStateWithOptions(BOOL legacyProviderMayBeRun
 #ifdef NS_TESTING
 FOUNDATION_EXPORT void NSSetTestContainer(NSURL *url);
 #endif
+FOUNDATION_EXPORT BOOL NSAnswerPermissionRequestWithRule(NSDictionary *request, NSString *rule,
+                                                         NSError *_Nullable *_Nullable error);
 FOUNDATION_EXPORT BOOL NSAnswerPermissionRequest(NSDictionary *request, BOOL allow,
                                                  NSError *_Nullable *_Nullable error);
 FOUNDATION_EXPORT NSDictionary *_Nullable NSPermissionResponseDocument(NSDictionary *request,

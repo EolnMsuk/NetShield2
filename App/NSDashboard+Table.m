@@ -1,4 +1,5 @@
 #import "NSDashboard+Internal.h"
+#import "../Shared/NSActivity.h"
 
 @implementation NSDashboard (Table)
 - (id)rowKey:(NSIndexPath *)path {
@@ -8,16 +9,18 @@
     if (path.section == NSDashboardSectionRules && self.identities.count) {
         return self.identities[path.row];
     }
-    if (path.section == NSDashboardSectionActivity && [self.monitor[@"events"] count]) {
-        NSArray *events = self.monitor[@"events"];
-        return events[events.count - 1 - path.row];
+    if (path.section == NSDashboardSectionActivity && self.activityGroups.count) {
+        return self.activityGroups[path.row][@"groupKey"];
     }
     return @(path.row);
 }
 - (id)heightKey:(NSIndexPath *)path {
     return @[
-        @(path.section), [self rowKey:path], @(self.tableView.bounds.size.width),
-        self.traitCollection.preferredContentSizeCategory
+        @(path.section), [self rowKey:path],
+        path.section == NSDashboardSectionActivity && self.activityGroups.count
+            ? self.activityGroups[path.row]
+            : @{},
+        @(self.tableView.bounds.size.width), self.traitCollection.preferredContentSizeCategory
     ];
 }
 - (CGFloat)tableView:(UITableView *)tableView estimatedHeightForRowAtIndexPath:(NSIndexPath *)path {
@@ -57,6 +60,7 @@
             ]];
         }
     }
+    self.activityGroups = NSGroupedActivity(self.monitor[@"events"] ?: @[]);
     NSMutableArray *rows = [NSMutableArray new];
     for (NSInteger section = 0; section < [self numberOfSectionsInTableView:self.tableView]; section++) {
         NSMutableArray *keys = [NSMutableArray new];
@@ -113,7 +117,7 @@
     if (section == NSDashboardSectionSupport) {
         return 2;
     }
-    return MAX((NSUInteger)1, MIN((NSUInteger)20, [self.monitor[@"events"] count]));
+    return MAX((NSUInteger)1, self.activityGroups.count);
 }
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
     return @[
@@ -144,8 +148,10 @@
                @"Disturb > Apps.";
     }
     if (section == NSDashboardSectionActivity) {
-        return @"Latest 20 of up to 300 recorded events. Data totals arrive when a connection closes; "
-               @"permission decisions show no data totals.";
+        return @"Up to 300 recorded events grouped by process, IP/domain, direction and outcome, newest "
+               @"first. "
+               @"Counts and totals cover retained events. Data totals arrive when a connection closes; "
+               @"permission decisions show no data totals. Tap a process to change its rule.";
     }
     if (section == NSDashboardSectionSupport) {
         return @"Developed by EolnMsuk.";
@@ -290,6 +296,15 @@
             cell.accessoryType = UITableViewCellAccessoryNone;
         } else {
             NSString *identity = self.identities[path.row];
+            NSString *rule = self.policy.document[@"rules"][identity];
+            UIColor *color = [rule isEqual:@"allow"]   ? UIColor.systemGreenColor
+                             : [rule isEqual:@"block"] ? UIColor.systemRedColor
+                             : [@[ @"block-inbound", @"block-outbound" ] containsObject:rule ?: @""]
+                                 ? UIColor.systemOrangeColor
+                                 : nil;
+            if (color) {
+                cell.backgroundColor = [color colorWithAlphaComponent:0.14];
+            }
             cell.textLabel.text = identity;
             cell.detailTextLabel.text =
                 [self.policy automaticallyAllowsIdentity:identity]
@@ -311,20 +326,24 @@
             cell.detailTextLabel.text = self.monitor[@"notificationDeliveryIssue"];
         }
     } else if (path.section == NSDashboardSectionActivity) {
-        NSArray *events = self.monitor[@"events"];
+        NSArray *events = self.activityGroups;
         cell.accessoryType = UITableViewCellAccessoryNone;
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
         if (!events.count) {
             cell.textLabel.text = @"No activity yet";
         } else {
-            NSDictionary *event = events[events.count - 1 - path.row];
-            NSString *action = @{
-                @"allow" : @"Allowed",
-                @"block" : @"Blocked",
-                @"permission-allow" : @"Allowed by rule",
-                @"permission-block" : @"Blocked"
-            }[event[@"action"]]
-                                   ?: @"Connection";
+            NSDictionary *event = events[path.row];
+            BOOL allowed = [event[@"action"] isEqual:@"allow"];
+            BOOL blocked = [event[@"action"] isEqual:@"block"];
+            NSString *action = allowed ? @"Allowed" : blocked ? @"Blocked" : @"Connection";
+            UIColor *color = allowed ? UIColor.systemGreenColor : blocked ? UIColor.systemRedColor : nil;
+            if (color) {
+                cell.backgroundColor = [color colorWithAlphaComponent:0.14];
+            }
+            if ([event[@"identity"] length]) {
+                cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+                cell.selectionStyle = UITableViewCellSelectionStyleDefault;
+            }
             cell.textLabel.text = [NSString
                 stringWithFormat:@"%@ / %@", action,
                                  [event[@"identity"] length] ? event[@"identity"] : @"Unidentified app"];
@@ -332,8 +351,9 @@
                                                             dateStyle:NSDateFormatterShortStyle
                                                             timeStyle:NSDateFormatterShortStyle];
             cell.detailTextLabel.text =
-                [NSString stringWithFormat:@"%@ / %@\nReceived %@ B / Sent %@ B", time, event[@"direction"],
-                                           event[@"bytesIn"], event[@"bytesOut"]];
+                [NSString stringWithFormat:@"%@ / %@\nConnections: %@\nReceived %@ B / Sent %@ B", time,
+                                           event[@"direction"], event[@"connections"], event[@"bytesIn"],
+                                           event[@"bytesOut"]];
             cell.detailTextLabel.text = [cell.detailTextLabel.text
                 stringByAppendingFormat:@"\n%@", NSDestinationSummary(event[@"destination"])];
         }
@@ -372,6 +392,11 @@
         [self presentRequest:self.monitor[@"requests"][path.row]];
     } else if (path.section == NSDashboardSectionRules && self.identities.count) {
         [self chooseActionForIdentity:self.identities[path.row] defaultKey:nil];
+    } else if (path.section == NSDashboardSectionActivity && self.activityGroups.count) {
+        NSString *identity = self.activityGroups[path.row][@"identity"];
+        if (identity.length) {
+            [self chooseActionForIdentity:identity defaultKey:nil];
+        }
     } else if (path.section == NSDashboardSectionNotifications) {
         if (path.row == 0) {
             [self requestNotifications];

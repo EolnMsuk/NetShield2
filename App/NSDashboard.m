@@ -322,8 +322,10 @@
 - (void)showNotificationHelp {
     UIAlertController *alert = [UIAlertController
         alertControllerWithTitle:@"Answer without leaving your app"
-                         message:@"Touch and hold a NetShield2 notification, then choose Allow app or Keep "
-                                 @"blocking. Tapping the notification body opens NetShield2.\n\nUsing Do Not "
+                         message:@"Touch and hold a NetShield2 notification, then choose Allow app, Block "
+                                 @"incoming or "
+                                 @"Keep blocking. Tapping the notification body opens NetShield2.\n\nUsing "
+                                 @"Do Not "
                                  @"Disturb? In Settings > Focus > Do Not Disturb > Apps, allow notifications "
                                  @"from NetShield2. Do the same for any other Focus you use.\n\nUnanswered "
                                  @"requests are blocked after 30 seconds. You can allow them later and retry "

@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 #import "../Shared/NSStore.h"
+#import "../Shared/NSActivity.h"
 #import "../App/NSFilterRemoval.h"
 #import "../Shared/NSDestination.h"
 #import "../Shared/NSPermissionQueue.h"
@@ -279,6 +280,84 @@ static void TestLargePolicyCache(void) {
     CHECK(NSReadPolicy(NULL) != snapshot);
     CHECK(NSWriteDocument([NSPolicy defaultDocument], NSPolicyFile, NULL));
 }
+static NSDictionary *ActivityEvent(NSString *identity, NSDictionary *destination, NSString *direction,
+                                   NSString *action, NSTimeInterval time, unsigned long long received,
+                                   unsigned long long sent) {
+    return @{
+        @"identity" : identity,
+        @"destination" : destination,
+        @"direction" : direction,
+        @"action" : action,
+        @"time" : [NSDate dateWithTimeIntervalSince1970:time],
+        @"bytesIn" : @(received),
+        @"bytesOut" : @(sent)
+    };
+}
+static void TestActivityGrouping(void) {
+    NSDictionary *peer = @{@"domain" : @"example.com", @"address" : @"192.0.2.1"};
+    NSDictionary *old = ActivityEvent(@"app", peer, @"outbound", @"allow", 1, 10, 20);
+    NSDictionary *middle = ActivityEvent(@"other.app", peer, @"outbound", @"allow", 2, 1, 2);
+    NSDictionary *latest = ActivityEvent(@"app", peer, @"outbound", @"permission-allow", 3, 30, 40);
+    NSArray *events = @[ old, middle, latest ];
+    NSArray *groups = NSGroupedActivity(events);
+    CHECK(groups.count == 2);
+    CHECK([groups[0][@"identity"] isEqual:@"app"]);
+    CHECK([groups[0][@"connections"] integerValue] == 2);
+    CHECK([groups[0][@"bytesIn"] unsignedLongLongValue] == 40);
+    CHECK([groups[0][@"bytesOut"] unsignedLongLongValue] == 60);
+    CHECK([groups[0][@"time"] isEqual:latest[@"time"]]);
+    CHECK(!old[@"connections"] && [old[@"bytesIn"] integerValue] == 10);
+    CHECK([NSGroupedActivity(@[ latest, old, middle ]) isEqual:groups]);
+    NSArray *trimmed = NSGroupedActivity(@[ middle, latest ]);
+    CHECK([trimmed[0][@"connections"] integerValue] == 1);
+    CHECK([trimmed[0][@"bytesIn"] integerValue] == 30);
+    CHECK([trimmed[0][@"bytesOut"] integerValue] == 40);
+    CHECK([trimmed[0][@"groupKey"] isEqual:groups[0][@"groupKey"]]);
+    CHECK([NSGroupedActivity(@[ old, middle ])[0][@"identity"] isEqual:@"other.app"]);
+    CHECK(NSGroupedActivity(@[]).count == 0);
+    NSMutableArray *separate = [events mutableCopy];
+    [separate addObject:ActivityEvent(@"app", peer, @"inbound", @"allow", 4, 1, 1)];
+    [separate addObject:ActivityEvent(@"app", peer, @"outbound", @"block", 5, 0, 0)];
+    [separate addObject:ActivityEvent(@"app", @{@"domain" : @"different.com", @"address" : @"192.0.2.1"},
+                                      @"outbound", @"allow", 6, 1, 1)];
+    [separate addObject:ActivityEvent(@"app", @{@"domain" : @"example.com", @"address" : @"192.0.2.2"},
+                                      @"outbound", @"allow", 7, 1, 1)];
+    CHECK(NSGroupedActivity(separate).count == 6);
+    [separate addObject:ActivityEvent(@"app", peer, @"outbound", @"permission-block", 8, 0, 0)];
+    groups = NSGroupedActivity(separate);
+    CHECK(groups.count == 6 && [groups[0][@"connections"] integerValue] == 2);
+    CHECK([groups[0][@"action"] isEqual:@"block"]);
+    CHECK([NSGroupedActivity(@[ ActivityEvent(@"", @{}, @"unknown", @"other", 0, 0, 0) ])[0][@"action"]
+        isEqual:@"other"]);
+}
+static void TestIncomingPermissionAnswer(void) {
+    CHECK(NSWriteDocument([NSPolicy defaultDocument], NSPolicyFile, NULL));
+    NSPermissionQueue *queue = [NSPermissionQueue new];
+    NSDictionary *destination = @{@"domain" : @"incoming.example"};
+    NSDictionary *request = [queue enqueueIdentity:@"incoming.app"
+                                         direction:NSFlowDirectionOutbound
+                                       destination:destination
+                                               now:0
+                                              date:NSDate.date
+                                        completion:^(BOOL allow){
+                                        }];
+    CHECK(NSWriteDocument(Monitor(queue.requests, YES, NSEngineVersion, NSDate.date), NSMonitorFile, NULL));
+    CHECK(!NSAnswerPermissionRequestWithRule(request, @"invalid", NULL));
+    NSMutableDictionary *forged = [request mutableCopy];
+    forged[@"token"] = @"stale-token";
+    CHECK(!NSAnswerPermissionRequestWithRule(forged, @"block-inbound", NULL));
+    CHECK(!NSReadPolicy(NULL).document[@"rules"][@"incoming.app"]);
+    forged = [request mutableCopy];
+    forged[@"destination"] = @{@"domain" : @"forged.example"};
+    CHECK(NSAnswerPermissionRequestWithRule(forged, @"block-inbound", NULL));
+    NSPolicy *policy = NSReadPolicy(NULL);
+    CHECK([policy.document[@"rules"][@"incoming.app"] isEqual:@"block-inbound"]);
+    CHECK([policy.document[@"ruleDestinations"][@"incoming.app"] isEqual:destination]);
+    CHECK(![policy allowsIdentity:@"incoming.app" direction:NSFlowDirectionInbound]);
+    CHECK([policy allowsIdentity:@"incoming.app" direction:NSFlowDirectionOutbound]);
+    CHECK(!NSAnswerPermissionRequestWithRule(request, @"block-inbound", NULL));
+}
+
 static void TestAnswersAndReset(void) {
     CHECK(NSWriteDocument([NSPolicy defaultDocument], NSPolicyFile, NULL));
     NSPermissionQueue *queue = [NSPermissionQueue new];
@@ -454,7 +533,7 @@ static void TestLateNotifications(void) {
     UNNotificationRequest *banner = center.requests.firstObject;
     CHECK([banner.content.title isEqual:@"notify.app"]);
     CHECK([banner.content.body
-        isEqual:@"Wants network access. Long-press this banner to allow or keep blocking."]);
+        isEqual:@"Wants network access. Long-press this banner to allow, block incoming or keep blocking."]);
     CHECK(banner.content.subtitle.length == 0);
     CHECK(banner.content.attachments.count == 0);
     CHECK([banner.content.userInfo isEqual:@{@"token" : @"old-token", @"identity" : @"notify.app"}]);
@@ -566,6 +645,8 @@ int main(void) {
         TestPermissionQueue();
         TestQueueLimitsAndCancellation();
         TestLargePolicyCache();
+        TestActivityGrouping();
+        TestIncomingPermissionAnswer();
         TestAnswersAndReset();
         TestSocketSettingsAndDestinations();
         TestLateNotifications();

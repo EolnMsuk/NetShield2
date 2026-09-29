@@ -24,6 +24,7 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 @property(nonatomic, strong) NSPolicy *policy;
 @property(nonatomic, copy) NSString *policyReadError;
 @property(nonatomic, copy) NSDictionary *monitor;
+@property(nonatomic, copy) NSArray<NSDictionary *> *activityGroups;
 @property(nonatomic, copy) NSArray<NSString *> *identities;
 @property(nonatomic, copy) NSString *message;
 @property(nonatomic, strong) NSTimer *timer;

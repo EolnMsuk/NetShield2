@@ -41,10 +41,14 @@
             [request[@"token"] isKindOfClass:NSString.class] &&
             [request[@"identity"] isKindOfClass:NSString.class]) {
             if ([response.actionIdentifier isEqual:NSAllowAction] ||
-                [response.actionIdentifier isEqual:NSBlockAction]) {
+                [response.actionIdentifier isEqual:NSBlockAction] ||
+                [response.actionIdentifier isEqual:NSBlockIncomingAction]) {
                 NSError *error = nil;
-                BOOL saved = NSAnswerPermissionRequest(
-                    request, [response.actionIdentifier isEqual:NSAllowAction], &error);
+                NSString *rule = [response.actionIdentifier isEqual:NSAllowAction] ? @"allow"
+                                 : [response.actionIdentifier isEqual:NSBlockIncomingAction]
+                                     ? @"block-inbound"
+                                     : @"block";
+                BOOL saved = NSAnswerPermissionRequestWithRule(request, rule, &error);
                 if (!saved && ![NSReadPolicy(NULL) automaticallyAllowsIdentity:request[@"identity"]]) {
                     UNMutableNotificationContent *failure = [UNMutableNotificationContent new];
                     failure.title = @"NetShield2 decision not saved";

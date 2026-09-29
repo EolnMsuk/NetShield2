@@ -296,18 +296,30 @@ NSDictionary *NSReadMonitor(void) {
 }
 
 BOOL NSAnswerPermissionRequest(NSDictionary *request, BOOL allow, NSError **error) {
+    return NSAnswerPermissionRequestWithRule(request, allow ? @"allow" : @"block", error);
+}
+BOOL NSAnswerPermissionRequestWithRule(NSDictionary *request, NSString *rule, NSError **error) {
+    if (![@[ @"allow", @"block", @"block-inbound" ] containsObject:rule ?: @""]) {
+        if (error) {
+            *error = NSStorageError(@"Unsupported permission rule.");
+        }
+        return NO;
+    }
     return NSUpdatePolicy(
         ^BOOL(NSMutableDictionary *document, NSError **mutationError) {
             NSPolicy *policy = [NSPolicy policyWithDocument:document error:mutationError];
             if (!policy) {
                 return NO;
             }
-            NSDictionary *response = NSPermissionResponseDocument(request, NSReadMonitor(), policy,
-                                                                  NSDate.date, allow, mutationError);
+            NSDictionary *response = NSPermissionResponseDocument(
+                request, NSReadMonitor(), policy, NSDate.date, [rule isEqual:@"allow"], mutationError);
             if (!response) {
                 return NO;
             }
             [document setDictionary:response];
+            NSMutableDictionary *rules = [document[@"rules"] mutableCopy];
+            rules[request[@"identity"]] = rule;
+            document[@"rules"] = rules;
             return YES;
         },
         error);
