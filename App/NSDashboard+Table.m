@@ -137,8 +137,7 @@
         return @"Overrides app rules and the iOS system traffic allowance.";
     }
     if (section == NSDashboardSectionFirewall) {
-        return @"Your rules are kept when you turn the firewall off. Ask me prompts only for apps without a "
-               @"saved rule.";
+        return @"Your rules are saved when you turn the firewall off.";
     }
     if (section == NSDashboardSectionRequests) {
         return [NSString
