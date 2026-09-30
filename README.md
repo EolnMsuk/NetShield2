@@ -7,7 +7,7 @@ NetShield2 is a customizable firewall & live network monitor with actionable not
 ## Get started
 
 1. Install the deb from the releases section. No respring is required.
-2. Open NetShield2 and turn on **Firewall**, accept the iOS Notification and allow **Filter Network Content**, enter passcode and close the VPN settings. To confirm the filter has been added, re-open Settings > General > VPN & Device Management > Content Filter > NetShield2... Running.
+2. Open NetShield2 from the homescreen and switch on the main **Firewall** toggle, accept the iOS Notification and allow **Filter Network Content**, enter passcode and close the VPN settings. To confirm the filter has been added, re-open Settings > General > VPN & Device Management > Content Filter > NetShield2... Running.
 3. Recommended: return to NetShield2, tap **Notification Settings** and switch Banner Style from Temporary to **Persistent**. If you use **Do Not Disturb**, allow NetShield2 in **Settings > Focus > Do Not Disturb > Apps**.
 4. When a new app connects, touch and hold the NetShield2 notification banner and choose **Allow In & Out**, **Block Incoming**, or **Keep Blocking**. Tapping the notification body (instead of long pressing) will open NetShield2 where you can also assign rules to any pending requests.
 
