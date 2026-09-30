@@ -477,6 +477,21 @@ static void TestDistinctFlowActivity(void) {
     NSString *summary = NSDestinationSummary(groups[0][@"destination"]);
     VERIFY([summary rangeOfString:@"Local port:"].location <
            [summary rangeOfString:@"Remote port:"].location);
+    groups = NSGroupedActivity(@[
+        event(@"one", @"a.test", @"allow", 0, 100), event(@"one", @"a.test", @"permission-block", 1, 0),
+        event(@"two", @"a.test", @"allow", 2, 50), event(@"two", @"a.test", @"allow", 3, 50)
+    ]);
+    VERIFY(groups.count == 1);
+    VERIFY([groups[0][@"connections"] integerValue] == 2);
+    VERIFY([groups[0][@"bytesIn"] integerValue] == 150);
+    VERIFY([groups[0][@"action"] isEqual:@"allow"]);
+    groups = NSGroupedActivity(@[
+        event(@"one", @"a.test", @"allow", 0, 100), event(@"one", @"a.test", @"permission-block", 3, 0),
+        event(@"two", @"a.test", @"allow", 2, 50)
+    ]);
+    VERIFY(groups.count == 1 && [groups[0][@"connections"] integerValue] == 2);
+    VERIFY([groups[0][@"bytesIn"] integerValue] == 150);
+    VERIFY([groups[0][@"action"] isEqual:@"block"]);
 }
 
 void NSRunRecoveryTests(void) {

@@ -41,9 +41,12 @@ Allow/Block/Cancel colors, and local-before-remote activity display.
 
 Activity coalesces reports by process and flow ID before grouping. Cumulative
 byte totals use the maximum for each flow, not the sum of repeated reports.
-When IP information is absent, the normalized domain distinguishes peers.
-Events without flow IDs remain separate because reliable deduplication is
-impossible. Local and remote ports both remain in the grouping key.
+Matching normalized domains or IPs join connections with the same process,
+remote port and direction, including connections that bridge existing groups.
+Local ports and allowed/blocked outcomes do not split groups. The newest
+connection supplies the details and color; bytes sum across distinct flows.
+Events without flow IDs count as distinct connections because reliable
+deduplication is impossible. Missing domains/IPs do not match other unknown peers.
 
 ## Automated validation
 

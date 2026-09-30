@@ -1,9 +1,17 @@
 #import <Foundation/Foundation.h>
 #import "NSGlobalRule.h"
 
+static inline NSUInteger NSActivityRoot(NSMutableArray<NSNumber *> *parents, NSUInteger index) {
+    while (parents[index].unsignedIntegerValue != index) {
+        parents[index] = parents[parents[index].unsignedIntegerValue];
+        index = parents[index].unsignedIntegerValue;
+    }
+    return index;
+}
+
 // A display-only projection of the retained event history. Never persist these totals.
 static inline NSArray<NSDictionary *> *NSGroupedActivity(NSArray<NSDictionary *> *events) {
-    NSMutableDictionary<NSArray *, NSMutableDictionary *> *groups = [NSMutableDictionary new];
+    NSMutableDictionary<NSNumber *, NSMutableDictionary *> *groups = [NSMutableDictionary new];
     NSMutableArray<NSMutableDictionary *> *ordered = [NSMutableArray new];
     NSArray *newestFirst = [[events reverseObjectEnumerator].allObjects
         sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *left, NSDictionary *right) {
@@ -35,13 +43,33 @@ static inline NSArray<NSDictionary *> *NSGroupedActivity(NSArray<NSDictionary *>
             }
         }
         flow[@"destination"] = peer;
-        // A data-provider verdict takes precedence over a synthetic permission
-        // event, even when callback scheduling records the permission later.
-        if ([flow[@"action"] hasPrefix:@"permission-"] && ![event[@"action"] hasPrefix:@"permission-"]) {
-            flow[@"action"] = event[@"action"];
+    }
+    // Either host can join peers within the same process, remote port and direction.
+    // Resolve all links before totaling: an older event can bridge two newer groups.
+    NSMutableArray<NSNumber *> *parents = [NSMutableArray new];
+    NSMutableDictionary<NSArray *, NSNumber *> *hosts = [NSMutableDictionary new];
+    for (NSUInteger index = 0; index < unique.count; index++) {
+        [parents addObject:@(index)];
+        NSDictionary *event = unique[index];
+        NSDictionary *destination = event[@"destination"];
+        for (NSString *field in @[ @"address", @"domain" ]) {
+            NSString *host = NSGlobalHostKey(destination[field]);
+            if (!host) {
+                continue;
+            }
+            NSArray *key = @[ event[@"identity"], destination[@"port"] ?: @0, event[@"direction"], host ];
+            NSNumber *previous = hosts[key];
+            if (previous) {
+                NSUInteger left = NSActivityRoot(parents, index);
+                NSUInteger right = NSActivityRoot(parents, previous.unsignedIntegerValue);
+                parents[MAX(left, right)] = @(MIN(left, right));
+            } else {
+                hosts[key] = @(index);
+            }
         }
     }
-    for (NSDictionary *event in unique) {
+    for (NSUInteger index = 0; index < unique.count; index++) {
+        NSDictionary *event = unique[index];
         NSString *action = event[@"action"];
         NSString *outcome = @{
             @"allow" : @"allow",
@@ -51,20 +79,22 @@ static inline NSArray<NSDictionary *> *NSGroupedActivity(NSArray<NSDictionary *>
         }[action]
                                 ?: @"other";
         NSDictionary *destination = event[@"destination"];
-        // Newest first: retain the latest destination/domain while aggregating by IP.
+        // Newest first: only counts and byte totals change on the representative.
         NSArray *key = @[
-            event[@"identity"], NSGlobalHostKey(destination[@"address"]) ?: NSGlobalHostKey(destination[@"domain"]) ?: @"", destination[@"localPort"] ?: @0,
-            destination[@"port"] ?: @0, event[@"direction"], outcome
+            event[@"identity"], NSGlobalHostKey(destination[@"address"]) ?: NSGlobalHostKey(destination[@"domain"]) ?: @"",
+            destination[@"port"] ?: @0, event[@"direction"]
         ];
-        NSMutableDictionary *group = groups[key];
+        NSNumber *root = @(NSActivityRoot(parents, index));
+        NSMutableDictionary *group = groups[root];
         if (!group) {
             group = [event mutableCopy];
-            group[@"groupKey"] = key;
             group[@"action"] = outcome;
             group[@"connections"] = @0;
             group[@"bytesIn"] = @0;
             group[@"bytesOut"] = @0;
-            groups[key] = group;
+            // Unknown peers cannot match one another merely because both are missing.
+            group[@"groupKey"] = [key[1] length] ? key : [key arrayByAddingObject:@(index)];
+            groups[root] = group;
             [ordered addObject:group];
         }
         group[@"connections"] = @([group[@"connections"] unsignedIntegerValue] + 1);

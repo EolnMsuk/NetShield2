@@ -161,11 +161,12 @@
                @"Disturb > Apps.";
     }
     if (section == NSDashboardSectionActivity) {
-        return @"Up to 300 recorded events grouped by process, IP, direction and outcome, newest "
-               @"first. "
+        return @"Up to 300 recorded events grouped by process, matching domain or IP, remote port and "
+               @"direction, newest first. Local ports and allowed/blocked outcomes do not split groups. "
+               @"The latest connection supplies the details and color; received and sent totals cover the "
+               @"group. "
                @"Connections count distinct flow IDs in retained history. Data totals arrive when a "
-               @"connection closes; "
-               @"permission decisions show no data totals. Tap a process to change its rule.";
+               @"connection closes. Tap a process to change its rule.";
     }
     if (section == NSDashboardSectionSupport) {
         return @"Developed by EolnMsuk.";

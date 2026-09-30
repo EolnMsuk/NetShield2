@@ -323,16 +323,19 @@ static void TestActivityGrouping(void) {
                                       @"outbound", @"allow", 6, 1, 1)];
     [separate addObject:ActivityEvent(@"app", @{@"domain" : @"example.com", @"address" : @"192.0.2.2"},
                                       @"outbound", @"allow", 7, 1, 1)];
-    CHECK(NSGroupedActivity(separate).count == 5);
-    NSDictionary *merged = NSGroupedActivity(separate)[1];
-    CHECK([merged[@"connections"] integerValue] == 3);
-    CHECK([merged[@"destination"][@"domain"] isEqual:@"different.com"]);
-    CHECK([merged[@"bytesIn"] integerValue] == 41);
-    CHECK([merged[@"bytesOut"] integerValue] == 61);
+    CHECK(NSGroupedActivity(separate).count == 3);
+    NSDictionary *merged = NSGroupedActivity(separate)[0];
+    CHECK([merged[@"connections"] integerValue] == 5);
+    CHECK([merged[@"destination"][@"domain"] isEqual:@"example.com"]);
+    CHECK([merged[@"destination"][@"address"] isEqual:@"192.0.2.2"]);
+    CHECK([merged[@"bytesIn"] integerValue] == 42);
+    CHECK([merged[@"bytesOut"] integerValue] == 62);
     [separate addObject:ActivityEvent(@"app", peer, @"outbound", @"permission-block", 8, 0, 0)];
     groups = NSGroupedActivity(separate);
-    CHECK(groups.count == 5 && [groups[0][@"connections"] integerValue] == 2);
+    CHECK(groups.count == 3 && [groups[0][@"connections"] integerValue] == 6);
     CHECK([groups[0][@"action"] isEqual:@"block"]);
+    CHECK([groups[0][@"time"] isEqual:separate.lastObject[@"time"]]);
+    CHECK([groups[0][@"bytesIn"] integerValue] == 42);
     for (NSNumber *port in @[ @80, @443 ]) {
         NSMutableDictionary *portedPeer = [peer mutableCopy];
         portedPeer[@"port"] = port;
@@ -340,7 +343,7 @@ static void TestActivityGrouping(void) {
         CHECK([NSDestinationSummary(portedPeer)
             containsString:[NSString stringWithFormat:@"Remote port: %@", port]]);
     }
-    CHECK(NSGroupedActivity(separate).count == 7);
+    CHECK(NSGroupedActivity(separate).count == 5);
     for (NSNumber *localPort in @[ @50000, @50001 ]) {
         NSDictionary *localPeer = @{@"address" : @"192.0.2.1", @"port" : @443, @"localPort" : localPort};
         [separate
@@ -348,14 +351,43 @@ static void TestActivityGrouping(void) {
         CHECK([NSDestinationSummary(localPeer)
             containsString:[NSString stringWithFormat:@"Local port: %@ / Remote port: 443", localPort]]);
     }
-    CHECK(NSGroupedActivity(separate).count == 9);
+    CHECK(NSGroupedActivity(separate).count == 5);
     NSDictionary *localEvent = separate.lastObject;
     [separate addObject:localEvent];
     NSArray *localGroups = NSGroupedActivity(separate);
-    CHECK(localGroups.count == 9);
-    CHECK([localGroups[0][@"connections"] integerValue] == 2);
-    CHECK([localGroups[0][@"bytesIn"] integerValue] == 4);
-    CHECK([localGroups[0][@"bytesOut"] integerValue] == 6);
+    CHECK(localGroups.count == 5);
+    CHECK([localGroups[0][@"connections"] integerValue] == 4);
+    CHECK([localGroups[0][@"bytesIn"] integerValue] == 7);
+    CHECK([localGroups[0][@"bytesOut"] integerValue] == 10);
+    CHECK([localGroups[0][@"action"] isEqual:@"allow"]);
+    CHECK([localGroups[0][@"destination"] isEqual:localEvent[@"destination"]]);
+    // The oldest record bridges two newer peers by domain on one side and IP on the other.
+    NSDictionary *bridge = ActivityEvent(@"app", @{@"domain" : @"A.TEST.", @"address" : @"192.0.2.1"},
+                                         @"outbound", @"allow", 1, 10, 20);
+    NSDictionary *byDomain = ActivityEvent(@"app", @{@"domain" : @"a.test", @"address" : @"192.0.2.2"},
+                                           @"outbound", @"allow", 2, 30, 40);
+    NSDictionary *byIP = ActivityEvent(@"app", @{@"domain" : @"b.test", @"address" : @"::ffff:192.0.2.1"},
+                                       @"outbound", @"block", 3, 50, 60);
+    NSArray *linked = NSGroupedActivity(@[ bridge, byDomain, byIP ]);
+    CHECK(linked.count == 1);
+    CHECK([linked[0][@"connections"] integerValue] == 3);
+    CHECK([linked[0][@"bytesIn"] integerValue] == 90);
+    CHECK([linked[0][@"bytesOut"] integerValue] == 120);
+    CHECK([linked[0][@"destination"] isEqual:byIP[@"destination"]]);
+    CHECK([linked[0][@"action"] isEqual:@"block"]);
+    CHECK([linked isEqual:NSGroupedActivity(@[ byIP, bridge, byDomain ])]);
+    CHECK(NSGroupedActivity(@[ byDomain, byIP ]).count == 2);
+    NSArray *hostOnly = NSGroupedActivity(@[
+        ActivityEvent(@"app", @{@"domain" : @"A.TEST."}, @"outbound", @"block", 1, 1, 2),
+        ActivityEvent(@"app", @{@"domain" : @"a.test"}, @"outbound", @"allow", 2, 3, 4),
+        ActivityEvent(@"app", @{@"domain" : @"b.test"}, @"outbound", @"allow", 3, 5, 6),
+        ActivityEvent(@"app", @{}, @"outbound", @"allow", 4, 7, 8),
+        ActivityEvent(@"app", @{}, @"outbound", @"allow", 5, 9, 10)
+    ]);
+    CHECK(hostOnly.count == 4);
+    CHECK([hostOnly[3][@"connections"] integerValue] == 2);
+    CHECK([hostOnly[3][@"action"] isEqual:@"allow"]);
+    CHECK(![hostOnly[0][@"groupKey"] isEqual:hostOnly[1][@"groupKey"]]);
     CHECK([NSGroupedActivity(@[ ActivityEvent(@"", @{}, @"unknown", @"other", 0, 0, 0) ])[0][@"action"]
         isEqual:@"other"]);
 }
