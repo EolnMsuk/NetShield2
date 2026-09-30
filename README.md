@@ -17,13 +17,14 @@ Unanswered connections are blocked after 30 seconds. The latest 64 expired reque
 
 - **Firewall:** on/off; turning it off keeps your rules.
 - **Filter System Sockets:** when enabled, the firewall is capable of filtering network for all apps and processes. Disable only if an app is crashing on launch.
-- **Allow all iOS system processes:** when enabled, processes starting with `com.apple` are allowed without prompts or permission notifications, overriding saved rules.
+- **Allow all iOS system processes:** when enabled, processes starting with `com.apple` are allowed without prompts or permission notifications.
 - **Unidentified:** Allowed by default, set to blocked to prevent unknown processes from accessing network (not recommended).
 - **Default Rule:** Ask me by default, changing this to Allow or Block will prevent prompting / notifications and block or allow any new requests.
 - **Notifications:** notification settings and instructions for banners and Do Not Disturb.
 - **Advanced Settings:** manual rules, Reset Rules & History and Reset ALL Settings.
-- **App rules:** change saved decisions. Changes apply to new connection requests only.
-- **Recent activity:** the rolling 300-event record grouped by process, IP/domain, direction and allowed/blocked outcome. Tap a process to change its rule.
+- **Global Rules:** IP/domain and remote port rules apply across all processes.
+- **App Rules:** change saved decisions. Changes apply to new connection requests only.
+- **Recent Activity:** the rolling 300-event record grouped by process, IP/domain, remote port, direction and allowed/blocked outcome.
 
 ## Coverage
 
