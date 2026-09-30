@@ -1,17 +1,24 @@
 """Exercise the real prerm script with mock app/uicache commands (POSIX host)."""
+import argparse
 import os
 import pathlib
 import shlex
 import shutil
 import subprocess
 import tempfile
+from prepare_package import maintainer_script
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--scheme', choices=('rootless', 'roothide'), default='rootless')
+args = parser.parse_args()
+prefix = '/var/jb' if args.scheme == 'rootless' else ''
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 shell = shutil.which("sh")
 if not shell:
     raise SystemExit("Uninstall script tests require a POSIX sh (run on macOS CI).")
 
-source = (ROOT / "layout/DEBIAN/prerm").read_text()
+source = maintainer_script((ROOT / "layout/DEBIAN/prerm").read_bytes(), args.scheme).decode()
 with tempfile.TemporaryDirectory(prefix="netshield-uninstall-") as directory:
     temporary = pathlib.Path(directory)
     log = temporary / "calls"
@@ -33,8 +40,8 @@ with tempfile.TemporaryDirectory(prefix="netshield-uninstall-") as directory:
     app.chmod(0o755)
     cache.chmod(0o755)
     script = temporary / "prerm"
-    script.write_text(source.replace("/var/jb/Applications/NetShield2.app/NetShield2", shlex.quote(str(app)))
-                     .replace("/var/jb/usr/bin/uicache", shlex.quote(str(cache))))
+    script.write_text(source.replace(f"{prefix}/Applications/NetShield2.app/NetShield2", shlex.quote(str(app)))
+                     .replace(f"{prefix}/usr/bin/uicache", shlex.quote(str(cache))))
     subprocess.run([shell, "-n", str(script)], check=True)
     for action, app_status, cache_status, expected_status, expected_calls in [
         ("remove", 0, 0, 0, 2),
@@ -67,7 +74,7 @@ with tempfile.TemporaryDirectory(prefix="netshield-uninstall-") as directory:
         else:
             assert result.stderr == "", (action, result.stderr)
         if len(calls) == 2:
-            assert calls[1] == "cache:-u /var/jb/Applications/NetShield2.app", calls
+            assert calls[1] == f"cache:-u {prefix}/Applications/NetShield2.app", calls
     app.unlink()
     log.write_text("")
     result = subprocess.run([shell, str(script), "remove"], env=environment,

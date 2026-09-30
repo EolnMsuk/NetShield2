@@ -5,10 +5,12 @@ import plistlib
 import re
 import struct
 from urllib.parse import urlsplit
+from prepare_package import maintainer_script
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
 parser.add_argument('--stage', type=pathlib.Path)
+parser.add_argument('--scheme', choices=('rootless', 'roothide'), default='rootless')
 args = parser.parse_args()
 
 def require(condition, message):
@@ -89,7 +91,17 @@ for old in ('Sources', 'Preferences', 'NetShield.plist', 'NetShield2.plist', 'pr
     require(not (ROOT / old).exists(), f'Obsolete v1 input remains: {old}')
 
 if args.stage:
-    app = args.stage / 'var/jb/Applications/NetShield2.app'
+    app_path = ('var/jb/' if args.scheme == 'rootless' else '') + 'Applications/NetShield2.app'
+    app = args.stage / app_path
+    staged_metadata = dict(line.split(': ', 1) for line in
+                           (args.stage / 'DEBIAN/control').read_text().splitlines() if ': ' in line)
+    architecture = 'iphoneos-arm64' if args.scheme == 'rootless' else 'iphoneos-arm64e'
+    require(staged_metadata['Architecture'] == architecture, 'Wrong staged package architecture')
+    require(staged_metadata['Version'] == metadata['Version'], 'Wrong staged package version')
+    for name in ('postinst', 'prerm'):
+        expected = maintainer_script((ROOT / 'layout/DEBIAN' / name).read_bytes(), args.scheme)
+        require((args.stage / 'DEBIAN' / name).read_bytes() == expected,
+                f'Wrong {args.scheme} maintainer script: {name}')
     for directory, binary, suffix, point, principal in bundles:
         bundle = app if directory == 'App' else app / f'PlugIns/{binary}.appex'
         require(plist(bundle / 'Info.plist') == plist(ROOT / directory / 'Resources/Info.plist'), f'Bad staged metadata: {binary}')
@@ -100,11 +112,11 @@ if args.stage:
         magic, cputype = struct.unpack_from('<II', raw)
         require(magic == 0xfeedfacf and cputype == 0x100000c, f'Expected arm64 Mach-O: {binary}')
     require(not list(args.stage.rglob('*.dylib')), 'Unexpected injected library in package')
-    allowed = {'var/jb/Applications/NetShield2.app', 'DEBIAN'}
+    allowed = {app_path, 'DEBIAN'}
     for file in args.stage.rglob('*'):
         if file.is_file():
             relative = file.relative_to(args.stage).as_posix()
             require(any(relative.startswith(prefix + '/') for prefix in allowed), f'Unexpected package file: {relative}')
-    print('Validated rootless app, embedded providers, arm64 binaries and package scope')
+    print(f'Validated {args.scheme} app, embedded providers, arm64 binaries and package scope')
 else:
     print('Validated v2 metadata, source paths, entitlements, scripts and v1 cleanup')
