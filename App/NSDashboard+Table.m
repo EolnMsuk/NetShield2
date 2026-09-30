@@ -128,7 +128,7 @@
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
     return @[
         @"Firewall", @"Waiting for your decision", @"Notifications", @"Advanced Settings", @"Support",
-        @"App rules", @"Global rules", @"Recent activity"
+        @"Global rules", @"App rules", @"Recent activity"
     ][section];
 }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
@@ -167,7 +167,7 @@
     if (section == NSDashboardSectionSupport) {
         return @"Developed by EolnMsuk.";
     }
-    return @"NetShield2 2.2.0 / iOS 15-18 rootless. Filters connections provided by iOS; system-exempt "
+    return @"NetShield2 2.2.1 / iOS 15-18 rootless. Filters connections provided by iOS; system-exempt "
            @"traffic is not guaranteed covered.";
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)path {
@@ -307,8 +307,17 @@
             cell.accessoryType = UITableViewCellAccessoryNone;
         } else {
             NSString *key = self.globalRuleKeys[path.row];
+            NSString *rule = self.policy.document[@"globalRules"][key];
+            UIColor *color = [rule isEqual:@"allow"] ? UIColor.systemGreenColor
+                             : [rule isEqual:@"block"] || [rule isEqual:@"block-outbound"]
+                                 ? UIColor.systemRedColor
+                             : [rule isEqual:@"block-inbound"] ? UIColor.systemOrangeColor
+                                                               : nil;
+            if (color) {
+                cell.backgroundColor = [color colorWithAlphaComponent:0.14];
+            }
             cell.textLabel.text = [self globalRuleTitle:key];
-            cell.detailTextLabel.text = [self ruleTitle:self.policy.document[@"globalRules"][key]];
+            cell.detailTextLabel.text = [self ruleTitle:rule];
         }
     } else if (path.section == NSDashboardSectionRules) {
         if (!self.identities.count) {
