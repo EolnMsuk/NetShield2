@@ -134,10 +134,7 @@
 }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     if (section == NSDashboardSectionGlobalRules) {
-        return @"Overrides app rules and the iOS system traffic allowance. Matching order: "
-               @"exact IP, domain, remote port, then local port. Tap to edit or remove. Changes apply "
-               @"to new connections. Domain blocks also use DNS addresses for flows without a hostname; "
-               @"shared-hosting peers can be affected. DNS answers expire within five minutes.";
+        return @"Overrides app rules and the iOS system traffic allowance.";
     }
     if (section == NSDashboardSectionFirewall) {
         return @"Your rules are kept when you turn the firewall off. Ask me prompts only for apps without a "
