@@ -3,39 +3,7 @@
 #import "../Shared/NSPermissionQueue.h"
 #import "NSPermissionNotifications.h"
 #import "../Shared/NSDestination.h"
-#include <arpa/inet.h>
-
-static NSDictionary *NSDestinationForFlow(NEFilterFlow *flow) {
-    NSString *domain = NSCleanDestinationHost(flow.URL.host);
-    NSString *address = @"";
-    if ([flow isKindOfClass:NEFilterSocketFlow.class]) {
-        NEFilterSocketFlow *socket = (NEFilterSocketFlow *)flow;
-        NSString *hostname = NSCleanDestinationHost(socket.remoteHostname);
-        if (hostname.length) {
-            domain = hostname;
-        }
-        if ([socket.remoteEndpoint isKindOfClass:NWHostEndpoint.class]) {
-            NSString *host = NSCleanDestinationHost(((NWHostEndpoint *)socket.remoteEndpoint).hostname);
-            struct in6_addr bytes;
-            if (inet_pton(AF_INET, host.UTF8String, &bytes) == 1 ||
-                inet_pton(AF_INET6, host.UTF8String, &bytes) == 1) {
-                address = host;
-            } else if (!domain.length) {
-                domain = host;
-            }
-        }
-    }
-    // URL hosts can themselves be literal IP addresses.
-    struct in6_addr bytes;
-    if (inet_pton(AF_INET, domain.UTF8String, &bytes) == 1 ||
-        inet_pton(AF_INET6, domain.UTF8String, &bytes) == 1) {
-        if (!address.length) {
-            address = domain;
-        }
-        domain = @"";
-    }
-    return @{@"domain" : domain, @"address" : address};
-}
+#import "../Shared/NSFlowDestination.h"
 
 @interface NSFilterControlProvider : NEFilterControlProvider
 @property(nonatomic, strong) dispatch_source_t timer;
@@ -219,7 +187,7 @@ static NSDictionary *NSDestinationForFlow(NEFilterFlow *flow) {
             completionHandler([NEFilterControlVerdict dropVerdictWithUpdateRules:NO]);
             return;
         }
-        if (![policy requiresPermissionForIdentity:identity]) {
+        if (![policy requiresPermissionForIdentity:identity destination:NSDestinationForFlow(flow)]) {
             completionHandler([NEFilterControlVerdict updateRules]);
             return;
         }

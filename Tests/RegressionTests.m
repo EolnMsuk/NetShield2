@@ -1,6 +1,7 @@
 #import <Foundation/Foundation.h>
 #import "../Shared/NSStore.h"
 #import "../Shared/NSActivity.h"
+#import "../Shared/NSGlobalRule.h"
 #import "../App/NSFilterRemoval.h"
 #import "../Shared/NSDestination.h"
 #import "../Shared/NSPermissionQueue.h"
@@ -322,13 +323,158 @@ static void TestActivityGrouping(void) {
                                       @"outbound", @"allow", 6, 1, 1)];
     [separate addObject:ActivityEvent(@"app", @{@"domain" : @"example.com", @"address" : @"192.0.2.2"},
                                       @"outbound", @"allow", 7, 1, 1)];
-    CHECK(NSGroupedActivity(separate).count == 6);
+    CHECK(NSGroupedActivity(separate).count == 5);
+    NSDictionary *merged = NSGroupedActivity(separate)[1];
+    CHECK([merged[@"connections"] integerValue] == 3);
+    CHECK([merged[@"destination"][@"domain"] isEqual:@"different.com"]);
+    CHECK([merged[@"bytesIn"] integerValue] == 41);
+    CHECK([merged[@"bytesOut"] integerValue] == 61);
     [separate addObject:ActivityEvent(@"app", peer, @"outbound", @"permission-block", 8, 0, 0)];
     groups = NSGroupedActivity(separate);
-    CHECK(groups.count == 6 && [groups[0][@"connections"] integerValue] == 2);
+    CHECK(groups.count == 5 && [groups[0][@"connections"] integerValue] == 2);
     CHECK([groups[0][@"action"] isEqual:@"block"]);
     CHECK([NSGroupedActivity(@[ ActivityEvent(@"", @{}, @"unknown", @"other", 0, 0, 0) ])[0][@"action"]
         isEqual:@"other"]);
+}
+static void TestGlobalRules(void) {
+    CHECK([NSGlobalHostKey(@" Example.COM. ") isEqual:@"domain:example.com"]);
+    CHECK([NSGlobalHostKey(@"[2001:0db8::1]") isEqual:@"ip:2001:db8::1"]);
+    CHECK([NSGlobalHostKey(@"192.0.2.1") isEqual:@"ip:192.0.2.1"]);
+    for (NSString *bad in @[
+             @"", @"https://example.com", @"example.com/path", @"*.example.com", @"bad..com", @"999.0.0.1",
+             @"-bad.com", @"example.com:443"
+         ]) {
+        CHECK(!NSGlobalHostKey(bad));
+    }
+    CHECK([NSGlobalPortKey(@"00443") isEqual:@"port:443"]);
+    for (NSString *bad in @[ @"", @"0", @"65536", @"-1", @"1.5", @"443junk" ]) {
+        CHECK(!NSGlobalPortKey(bad));
+    }
+    CHECK(NSValidDestination(@{@"port" : @65535}));
+    for (id bad in @[ @0, @65536, @1.5, @YES, @"443" ]) {
+        CHECK(!NSValidDestination(@{@"port" : bad}));
+    }
+    NSMutableDictionary *document = [[NSPolicy defaultDocument] mutableCopy];
+    [document removeObjectForKey:@"globalRules"];
+    CHECK([NSPolicy policyWithDocument:document error:NULL] != nil);
+    NSDictionary *peer = @{@"address" : @"192.0.2.1", @"domain" : @"Example.COM.", @"port" : @443};
+    for (NSString *key in @[ @"ip:192.0.2.1", @"domain:example.com", @"port:443" ]) {
+        for (NSString *action in @[ @"allow", @"block-inbound", @"block-outbound", @"block" ]) {
+            document[@"globalRules"] = @{key : action};
+            document[@"rules"] = @{@"app" : [action isEqual:@"allow"] ? @"block" : @"allow"};
+            NSPolicy *policy = [NSPolicy policyWithDocument:document error:NULL];
+            CHECK(policy != nil);
+            for (NSString *identity in @[ @"app", @"new.app", @"" ]) {
+                CHECK(![policy requiresPermissionForIdentity:identity destination:peer]);
+                for (NSNumber *direction in
+                     @[ @(NSFlowDirectionInbound), @(NSFlowDirectionOutbound), @(NSFlowDirectionUnknown) ]) {
+                    BOOL expected = [action isEqual:@"allow"] ||
+                                    ([action isEqual:@"block-inbound"] &&
+                                     direction.integerValue == NSFlowDirectionOutbound) ||
+                                    ([action isEqual:@"block-outbound"] &&
+                                     direction.integerValue == NSFlowDirectionInbound);
+                    CHECK([policy allowsIdentity:identity
+                                       direction:direction.integerValue
+                                     destination:peer] == expected);
+                }
+            }
+            CHECK([policy allowsIdentity:@"com.apple.test"
+                               direction:NSFlowDirectionOutbound
+                             destination:peer]);
+            CHECK([policy requiresPermissionForIdentity:@"new.app" destination:@{}]);
+        }
+    }
+    document[@"globalRules"] =
+        @{@"ip:192.0.2.1" : @"allow", @"domain:example.com" : @"block", @"port:443" : @"allow"};
+    NSPolicy *policy = [NSPolicy policyWithDocument:document error:NULL];
+    CHECK([policy allowsIdentity:@"app" direction:NSFlowDirectionOutbound destination:peer]);
+    CHECK(![policy allowsIdentity:@"app"
+                        direction:NSFlowDirectionOutbound
+                      destination:@{
+                          @"domain" : @"example.com",
+                          @"port" : @443
+                      }]);
+    CHECK([policy allowsIdentity:@"app" direction:NSFlowDirectionOutbound destination:@{@"port" : @443}]);
+    CHECK([policy requiresPermissionForIdentity:@"new.app" destination:@{@"domain" : @"sub.example.com"}]);
+    document[@"allowAppleSystemProcesses"] = @NO;
+    document[@"globalRules"] = @{@"port:443" : @"block"};
+    policy = [NSPolicy policyWithDocument:document error:NULL];
+    CHECK(![policy allowsIdentity:@"com.apple.test" direction:NSFlowDirectionOutbound destination:peer]);
+    document[@"globalRules"] = @{@"ip:2001:db8::1" : @"allow"};
+    policy = [NSPolicy policyWithDocument:document error:NULL];
+    CHECK([policy allowsIdentity:@"new.app"
+                       direction:NSFlowDirectionOutbound
+                     destination:@{@"address" : @"2001:0DB8:0:0:0:0:0:1"}]);
+    for (id bad in @[
+             @[], @{@"port:0" : @"allow"}, @{@"port:65536" : @"block"}, @{@"domain:Example.com" : @"allow"},
+             @{@"domain:example.com" : @"ask"},
+             @{@"domain:example.com" : @1}
+         ]) {
+        document[@"globalRules"] = bad;
+        CHECK([NSPolicy policyWithDocument:document error:NULL] == nil);
+    }
+    // Each waiting flow keeps its own peer; resolving one must not decide another.
+    NSPermissionQueue *queue = [NSPermissionQueue new];
+    __block NSUInteger allowed = 0, blocked = 0, other = 0;
+    [queue enqueueIdentity:@"new.app"
+                 direction:NSFlowDirectionOutbound
+               destination:peer
+                       now:0
+                      date:NSDate.date
+                completion:^(BOOL allow) {
+                    if (allow) {
+                        allowed++;
+                    } else {
+                        blocked++;
+                    }
+                }];
+    [queue enqueueIdentity:@"new.app"
+                 direction:NSFlowDirectionInbound
+               destination:peer
+                       now:0
+                      date:NSDate.date
+                completion:^(BOOL allow) {
+                    if (allow) {
+                        allowed++;
+                    } else {
+                        blocked++;
+                    }
+                }];
+    [queue enqueueIdentity:@"new.app"
+        direction:NSFlowDirectionOutbound
+        destination:@{
+            @"port" : @80
+        }
+        now:0
+        date:NSDate.date
+        completion:^(BOOL allow) {
+            other++;
+            CHECK(!allow);
+        }];
+    document[@"globalRules"] = @{@"port:443" : @"block-inbound"};
+    policy = [NSPolicy policyWithDocument:document error:NULL];
+    [queue resolveWithPolicy:policy now:1];
+    CHECK(allowed == 1 && blocked == 1 && other == 0 && queue.waitingCount == 1);
+    [queue resolveWithPolicy:policy now:2];
+    CHECK(allowed == 1 && blocked == 1 && other == 0);
+    document[@"rules"] = @{@"new.app" : @"block"};
+    [queue resolveWithPolicy:[NSPolicy policyWithDocument:document error:NULL] now:3];
+    CHECK(other == 1 && queue.requests.count == 0);
+    // Persistence, cache invalidation, and both reset modes include global rules.
+    for (NSNumber *preserve in @[ @YES, @NO ]) {
+        CHECK(NSWriteDocument([NSPolicy defaultDocument], NSPolicyFile, NULL));
+        NSPolicy *before = NSReadPolicy(NULL);
+        CHECK(NSUpdatePolicy(
+            ^BOOL(NSMutableDictionary *current, NSError **error) {
+                current[@"globalRules"] = @{@"port:443" : @"block"};
+                return YES;
+            },
+            NULL));
+        CHECK(NSReadPolicy(NULL) != before);
+        CHECK(![NSReadPolicy(NULL) allowsIdentity:@"app" direction:NSFlowDirectionOutbound destination:peer]);
+        CHECK(NSResetSharedStateWithOptions(NO, preserve.boolValue, NULL));
+        CHECK([NSReadPolicy(NULL).document[@"globalRules"] count] == 0);
+    }
 }
 static void TestDirectionalPermissionAnswers(void) {
     for (NSString *rule in @[ @"block-inbound", @"block-outbound" ]) {
@@ -651,6 +797,7 @@ int main(void) {
         TestQueueLimitsAndCancellation();
         TestLargePolicyCache();
         TestActivityGrouping();
+        TestGlobalRules();
         TestDirectionalPermissionAnswers();
         TestAnswersAndReset();
         TestSocketSettingsAndDestinations();

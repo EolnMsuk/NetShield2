@@ -1,5 +1,6 @@
 #import "NSDashboard+Internal.h"
 #include <float.h>
+#import "../Shared/NSGlobalRule.h"
 
 @implementation NSDashboard
 - (void)presentViewController:(UIViewController *)viewControllerToPresent
@@ -102,6 +103,8 @@
         }
     }
     self.identities = [[identities allObjects] sortedArrayUsingSelector:@selector(compare:)];
+    self.globalRuleKeys =
+        [[self.policy.document[@"globalRules"] allKeys] sortedArrayUsingSelector:@selector(compare:)];
     NSSet *tokens = [NSSet setWithArray:[self.monitor[@"requests"] valueForKey:@"token"] ?: @[]];
     [self.deferredRequests intersectSet:tokens];
     [self refreshTableKeepingPosition];
@@ -146,8 +149,7 @@
         return;
     }
     NSString *title = identity;
-    NSString *explanation = @"Choose a rule for new connections. Incoming/outgoing describes who starts the "
-                            @"connection, not downloads or reply traffic.";
+    NSString *explanation = @"Choose a rule for new connections.";
     NSArray *actions = @[ @"allow", @"block-inbound", @"block-outbound", @"block", @"use-default" ];
     if ([key isEqual:@"default"]) {
         title = @"Default Rule";
@@ -183,6 +185,104 @@
                                                     }];
                                                 }]];
     }
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+- (NSString *)globalRuleTitle:(NSString *)key {
+    NSRange colon = [key rangeOfString:@":"];
+    NSString *kind = [key hasPrefix:@"port:"] ? @"Remote port" : [key hasPrefix:@"ip:"] ? @"IP" : @"Domain";
+    return [NSString stringWithFormat:@"%@: %@", kind, [key substringFromIndex:colon.location + 1]];
+}
+- (void)chooseGlobalRule:(NSString *)key {
+    if (!self.policy) {
+        return;
+    }
+    UIAlertController *alert = [UIAlertController
+        alertControllerWithTitle:[self globalRuleTitle:key]
+                         message:
+                             @"Applies across all processes. The iOS system traffic allowance takes priority."
+                  preferredStyle:UIAlertControllerStyleAlert];
+    NSMutableArray *actions = [@[ @"allow", @"block-inbound", @"block-outbound", @"block" ] mutableCopy];
+    if (self.policy.document[@"globalRules"][key]) {
+        [actions addObject:@"remove"];
+    }
+    for (NSString *action in actions) {
+        [alert addAction:[UIAlertAction
+                             actionWithTitle:[action isEqual:@"remove"] ? @"Remove Rule"
+                                                                        : [self ruleTitle:action]
+                                       style:[action isEqual:@"remove"] ? UIAlertActionStyleDestructive
+                                                                        : [self ruleActionStyle:action]
+                                     handler:^(UIAlertAction *selected) {
+                                         [self updatePolicy:^BOOL(NSMutableDictionary *document,
+                                                                  NSError **error) {
+                                             NSMutableDictionary *rules =
+                                                 [document[@"globalRules"] mutableCopy]
+                                                     ?: [NSMutableDictionary new];
+                                             if ([action isEqual:@"remove"]) {
+                                                 [rules removeObjectForKey:key];
+                                             } else {
+                                                 rules[key] = action;
+                                             }
+                                             document[@"globalRules"] = rules;
+                                             return YES;
+                                         }];
+                                     }]];
+    }
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+- (void)addGlobalRuleByPort:(BOOL)port {
+    if (!self.policy) {
+        return;
+    }
+    UIAlertController *alert = [UIAlertController
+        alertControllerWithTitle:port ? @"Add a rule by port number" : @"Add a rule by IP / Domain"
+                         message:port ? @"Enter a remote port from 1 to 65535. Applies across all processes."
+                                      : @"Enter an exact IPv4/IPv6 address or domain (without a URL or "
+                                        @"path). Applies across all processes."
+                  preferredStyle:UIAlertControllerStyleAlert];
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
+        field.placeholder = port ? @"Remote port number" : @"IP or domain";
+        field.keyboardType = port ? UIKeyboardTypeNumberPad : UIKeyboardTypeASCIICapable;
+        field.autocapitalizationType = UITextAutocapitalizationTypeNone;
+        field.autocorrectionType = UITextAutocorrectionTypeNo;
+    }];
+    [alert
+        addAction:
+            [UIAlertAction
+                actionWithTitle:@"Choose Rule"
+                          style:UIAlertActionStyleDefault
+                        handler:^(UIAlertAction *action) {
+                            NSString *value = alert.textFields.firstObject.text;
+                            NSString *key = port ? NSGlobalPortKey(value) : NSGlobalHostKey(value);
+                            dispatch_async(dispatch_get_main_queue(), ^{
+                                if (key) {
+                                    [self chooseGlobalRule:key];
+                                } else {
+                                    UIAlertController *invalid = [UIAlertController
+                                        alertControllerWithTitle:port ? @"Invalid port number"
+                                                                      : @"Invalid IP or domain"
+                                                         message:
+                                                             port ? @"Enter a whole number from 1 to 65535."
+                                                                  : @"Enter an IPv4/IPv6 address or an exact "
+                                                                    @"domain, such as example.com."
+                                                  preferredStyle:UIAlertControllerStyleAlert];
+                                    [invalid
+                                        addAction:[UIAlertAction
+                                                      actionWithTitle:@"Try Again"
+                                                                style:UIAlertActionStyleDefault
+                                                              handler:^(UIAlertAction *selected) {
+                                                                  dispatch_async(dispatch_get_main_queue(), ^{
+                                                                      [self addGlobalRuleByPort:port];
+                                                                  });
+                                                              }]];
+                                    [invalid addAction:[UIAlertAction actionWithTitle:@"Cancel"
+                                                                                style:UIAlertActionStyleCancel
+                                                                              handler:nil]];
+                                    [self presentViewController:invalid animated:YES completion:nil];
+                                }
+                            });
+                        }]];
     [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];
 }

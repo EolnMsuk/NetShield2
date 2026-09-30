@@ -1,5 +1,6 @@
 #import <NetworkExtension/NetworkExtension.h>
 #import "../Shared/NSStore.h"
+#import "../Shared/NSFlowDestination.h"
 
 @interface NSFilterDataProvider : NEFilterDataProvider
 @end
@@ -12,7 +13,8 @@
 }
 - (NEFilterNewFlowVerdict *)handleNewFlow:(NEFilterFlow *)flow {
     NSPolicy *policy = NSReadPolicy(NULL);
-    if ([policy requiresPermissionForIdentity:flow.sourceAppIdentifier]) {
+    NSDictionary *destination = NSDestinationForFlow(flow);
+    if ([policy requiresPermissionForIdentity:flow.sourceAppIdentifier destination:destination]) {
         return [NEFilterNewFlowVerdict needRulesVerdict];
     }
     NSFlowDirection direction = NSFlowDirectionUnknown;
@@ -22,7 +24,9 @@
     if (flow.direction == NETrafficDirectionOutbound) {
         direction = NSFlowDirectionOutbound;
     }
-    BOOL allow = policy && [policy allowsIdentity:flow.sourceAppIdentifier direction:direction];
+    BOOL allow = policy && [policy allowsIdentity:flow.sourceAppIdentifier
+                                        direction:direction
+                                      destination:destination];
     NEFilterNewFlowVerdict *verdict =
         allow ? [NEFilterNewFlowVerdict allowVerdict] : [NEFilterNewFlowVerdict dropVerdict];
     verdict.shouldReport = YES;

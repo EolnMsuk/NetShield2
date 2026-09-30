@@ -3,6 +3,7 @@
 
 @interface NSPermissionWaiter : NSObject
 @property(nonatomic) NSFlowDirection direction;
+@property(nonatomic, copy) NSDictionary *destination;
 @property(nonatomic, copy) void (^completion)(BOOL);
 @end
 @implementation NSPermissionWaiter
@@ -140,6 +141,7 @@
     }
     NSPermissionWaiter *waiter = [NSPermissionWaiter new];
     waiter.direction = direction;
+    waiter.destination = [destination copy];
     waiter.completion = completion;
     [entry.waiters addObject:waiter];
     return created ? entry.document : nil;
@@ -148,17 +150,24 @@
     [self expireAtTime:now];
     NSMutableArray<void (^)(void)> *callbacks = [NSMutableArray new];
     for (NSPermissionEntry *entry in [self.active copy]) {
-        if (policy && [policy requiresPermissionForIdentity:entry.identity]) {
-            continue;
-        }
-        [self.active removeObject:entry];
-        for (NSPermissionWaiter *waiter in entry.waiters) {
-            BOOL allow = policy && [policy allowsIdentity:entry.identity direction:waiter.direction];
+        for (NSPermissionWaiter *waiter in [entry.waiters copy]) {
+            if (policy && [policy requiresPermissionForIdentity:entry.identity
+                                                    destination:waiter.destination]) {
+                continue;
+            }
+            [entry.waiters removeObject:waiter];
+            BOOL allow = policy && [policy allowsIdentity:entry.identity
+                                                direction:waiter.direction
+                                              destination:waiter.destination];
             [callbacks addObject:[^{
                            waiter.completion(allow);
                        } copy]];
         }
-        [entry.waiters removeAllObjects];
+        if (!entry.waiters.count) {
+            [self.active removeObject:entry];
+        } else {
+            entry.destination = entry.waiters.firstObject.destination;
+        }
     }
     for (NSPermissionEntry *entry in [self.history copy]) {
         if (!policy || ![policy requiresPermissionForIdentity:entry.identity]) {

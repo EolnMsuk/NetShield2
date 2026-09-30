@@ -1,10 +1,20 @@
 #import <Foundation/Foundation.h>
+#import <CoreFoundation/CoreFoundation.h>
 
 static inline BOOL NSValidDestination(id value) {
-    if (![value isKindOfClass:NSDictionary.class] || [value count] > 2) {
+    if (![value isKindOfClass:NSDictionary.class] || [value count] > 3) {
         return NO;
     }
     for (id key in value) {
+        if ([key isEqual:@"port"]) {
+            id port = value[key];
+            if (![port isKindOfClass:NSNumber.class] ||
+                CFGetTypeID((__bridge CFTypeRef)port) == CFBooleanGetTypeID() || [port integerValue] < 1 ||
+                [port integerValue] > 65535 || ![port isEqual:@([port integerValue])]) {
+                return NO;
+            }
+            continue;
+        }
         if (![@[ @"domain", @"address" ] containsObject:key] || ![value[key] isKindOfClass:NSString.class] ||
             [value[key] length] > 253) {
             return NO;

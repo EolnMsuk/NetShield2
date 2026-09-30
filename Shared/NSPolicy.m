@@ -1,6 +1,7 @@
 #import "NSPolicy.h"
 #import "NSConstants.h"
 #import "NSDestination.h"
+#import "NSGlobalRule.h"
 #import <CoreFoundation/CoreFoundation.h>
 
 @implementation NSPolicy
@@ -11,6 +12,7 @@
         @"default" : @"ask",
         @"unattributed" : @"allow",
         @"rules" : @{},
+        @"globalRules" : @{},
         @"allowAppleSystemProcesses" : @YES,
         @"filterSockets" : @YES
     };
@@ -45,6 +47,19 @@
                 ![actions containsObject:value]) {
                 valid = NO;
                 break;
+            }
+        }
+    }
+    id globalRules = d[@"globalRules"];
+    if (valid && globalRules) {
+        valid = [globalRules isKindOfClass:NSDictionary.class] && [globalRules count] <= NSMaximumRules;
+        if (valid) {
+            for (id key in globalRules) {
+                if (!NSValidGlobalRuleKey(key) || ![globalRules[key] isKindOfClass:NSString.class] ||
+                    ![actions containsObject:globalRules[key]]) {
+                    valid = NO;
+                    break;
+                }
             }
         }
     }
@@ -100,16 +115,38 @@
            ([identity hasPrefix:@"com.apple."] || [identity hasPrefix:@".com.apple."] ||
             [identity hasPrefix:@"Apple.com.apple."]);
 }
+- (NSString *)globalActionForDestination:(NSDictionary *)destination {
+    // Exact IP takes precedence over domain, then remote port.
+    for (NSString *key in @[
+             NSGlobalHostKey(destination[@"address"]) ?: @"", NSGlobalHostKey(destination[@"domain"]) ?: @"",
+             NSGlobalPortKey([destination[@"port"] stringValue]) ?: @""
+         ]) {
+        NSString *action = self.document[@"globalRules"][key];
+        if (action) {
+            return action;
+        }
+    }
+    return nil;
+}
+- (BOOL)requiresPermissionForIdentity:(NSString *)identity destination:(NSDictionary *)destination {
+    return ![self globalActionForDestination:destination] && [self requiresPermissionForIdentity:identity];
+}
 - (BOOL)requiresPermissionForIdentity:(NSString *)identity {
     return ![self automaticallyAllowsIdentity:identity] && identity.length > 0 &&
            !self.document[@"rules"][identity] && [self.document[@"default"] isEqual:@"ask"];
 }
 - (BOOL)allowsIdentity:(NSString *)identity direction:(NSFlowDirection)direction {
+    return [self allowsIdentity:identity direction:direction destination:@{}];
+}
+- (BOOL)allowsIdentity:(NSString *)identity
+             direction:(NSFlowDirection)direction
+           destination:(NSDictionary *)destination {
     if ([self automaticallyAllowsIdentity:identity]) {
         return YES;
     }
     NSString *action = identity.length ? (self.document[@"rules"][identity] ?: self.document[@"default"])
                                        : self.document[@"unattributed"];
+    action = [self globalActionForDestination:destination] ?: action;
     if ([action isEqual:@"allow"]) {
         return YES;
     }

@@ -78,8 +78,7 @@
     [self.deferredRequests addObject:request[@"token"]];
     NSString *message =
         [NSString stringWithFormat:
-                      @"%@\nFirst requested peer: %@\nCountry: unavailable\n\nSave a rule for this app's "
-                      @"incoming and outgoing connections. Unanswered "
+                      @"%@\nFirst requested peer: %@\nCountry: unavailable\n\nUnanswered "
                       @"connections are blocked after 30 seconds; retry the app if it has already timed out.",
                       request[@"identity"], NSDestinationSummary(request[@"destination"])];
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Allow network access?"

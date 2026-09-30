@@ -3,6 +3,9 @@
 
 @implementation NSDashboard (Table)
 - (id)rowKey:(NSIndexPath *)path {
+    if (path.section == NSDashboardSectionGlobalRules && self.globalRuleKeys.count) {
+        return self.globalRuleKeys[path.row];
+    }
     if (path.section == NSDashboardSectionRequests && [self.monitor[@"requests"] count]) {
         return self.monitor[@"requests"][path.row][@"token"];
     }
@@ -111,8 +114,11 @@
     if (section == NSDashboardSectionNotifications) {
         return 2;
     }
+    if (section == NSDashboardSectionGlobalRules) {
+        return MAX((NSUInteger)1, self.globalRuleKeys.count);
+    }
     if (section == NSDashboardSectionAdvanced) {
-        return 3;
+        return 5;
     }
     if (section == NSDashboardSectionSupport) {
         return 2;
@@ -122,10 +128,15 @@
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
     return @[
         @"Firewall", @"Waiting for your decision", @"Notifications", @"Advanced Settings", @"Support",
-        @"App rules", @"Recent activity"
+        @"App rules", @"Global rules", @"Recent activity"
     ][section];
 }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
+    if (section == NSDashboardSectionGlobalRules) {
+        return @"Applies across all processes, ahead of app rules. The iOS system traffic allowance comes "
+               @"first; otherwise exact IP, domain, then remote port. Tap to edit or remove. Changes apply "
+               @"to new connections.";
+    }
     if (section == NSDashboardSectionFirewall) {
         return @"Your rules are kept when you turn the firewall off. Ask me prompts only for apps without a "
                @"saved rule.";
@@ -148,7 +159,7 @@
                @"Disturb > Apps.";
     }
     if (section == NSDashboardSectionActivity) {
-        return @"Up to 300 recorded events grouped by process, IP/domain, direction and outcome, newest "
+        return @"Up to 300 recorded events grouped by process, IP, direction and outcome, newest "
                @"first. "
                @"Counts and totals cover retained events. Data totals arrive when a connection closes; "
                @"permission decisions show no data totals. Tap a process to change its rule.";
@@ -156,7 +167,7 @@
     if (section == NSDashboardSectionSupport) {
         return @"Developed by EolnMsuk.";
     }
-    return @"NetShield2 2.1.3 / iOS 15-18 rootless. Filters connections provided by iOS; system-exempt "
+    return @"NetShield2 2.2.0 / iOS 15-18 rootless. Filters connections provided by iOS; system-exempt "
            @"traffic is not guaranteed covered.";
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)path {
@@ -290,6 +301,15 @@
                 stringByAppendingFormat:@"\nFirst requested peer: %@",
                                         NSDestinationSummary(request[@"destination"])];
         }
+    } else if (path.section == NSDashboardSectionGlobalRules) {
+        if (!self.globalRuleKeys.count) {
+            cell.textLabel.text = @"No global rules";
+            cell.accessoryType = UITableViewCellAccessoryNone;
+        } else {
+            NSString *key = self.globalRuleKeys[path.row];
+            cell.textLabel.text = [self globalRuleTitle:key];
+            cell.detailTextLabel.text = [self ruleTitle:self.policy.document[@"globalRules"][key]];
+        }
     } else if (path.section == NSDashboardSectionRules) {
         if (!self.identities.count) {
             cell.textLabel.text = @"Apps appear here when they connect";
@@ -364,13 +384,16 @@
             path.row == 0 ? @"Source code, releases and issues" : @"Choose Venmo or Bitcoin";
         cell.textLabel.textColor = UIColor.systemBlueColor;
     } else {
-        cell.textLabel.text =
-            @[ @"Add a rule by app identity", @"Reset Rules & History", @"Reset ALL Settings" ][path.row];
+        cell.textLabel.text = @[
+            @"Add a rule by app identity", @"Add a rule by IP / Domain", @"Add a rule by port number",
+            @"Reset Rules & History", @"Reset ALL Settings"
+        ][path.row];
         cell.detailTextLabel.text = @[
-            @"For an exact identity supplied by iOS", @"Reset rules and history only",
+            @"For an exact identity supplied by iOS", @"For an IP or domain across all processes",
+            @"For a remote port across all processes", @"Reset rules and history only",
             @"Removes all rules, permissions and filters. Runs automatically during uninstall."
         ][path.row];
-        if (path.row > 0) {
+        if (path.row > 2) {
             cell.textLabel.textColor = UIColor.systemRedColor;
         }
     }
@@ -391,6 +414,8 @@
         [self chooseActionForIdentity:nil defaultKey:@"default"];
     } else if (path.section == NSDashboardSectionRequests && [self.monitor[@"requests"] count]) {
         [self presentRequest:self.monitor[@"requests"][path.row]];
+    } else if (path.section == NSDashboardSectionGlobalRules && self.globalRuleKeys.count) {
+        [self chooseGlobalRule:self.globalRuleKeys[path.row]];
     } else if (path.section == NSDashboardSectionRules && self.identities.count) {
         [self chooseActionForIdentity:self.identities[path.row] defaultKey:nil];
     } else if (path.section == NSDashboardSectionActivity && self.activityGroups.count) {
@@ -415,11 +440,14 @@
     } else if (path.section == NSDashboardSectionAdvanced) {
         if (path.row == 0) {
             [self addIdentity];
-        } else if (path.row < 3) {
-            BOOL reset = path.row == 1;
+        } else if (path.row == 1 || path.row == 2) {
+            [self addGlobalRuleByPort:path.row == 2];
+        } else if (path.row < 5) {
+            BOOL reset = path.row == 3;
             UIAlertController *alert = [UIAlertController
                 alertControllerWithTitle:reset ? @"Reset Rules & History?" : @"Reset ALL Settings?"
-                                 message:reset ? @"Deletes app rules, pending requests and history only. "
+                                 message:reset ? @"Deletes app and global rules, pending requests and "
+                                                 @"history only. "
                                                  @"Keeps your settings and restores the firewall's previous "
                                                  @"on/off state after stopping it to reset."
                                                : @"Removes all NetShield2 rules, permissions and history, "
