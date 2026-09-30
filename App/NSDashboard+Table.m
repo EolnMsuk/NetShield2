@@ -133,8 +133,8 @@
 }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     if (section == NSDashboardSectionGlobalRules) {
-        return @"Applies across all processes, ahead of app rules. The iOS system traffic allowance comes "
-               @"first; otherwise exact IP, domain, then remote port. Tap to edit or remove. Changes apply "
+        return @"Overrides app rules and the iOS system traffic allowance. Matching order: "
+               @"exact IP, domain, then remote port. Tap to edit or remove. Changes apply "
                @"to new connections.";
     }
     if (section == NSDashboardSectionFirewall) {
@@ -167,7 +167,7 @@
     if (section == NSDashboardSectionSupport) {
         return @"Developed by EolnMsuk.";
     }
-    return @"NetShield2 2.2.1 / iOS 15-18 rootless. Filters connections provided by iOS; system-exempt "
+    return @"NetShield2 2.2.2 / iOS 15-18 rootless. Filters connections provided by iOS; system-exempt "
            @"traffic is not guaranteed covered.";
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)path {
@@ -253,7 +253,7 @@
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
     } else if (path.section == NSDashboardSectionFirewall && path.row == 2) {
         cell.textLabel.text = @"Allow all iOS system traffic";
-        cell.detailTextLabel.text = @"Allow identities starting with com.apple";
+        cell.detailTextLabel.text = @"Allow Apple identities unless a global rule matches";
         UISwitch *toggle = [UISwitch new];
         if ([self.policy.document[@"allowAppleSystemProcesses"] boolValue]) {
             [toggle setOn:YES animated:NO];
@@ -337,8 +337,9 @@
             cell.textLabel.text = identity;
             cell.detailTextLabel.text =
                 [self.policy automaticallyAllowsIdentity:identity]
-                    ? [NSString stringWithFormat:@"Allowed by iOS system processes setting. Saved rule: %@",
-                                                 [self ruleTitle:self.policy.document[@"rules"][identity]]]
+                    ? [NSString stringWithFormat:
+                                    @"Allowed by iOS setting unless a global rule matches. Saved rule: %@",
+                                    [self ruleTitle:self.policy.document[@"rules"][identity]]]
                     : [self ruleTitle:self.policy.document[@"rules"][identity]];
             NSDictionary *destination = self.policy.document[@"ruleDestinations"][identity];
             if (destination) {

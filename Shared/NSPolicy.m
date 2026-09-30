@@ -63,6 +63,25 @@
             }
         }
     }
+    id addresses = d[@"globalDomainAddresses"];
+    if (valid && addresses) {
+        valid = [addresses isKindOfClass:NSDictionary.class] && [addresses count] <= NSMaximumRules;
+        if (valid) {
+            for (id key in addresses) {
+                if (!NSValidGlobalRuleKey(key) || ![key hasPrefix:@"domain:"] ||
+                    ![addresses[key] isKindOfClass:NSArray.class] || [addresses[key] count] > 128) {
+                    valid = NO;
+                    break;
+                }
+                for (id address in addresses[key]) {
+                    if (!NSValidGlobalRuleKey(address) || ![address hasPrefix:@"ip:"]) {
+                        valid = NO;
+                        break;
+                    }
+                }
+            }
+        }
+    }
     id destinations = d[@"ruleDestinations"];
     if (valid && destinations) {
         valid = [destinations isKindOfClass:NSDictionary.class] && [destinations count] <= NSMaximumRules;
@@ -116,17 +135,36 @@
             [identity hasPrefix:@"Apple.com.apple."]);
 }
 - (NSString *)globalActionForDestination:(NSDictionary *)destination {
-    // Exact IP takes precedence over domain, then remote port.
-    for (NSString *key in @[
-             NSGlobalHostKey(destination[@"address"]) ?: @"", NSGlobalHostKey(destination[@"domain"]) ?: @"",
-             NSGlobalPortKey([destination[@"port"] stringValue]) ?: @""
-         ]) {
-        NSString *action = self.document[@"globalRules"][key];
+    NSDictionary *rules = self.document[@"globalRules"];
+    NSString *addressKey = NSGlobalHostKey(destination[@"address"]);
+    NSString *action = addressKey ? rules[addressKey] : nil;
+    if (action) {
+        return action;
+    }
+    NSString *domainKey = NSGlobalHostKey(destination[@"domain"]);
+    for (NSString *host in NSGlobalDomainAliases(domainKey)) {
+        action = rules[[@"domain:" stringByAppendingString:host]];
         if (action) {
             return action;
         }
     }
-    return nil;
+    // Only blocks use DNS address fallback: a shared hosting IP must never grant access.
+    // Combine directional blocks deterministically when several domains share an IP.
+    BOOL inbound = NO, outbound = NO;
+    for (NSString *key in self.document[@"globalDomainAddresses"]) {
+        if ([domainKey hasPrefix:@"domain:"] || !addressKey ||
+            ![self.document[@"globalDomainAddresses"][key] containsObject:addressKey]) {
+            continue;
+        }
+        action = rules[key];
+        inbound |= [action isEqual:@"block"] || [action isEqual:@"block-inbound"];
+        outbound |= [action isEqual:@"block"] || [action isEqual:@"block-outbound"];
+    }
+    if (inbound || outbound) {
+        return inbound && outbound ? @"block" : inbound ? @"block-inbound" : @"block-outbound";
+    }
+    NSString *portKey = NSGlobalPortKey([destination[@"port"] stringValue]);
+    return portKey ? rules[portKey] : nil;
 }
 - (BOOL)requiresPermissionForIdentity:(NSString *)identity destination:(NSDictionary *)destination {
     return ![self globalActionForDestination:destination] && [self requiresPermissionForIdentity:identity];
@@ -141,12 +179,13 @@
 - (BOOL)allowsIdentity:(NSString *)identity
              direction:(NSFlowDirection)direction
            destination:(NSDictionary *)destination {
-    if ([self automaticallyAllowsIdentity:identity]) {
+    NSString *globalAction = [self globalActionForDestination:destination];
+    if (!globalAction && [self automaticallyAllowsIdentity:identity]) {
         return YES;
     }
     NSString *action = identity.length ? (self.document[@"rules"][identity] ?: self.document[@"default"])
                                        : self.document[@"unattributed"];
-    action = [self globalActionForDestination:destination] ?: action;
+    action = globalAction ?: action;
     if ([action isEqual:@"allow"]) {
         return YES;
     }

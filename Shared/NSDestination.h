@@ -44,5 +44,9 @@ static inline NSString *NSDestinationSummary(NSDictionary *destination) {
     if (address.length) {
         [parts addObject:[@"IP: " stringByAppendingString:address]];
     }
+    NSNumber *port = destination[@"port"];
+    if (port.integerValue >= 1 && port.integerValue <= 65535) {
+        [parts addObject:[NSString stringWithFormat:@"Remote port: %@", port]];
+    }
     return parts.count ? [parts componentsJoinedByString:@" / "] : @"Destination unavailable from iOS";
 }

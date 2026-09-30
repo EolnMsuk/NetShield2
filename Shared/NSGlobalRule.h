@@ -40,6 +40,23 @@ static inline NSString *NSGlobalHostKey(id value) {
     }
     return [@"domain:" stringByAppendingString:host];
 }
+// Input normalization is separate from validation of existing persisted keys.
+static inline NSString *NSGlobalInputHostKey(id value) {
+    NSString *key = NSGlobalHostKey(value);
+    if ([key hasPrefix:@"domain:"] && ![key hasPrefix:@"domain:www."]) {
+        return NSGlobalHostKey([@"www." stringByAppendingString:[key substringFromIndex:7]]);
+    }
+    return key;
+}
+static inline NSArray<NSString *> *NSGlobalDomainAliases(NSString *key) {
+    if (![key hasPrefix:@"domain:"]) {
+        return @[];
+    }
+    NSString *host = [key substringFromIndex:7];
+    return @[
+        host, [host hasPrefix:@"www."] ? [host substringFromIndex:4] : [@"www." stringByAppendingString:host]
+    ];
+}
 static inline NSString *NSGlobalPortKey(id value) {
     if (![value isKindOfClass:NSString.class]) {
         return nil;

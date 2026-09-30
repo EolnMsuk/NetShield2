@@ -19,7 +19,10 @@ static inline NSArray<NSDictionary *> *NSGroupedActivity(NSArray<NSDictionary *>
                                 ?: @"other";
         NSDictionary *destination = event[@"destination"];
         // Newest first: retain the latest destination/domain while aggregating by IP.
-        NSArray *key = @[ event[@"identity"], destination[@"address"] ?: @"", event[@"direction"], outcome ];
+        NSArray *key = @[
+            event[@"identity"], destination[@"address"] ?: @"", destination[@"port"] ?: @0,
+            event[@"direction"], outcome
+        ];
         NSMutableDictionary *group = groups[key];
         if (!group) {
             group = [event mutableCopy];

@@ -4,6 +4,7 @@
 #import "NSPermissionNotifications.h"
 #import "../Shared/NSDestination.h"
 #import "../Shared/NSFlowDestination.h"
+#include <netdb.h>
 
 @interface NSFilterControlProvider : NEFilterControlProvider
 @property(nonatomic, strong) dispatch_source_t timer;
@@ -16,9 +17,88 @@
 @property(nonatomic, strong) NSPermissionQueue *permissions;
 @property(nonatomic, strong) NSPermissionNotifications *notifications;
 @property(nonatomic, strong) NSStoreLock *providerLock;
+@property(nonatomic) BOOL resolvingDomains;
+@property(nonatomic, copy) NSDictionary *resolvedRules;
+@property(nonatomic, strong) NSDate *lastDomainResolution;
 @end
 
 @implementation NSFilterControlProvider
+- (void)refreshDomainAddresses:(NSPolicy *)policy {
+    NSDictionary *rules = policy.document[@"globalRules"] ?: @{};
+    if (self.resolvingDomains || ([rules isEqual:self.resolvedRules] && self.lastDomainResolution &&
+                                  -self.lastDomainResolution.timeIntervalSinceNow < 60)) {
+        return;
+    }
+    self.resolvingDomains = YES;
+    NSString *session = self.session;
+    NSArray *events = [self.events copy];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        NSMutableDictionary *resolved = [NSMutableDictionary new];
+        for (NSString *key in rules) {
+            if (![key hasPrefix:@"domain:"] || [rules[key] isEqual:@"allow"]) {
+                continue;
+            }
+            NSMutableOrderedSet *addresses = [NSMutableOrderedSet
+                orderedSetWithArray:policy.document[@"globalDomainAddresses"][key] ?: @[]];
+            NSArray *aliases = NSGlobalDomainAliases(key);
+            for (NSString *host in aliases) {
+                struct addrinfo hints = {0}, *answer = NULL;
+                hints.ai_family = AF_UNSPEC;
+                hints.ai_socktype = SOCK_STREAM;
+                if (getaddrinfo(host.UTF8String, NULL, &hints, &answer) == 0) {
+                    for (struct addrinfo *entry = answer; entry; entry = entry->ai_next) {
+                        char address[NI_MAXHOST];
+                        if (getnameinfo(entry->ai_addr, entry->ai_addrlen, address, sizeof(address), NULL, 0,
+                                        NI_NUMERICHOST) == 0) {
+                            NSString *addressKey = NSGlobalHostKey(@(address));
+                            if ([addressKey hasPrefix:@"ip:"]) {
+                                [addresses removeObject:addressKey];
+                                [addresses addObject:addressKey];
+                            }
+                        }
+                    }
+                    freeaddrinfo(answer);
+                }
+            }
+            // Retain observed peers too: DNS answers can vary between clients.
+            for (NSDictionary *event in events) {
+                NSDictionary *peer = event[@"destination"];
+                NSString *hostKey = NSGlobalHostKey(peer[@"domain"]);
+                NSString *addressKey = NSGlobalHostKey(peer[@"address"]);
+                if ([hostKey hasPrefix:@"domain:"] &&
+                    [aliases containsObject:[hostKey substringFromIndex:7]] &&
+                    [addressKey hasPrefix:@"ip:"]) {
+                    [addresses removeObject:addressKey];
+                    [addresses addObject:addressKey];
+                }
+            }
+            while (addresses.count > 128) {
+                [addresses removeObjectAtIndex:0];
+            }
+            resolved[key] = addresses.array;
+        }
+        @synchronized(self) {
+            if (self.stopped || ![self.session isEqual:session]) {
+                return;
+            }
+            self.resolvingDomains = NO;
+            self.resolvedRules = rules;
+            self.lastDomainResolution = NSDate.date;
+            NSUpdatePolicy(
+                ^BOOL(NSMutableDictionary *document, NSError **error) {
+                    // Never publish answers for a rule set that changed during DNS lookup.
+                    if (![rules isEqual:document[@"globalRules"] ?: @{}] ||
+                        [resolved isEqual:document[@"globalDomainAddresses"] ?: @{}]) {
+                        return NO;
+                    }
+                    document[@"globalDomainAddresses"] = resolved;
+                    return YES;
+                },
+                NULL);
+            [self refresh];
+        }
+    });
+}
 - (NSDictionary *)snapshotWithRunning:(BOOL)running policyError:(NSError *)error {
     return @{
         @"engine" : @(NSEngineVersion),
@@ -43,6 +123,9 @@
         }
         NSError *error = nil;
         NSPolicy *policy = NSReadPolicy(&error);
+        if (policy) {
+            [self refreshDomainAddresses:policy];
+        }
         [self.permissions resolveWithPolicy:policy now:NSProcessInfo.processInfo.systemUptime];
         NSString *retry = NSReadDocument(NSNotificationRetryFile, NULL)[@"revision"];
         if (![retry isKindOfClass:NSString.class]) {
@@ -101,6 +184,9 @@
         self.notifications = [NSPermissionNotifications new];
         self.session = NSUUID.UUID.UUIDString;
         self.refreshScheduled = NO;
+        self.resolvingDomains = NO;
+        self.resolvedRules = nil;
+        self.lastDomainResolution = nil;
         self.stopped = NO;
         if (!NSWriteDocument([self snapshotWithRunning:YES policyError:nil], NSMonitorFile, &error)) {
             self.stopped = YES;

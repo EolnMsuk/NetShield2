@@ -165,6 +165,15 @@ BOOL NSUpdatePolicy(BOOL (^mutation)(NSMutableDictionary *, NSError **), NSError
         if (destinations) {
             document[@"ruleDestinations"] = destinations;
         }
+        NSMutableDictionary *addresses = [document[@"globalDomainAddresses"] mutableCopy];
+        for (NSString *key in addresses.allKeys) {
+            if (!document[@"globalRules"][key] || [document[@"globalRules"][key] isEqual:@"allow"]) {
+                [addresses removeObjectForKey:key];
+            }
+        }
+        if (addresses) {
+            document[@"globalDomainAddresses"] = addresses;
+        }
         document[@"revision"] = NSUUID.UUID.UUIDString;
         NSPolicy *validated = [NSPolicy policyWithDocument:document error:error];
         return validated && NSWriteDocument(validated.document, NSPolicyFile, error);
@@ -210,6 +219,7 @@ BOOL NSResetSharedStateWithOptions(BOOL legacyProviderMayBeRunning, BOOL preserv
                 replacement = [current.document mutableCopy];
                 replacement[@"rules"] = @{};
                 replacement[@"globalRules"] = @{};
+                [replacement removeObjectForKey:@"globalDomainAddresses"];
                 replacement[@"allowAppleSystemProcesses"] = @YES;
                 replacement[@"filterSockets"] = @YES;
                 [replacement removeObjectForKey:@"ruleDestinations"];

@@ -333,10 +333,22 @@ static void TestActivityGrouping(void) {
     groups = NSGroupedActivity(separate);
     CHECK(groups.count == 5 && [groups[0][@"connections"] integerValue] == 2);
     CHECK([groups[0][@"action"] isEqual:@"block"]);
+    for (NSNumber *port in @[ @80, @443 ]) {
+        NSMutableDictionary *portedPeer = [peer mutableCopy];
+        portedPeer[@"port"] = port;
+        [separate addObject:ActivityEvent(@"app", portedPeer, @"outbound", @"allow", 9, 1, 1)];
+        CHECK([NSDestinationSummary(portedPeer)
+            containsString:[NSString stringWithFormat:@"Remote port: %@", port]]);
+    }
+    CHECK(NSGroupedActivity(separate).count == 7);
     CHECK([NSGroupedActivity(@[ ActivityEvent(@"", @{}, @"unknown", @"other", 0, 0, 0) ])[0][@"action"]
         isEqual:@"other"]);
 }
 static void TestGlobalRules(void) {
+    CHECK([NSGlobalInputHostKey(@" Google.COM. ") isEqual:@"domain:www.google.com"]);
+    CHECK([NSGlobalInputHostKey(@"www.google.com") isEqual:@"domain:www.google.com"]);
+    CHECK([NSGlobalInputHostKey(@"192.0.2.1") isEqual:@"ip:192.0.2.1"]);
+    CHECK([NSGlobalInputHostKey(@"[2001:db8::1]") isEqual:@"ip:2001:db8::1"]);
     CHECK([NSGlobalHostKey(@" Example.COM. ") isEqual:@"domain:example.com"]);
     CHECK([NSGlobalHostKey(@"[2001:0db8::1]") isEqual:@"ip:2001:db8::1"]);
     CHECK([NSGlobalHostKey(@"192.0.2.1") isEqual:@"ip:192.0.2.1"]);
@@ -364,7 +376,7 @@ static void TestGlobalRules(void) {
             document[@"rules"] = @{@"app" : [action isEqual:@"allow"] ? @"block" : @"allow"};
             NSPolicy *policy = [NSPolicy policyWithDocument:document error:NULL];
             CHECK(policy != nil);
-            for (NSString *identity in @[ @"app", @"new.app", @"" ]) {
+            for (NSString *identity in @[ @"app", @"new.app", @"", @"com.apple.test" ]) {
                 CHECK(![policy requiresPermissionForIdentity:identity destination:peer]);
                 for (NSNumber *direction in
                      @[ @(NSFlowDirectionInbound), @(NSFlowDirectionOutbound), @(NSFlowDirectionUnknown) ]) {
@@ -378,9 +390,6 @@ static void TestGlobalRules(void) {
                                      destination:peer] == expected);
                 }
             }
-            CHECK([policy allowsIdentity:@"com.apple.test"
-                               direction:NSFlowDirectionOutbound
-                             destination:peer]);
             CHECK([policy requiresPermissionForIdentity:@"new.app" destination:@{}]);
         }
     }
@@ -396,6 +405,61 @@ static void TestGlobalRules(void) {
                       }]);
     CHECK([policy allowsIdentity:@"app" direction:NSFlowDirectionOutbound destination:@{@"port" : @443}]);
     CHECK([policy requiresPermissionForIdentity:@"new.app" destination:@{@"domain" : @"sub.example.com"}]);
+    document[@"globalRules"] = @{@"domain:www.example.com" : @"block", @"port:443" : @"allow"};
+    document[@"globalDomainAddresses"] =
+        @{@"domain:www.example.com" : @[ @"ip:192.0.2.1", @"ip:2001:db8::1" ]};
+    policy = [NSPolicy policyWithDocument:document error:NULL];
+    for (NSString *host in @[ @"example.com", @"WWW.EXAMPLE.COM." ]) {
+        CHECK(![policy allowsIdentity:@"com.apple.test"
+                            direction:NSFlowDirectionOutbound
+                          destination:@{@"domain" : host}]);
+    }
+    for (NSString *address in @[ @"192.0.2.1", @"2001:0db8::1" ]) {
+        CHECK(![policy allowsIdentity:@"com.apple.test"
+                            direction:NSFlowDirectionOutbound
+                          destination:@{
+                              @"address" : address,
+                              @"port" : @443
+                          }]);
+    }
+    CHECK([policy allowsIdentity:@"com.apple.test"
+                       direction:NSFlowDirectionOutbound
+                     destination:@{@"domain" : @"example.com.evil.test"}]);
+    CHECK([policy allowsIdentity:@"com.apple.test"
+                       direction:NSFlowDirectionOutbound
+                     destination:@{@"domain" : @"other.test", @"address" : @"192.0.2.1"}]);
+    for (NSString *url in @[ @"https://example.com/search?q=test", @"https://www.example.com/a/b" ]) {
+        CHECK(![policy allowsIdentity:@"app"
+                            direction:NSFlowDirectionOutbound
+                          destination:@{@"domain" : [NSURL URLWithString:url].host}]);
+    }
+    for (NSString *action in @[ @"block-inbound", @"block-outbound" ]) {
+        document[@"globalRules"] = @{@"domain:www.example.com" : action};
+        policy = [NSPolicy policyWithDocument:document error:NULL];
+        CHECK([policy allowsIdentity:@"com.apple.test"
+                           direction:NSFlowDirectionInbound
+                         destination:@{@"address" : @"192.0.2.1"}] == [action isEqual:@"block-outbound"]);
+        CHECK([policy allowsIdentity:@"com.apple.test"
+                           direction:NSFlowDirectionOutbound
+                         destination:@{@"address" : @"192.0.2.1"}] == [action isEqual:@"block-inbound"]);
+    }
+    document[@"rules"] = @{@"app" : @"block"};
+    document[@"globalRules"] = @{@"domain:www.example.com" : @"allow"};
+    policy = [NSPolicy policyWithDocument:document error:NULL];
+    CHECK([policy allowsIdentity:@"app" direction:NSFlowDirectionOutbound destination:peer]);
+    CHECK(![policy allowsIdentity:@"app"
+                        direction:NSFlowDirectionOutbound
+                      destination:@{@"address" : @"192.0.2.1"}]);
+    document[@"globalRules"] = @{};
+    policy = [NSPolicy policyWithDocument:document error:NULL];
+    CHECK([policy allowsIdentity:@"com.apple.test" direction:NSFlowDirectionOutbound destination:peer]);
+    for (id invalid in
+         @[ @[],
+            @{@"domain:example.com" : @[ @"ip:bad" ]}, @{@"domain:example.com" : @"192.0.2.1"} ]) {
+        document[@"globalDomainAddresses"] = invalid;
+        CHECK(![NSPolicy policyWithDocument:document error:NULL]);
+    }
+    [document removeObjectForKey:@"globalDomainAddresses"];
     document[@"allowAppleSystemProcesses"] = @NO;
     document[@"globalRules"] = @{@"port:443" : @"block"};
     policy = [NSPolicy policyWithDocument:document error:NULL];

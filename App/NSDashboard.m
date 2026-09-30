@@ -197,11 +197,11 @@
     if (!self.policy) {
         return;
     }
-    UIAlertController *alert = [UIAlertController
-        alertControllerWithTitle:[self globalRuleTitle:key]
-                         message:
-                             @"Applies across all processes. The iOS system traffic allowance takes priority."
-                  preferredStyle:UIAlertControllerStyleAlert];
+    UIAlertController *alert =
+        [UIAlertController alertControllerWithTitle:[self globalRuleTitle:key]
+                                            message:@"Applies across all processes. Overrides app rules and "
+                                                    @"the iOS system traffic allowance."
+                                     preferredStyle:UIAlertControllerStyleAlert];
     NSMutableArray *actions = [@[ @"allow", @"block-inbound", @"block-outbound", @"block" ] mutableCopy];
     if (self.policy.document[@"globalRules"][key]) {
         [actions addObject:@"remove"];
@@ -239,7 +239,7 @@
         alertControllerWithTitle:port ? @"Add a rule by port number" : @"Add a rule by IP / Domain"
                          message:port ? @"Enter a remote port from 1 to 65535. Applies across all processes."
                                       : @"Enter an exact IPv4/IPv6 address or domain (without a URL or "
-                                        @"path). Applies across all processes."
+                                        @"path). Domains get a www. prefix and match both bare and www names."
                   preferredStyle:UIAlertControllerStyleAlert];
     [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
         field.placeholder = port ? @"Remote port number" : @"IP or domain";
@@ -254,7 +254,7 @@
                           style:UIAlertActionStyleDefault
                         handler:^(UIAlertAction *action) {
                             NSString *value = alert.textFields.firstObject.text;
-                            NSString *key = port ? NSGlobalPortKey(value) : NSGlobalHostKey(value);
+                            NSString *key = port ? NSGlobalPortKey(value) : NSGlobalInputHostKey(value);
                             dispatch_async(dispatch_get_main_queue(), ^{
                                 if (key) {
                                     [self chooseGlobalRule:key];
