@@ -1,4 +1,4 @@
-name: Build NetShield2
+name: Build NetShield2 (Roothide)
 on:
   workflow_dispatch:
   push:
@@ -51,18 +51,18 @@ jobs:
           python3 scripts/check_format.py "$RUNNER_TEMP/netshield-format/bin/clang-format"
       - name: Run native regression tests
         run: python3 scripts/test.py
-      - name: Compile and package for rootless iOS
+      - name: Compile and package for roothide iOS
         shell: bash
         run: |
           set -euo pipefail
           chmod 755 layout/DEBIAN/postinst layout/DEBIAN/prerm
-          gmake clean package FINALPACKAGE=1
-          test -f packages/com.eolnmsuk.netshield_2.2.4_iphoneos-arm64.deb
+          gmake clean package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=roothide
+          test -n "$(ls packages/*.deb 2>/dev/null)"
       - name: Verify signed entitlements
         shell: bash
         run: |
           set -euo pipefail
-          app=.theos/_/var/jb/Applications/NetShield2.app
+          app=$(find .theos/_ -type d -name "NetShield2.app" | head -n 1)
           for component in NetShield2 PlugIns/NetShield2Data.appex/NetShield2Data PlugIns/NetShield2Control.appex/NetShield2Control; do
             ldid -e "$app/$component" > "$RUNNER_TEMP/entitlements.plist"
             python3 scripts/check_entitlements.py "$RUNNER_TEMP/entitlements.plist" "$component"
@@ -70,6 +70,6 @@ jobs:
       - name: Upload release deb
         uses: actions/upload-artifact@v4
         with:
-          name: NetShield2-2.2.4-iOS15-18-rootless
-          path: packages/com.eolnmsuk.netshield_2.2.4_iphoneos-arm64.deb
+          name: NetShield2-2.2.4-iOS15-18-roothide
+          path: packages/*.deb
           if-no-files-found: error
