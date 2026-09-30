@@ -1,6 +1,6 @@
 Package: com.eolnmsuk.netshield
 Name: NetShield2
-Version: 2.2.2
+Version: 2.2.3
 Architecture: iphoneos-arm64
 Description: Control app internet access with permission notifications, saved rules and connection monitoring.
 Maintainer: EolnMsuk

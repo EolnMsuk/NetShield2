@@ -134,7 +134,7 @@
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     if (section == NSDashboardSectionGlobalRules) {
         return @"Overrides app rules and the iOS system traffic allowance. Matching order: "
-               @"exact IP, domain, then remote port. Tap to edit or remove. Changes apply "
+               @"exact IP, domain, remote port, then local port. Tap to edit or remove. Changes apply "
                @"to new connections.";
     }
     if (section == NSDashboardSectionFirewall) {
@@ -167,7 +167,7 @@
     if (section == NSDashboardSectionSupport) {
         return @"Developed by EolnMsuk.";
     }
-    return @"NetShield2 2.2.2 / iOS 15-18 rootless. Filters connections provided by iOS; system-exempt "
+    return @"NetShield2 2.2.3 / iOS 15-18 rootless. Filters connections provided by iOS; system-exempt "
            @"traffic is not guaranteed covered.";
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)path {
@@ -400,7 +400,7 @@
         ][path.row];
         cell.detailTextLabel.text = @[
             @"For an exact identity supplied by iOS", @"For an IP or domain across all processes",
-            @"For a remote port across all processes", @"Reset rules and history only",
+            @"For a port across all processes", @"Reset rules and history only",
             @"Removes all rules, permissions and filters. Runs automatically during uninstall."
         ][path.row];
         if (path.row > 2) {

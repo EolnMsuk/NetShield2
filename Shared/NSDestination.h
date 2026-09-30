@@ -2,11 +2,11 @@
 #import <CoreFoundation/CoreFoundation.h>
 
 static inline BOOL NSValidDestination(id value) {
-    if (![value isKindOfClass:NSDictionary.class] || [value count] > 3) {
+    if (![value isKindOfClass:NSDictionary.class] || [value count] > 4) {
         return NO;
     }
     for (id key in value) {
-        if ([key isEqual:@"port"]) {
+        if ([key isEqual:@"port"] || [key isEqual:@"localPort"]) {
             id port = value[key];
             if (![port isKindOfClass:NSNumber.class] ||
                 CFGetTypeID((__bridge CFTypeRef)port) == CFBooleanGetTypeID() || [port integerValue] < 1 ||
@@ -43,6 +43,10 @@ static inline NSString *NSDestinationSummary(NSDictionary *destination) {
     }
     if (address.length) {
         [parts addObject:[@"IP: " stringByAppendingString:address]];
+    }
+    NSNumber *localPort = destination[@"localPort"];
+    if (localPort.integerValue >= 1 && localPort.integerValue <= 65535) {
+        [parts addObject:[NSString stringWithFormat:@"Local port: %@", localPort]];
     }
     NSNumber *port = destination[@"port"];
     if (port.integerValue >= 1 && port.integerValue <= 65535) {

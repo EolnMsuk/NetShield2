@@ -69,6 +69,11 @@ static inline NSString *NSGlobalPortKey(id value) {
     }
     return [NSString stringWithFormat:@"port:%ld", (long)port.integerValue];
 }
+// Keep port: keys compatible with existing remote-port rules.
+static inline NSString *NSGlobalLocalPortKey(id value) {
+    NSString *remoteKey = NSGlobalPortKey(value);
+    return remoteKey ? [@"localPort:" stringByAppendingString:[remoteKey substringFromIndex:5]] : nil;
+}
 static inline BOOL NSValidGlobalRuleKey(id key) {
     if (![key isKindOfClass:NSString.class]) {
         return NO;
@@ -78,6 +83,8 @@ static inline BOOL NSValidGlobalRuleKey(id key) {
         return NO;
     }
     NSString *value = [key substringFromIndex:colon.location + 1];
-    NSString *canonical = [key hasPrefix:@"port:"] ? NSGlobalPortKey(value) : NSGlobalHostKey(value);
+    NSString *canonical = [key hasPrefix:@"localPort:"] ? NSGlobalLocalPortKey(value)
+                          : [key hasPrefix:@"port:"]    ? NSGlobalPortKey(value)
+                                                        : NSGlobalHostKey(value);
     return [key isEqual:canonical];
 }

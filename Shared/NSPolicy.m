@@ -164,7 +164,12 @@
         return inbound && outbound ? @"block" : inbound ? @"block-inbound" : @"block-outbound";
     }
     NSString *portKey = NSGlobalPortKey([destination[@"port"] stringValue]);
-    return portKey ? rules[portKey] : nil;
+    action = portKey ? rules[portKey] : nil;
+    if (action) {
+        return action;
+    }
+    NSString *localPortKey = NSGlobalLocalPortKey([destination[@"localPort"] stringValue]);
+    return localPortKey ? rules[localPortKey] : nil;
 }
 - (BOOL)requiresPermissionForIdentity:(NSString *)identity destination:(NSDictionary *)destination {
     return ![self globalActionForDestination:destination] && [self requiresPermissionForIdentity:identity];

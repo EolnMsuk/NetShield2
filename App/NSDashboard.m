@@ -190,10 +190,16 @@
 }
 - (NSString *)globalRuleTitle:(NSString *)key {
     NSRange colon = [key rangeOfString:@":"];
-    NSString *kind = [key hasPrefix:@"port:"] ? @"Remote port" : [key hasPrefix:@"ip:"] ? @"IP" : @"Domain";
+    NSString *kind = [key hasPrefix:@"localPort:"] ? @"Local port"
+                     : [key hasPrefix:@"port:"]    ? @"Remote port"
+                     : [key hasPrefix:@"ip:"]      ? @"IP"
+                                                   : @"Domain";
     return [NSString stringWithFormat:@"%@: %@", kind, [key substringFromIndex:colon.location + 1]];
 }
 - (void)chooseGlobalRule:(NSString *)key {
+    [self chooseGlobalRule:key portCreation:NO];
+}
+- (void)chooseGlobalRule:(NSString *)key portCreation:(BOOL)portCreation {
     if (!self.policy) {
         return;
     }
@@ -202,14 +208,18 @@
                                             message:@"Applies across all processes. Overrides app rules and "
                                                     @"the iOS system traffic allowance."
                                      preferredStyle:UIAlertControllerStyleAlert];
-    NSMutableArray *actions = [@[ @"allow", @"block-inbound", @"block-outbound", @"block" ] mutableCopy];
-    if (self.policy.document[@"globalRules"][key]) {
+    alert.view.tintColor = UIColor.systemBlueColor;
+    NSMutableArray *actions =
+        [(portCreation ? @[ @"allow", @"block" ]
+                       : @[ @"allow", @"block-inbound", @"block-outbound", @"block" ]) mutableCopy];
+    if (!portCreation && self.policy.document[@"globalRules"][key]) {
         [actions addObject:@"remove"];
     }
     for (NSString *action in actions) {
         [alert addAction:[UIAlertAction
-                             actionWithTitle:[action isEqual:@"remove"] ? @"Remove Rule"
-                                                                        : [self ruleTitle:action]
+                             actionWithTitle:portCreation ? ([action isEqual:@"allow"] ? @"Allow" : @"Block")
+                                             : [action isEqual:@"remove"] ? @"Remove Rule"
+                                                                          : [self ruleTitle:action]
                                        style:[action isEqual:@"remove"] ? UIAlertActionStyleDestructive
                                                                         : [self ruleActionStyle:action]
                                      handler:^(UIAlertAction *selected) {
@@ -235,14 +245,45 @@
     if (!self.policy) {
         return;
     }
+    if (!port) {
+        [self enterGlobalRuleByPort:NO local:NO];
+        return;
+    }
+    UIAlertController *alert =
+        [UIAlertController alertControllerWithTitle:@"Add a rule by port number"
+                                            message:@"Choose which port to filter across all processes."
+                                     preferredStyle:UIAlertControllerStyleAlert];
+    alert.view.tintColor = UIColor.systemBlueColor;
+    for (NSNumber *local in @[ @YES, @NO ]) {
+        [alert addAction:[UIAlertAction actionWithTitle:local.boolValue ? @"Local Port" : @"Remote Port"
+                                                  style:UIAlertActionStyleDefault
+                                                handler:^(UIAlertAction *action) {
+                                                    dispatch_async(dispatch_get_main_queue(), ^{
+                                                        [self enterGlobalRuleByPort:YES
+                                                                              local:local.boolValue];
+                                                    });
+                                                }]];
+    }
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+- (void)enterGlobalRuleByPort:(BOOL)port local:(BOOL)local {
+    if (!self.policy) {
+        return;
+    }
     UIAlertController *alert = [UIAlertController
         alertControllerWithTitle:port ? @"Add a rule by port number" : @"Add a rule by IP / Domain"
-                         message:port ? @"Enter a remote port from 1 to 65535. Applies across all processes."
-                                      : @"Enter an exact IPv4/IPv6 address or domain (without a URL or "
-                                        @"path). Domains get a www. prefix and match both bare and www names."
+                         message:
+                             port
+                                 ? (local
+                                        ? @"Enter a local port from 1 to 65535. Applies across all processes."
+                                        : @"Enter a remote port from 1 to 65535. Applies across all "
+                                          @"processes.")
+                                 : @"Enter an exact IPv4/IPv6 address or domain (without a URL or "
+                                   @"path). Domains get a www. prefix and match both bare and www names."
                   preferredStyle:UIAlertControllerStyleAlert];
     [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
-        field.placeholder = port ? @"Remote port number" : @"IP or domain";
+        field.placeholder = port ? (local ? @"Local port number" : @"Remote port number") : @"IP or domain";
         field.keyboardType = port ? UIKeyboardTypeNumberPad : UIKeyboardTypeASCIICapable;
         field.autocapitalizationType = UITextAutocapitalizationTypeNone;
         field.autocorrectionType = UITextAutocorrectionTypeNo;
@@ -254,10 +295,12 @@
                           style:UIAlertActionStyleDefault
                         handler:^(UIAlertAction *action) {
                             NSString *value = alert.textFields.firstObject.text;
-                            NSString *key = port ? NSGlobalPortKey(value) : NSGlobalInputHostKey(value);
+                            NSString *key =
+                                port ? (local ? NSGlobalLocalPortKey(value) : NSGlobalPortKey(value))
+                                     : NSGlobalInputHostKey(value);
                             dispatch_async(dispatch_get_main_queue(), ^{
                                 if (key) {
-                                    [self chooseGlobalRule:key];
+                                    [self chooseGlobalRule:key portCreation:port];
                                 } else {
                                     UIAlertController *invalid = [UIAlertController
                                         alertControllerWithTitle:port ? @"Invalid port number"
@@ -273,7 +316,8 @@
                                                                 style:UIAlertActionStyleDefault
                                                               handler:^(UIAlertAction *selected) {
                                                                   dispatch_async(dispatch_get_main_queue(), ^{
-                                                                      [self addGlobalRuleByPort:port];
+                                                                      [self enterGlobalRuleByPort:port
+                                                                                            local:local];
                                                                   });
                                                               }]];
                                     [invalid addAction:[UIAlertAction actionWithTitle:@"Cancel"

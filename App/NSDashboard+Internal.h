@@ -51,6 +51,8 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 - (void)addIdentity;
 - (void)addGlobalRuleByPort:(BOOL)port;
 - (void)chooseGlobalRule:(NSString *)key;
+- (void)chooseGlobalRule:(NSString *)key portCreation:(BOOL)portCreation;
+- (void)enterGlobalRuleByPort:(BOOL)port local:(BOOL)local;
 - (NSString *)globalRuleTitle:(NSString *)key;
 - (NSString *)ruleTitle:(NSString *)rule;
 - (UIAlertActionStyle)ruleActionStyle:(NSString *)rule;

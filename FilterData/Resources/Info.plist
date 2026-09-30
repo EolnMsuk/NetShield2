@@ -13,9 +13,9 @@
 	<key>CFBundlePackageType</key>
 	<string>XPC!</string>
 	<key>CFBundleShortVersionString</key>
-	<string>2.2.2</string>
+	<string>2.2.3</string>
 	<key>CFBundleVersion</key>
-	<string>20023</string>
+	<string>20024</string>
 	<key>MinimumOSVersion</key>
 	<string>15.0</string>
 	<key>NSExtension</key>

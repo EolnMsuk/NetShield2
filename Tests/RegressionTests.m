@@ -341,6 +341,21 @@ static void TestActivityGrouping(void) {
             containsString:[NSString stringWithFormat:@"Remote port: %@", port]]);
     }
     CHECK(NSGroupedActivity(separate).count == 7);
+    for (NSNumber *localPort in @[ @50000, @50001 ]) {
+        NSDictionary *localPeer = @{@"address" : @"192.0.2.1", @"port" : @443, @"localPort" : localPort};
+        [separate
+            addObject:ActivityEvent(@"app", localPeer, @"outbound", @"allow", localPort.doubleValue, 2, 3)];
+        CHECK([NSDestinationSummary(localPeer)
+            containsString:[NSString stringWithFormat:@"Local port: %@ / Remote port: 443", localPort]]);
+    }
+    CHECK(NSGroupedActivity(separate).count == 9);
+    NSDictionary *localEvent = separate.lastObject;
+    [separate addObject:localEvent];
+    NSArray *localGroups = NSGroupedActivity(separate);
+    CHECK(localGroups.count == 9);
+    CHECK([localGroups[0][@"connections"] integerValue] == 2);
+    CHECK([localGroups[0][@"bytesIn"] integerValue] == 4);
+    CHECK([localGroups[0][@"bytesOut"] integerValue] == 6);
     CHECK([NSGroupedActivity(@[ ActivityEvent(@"", @{}, @"unknown", @"other", 0, 0, 0) ])[0][@"action"]
         isEqual:@"other"]);
 }
@@ -359,18 +374,30 @@ static void TestGlobalRules(void) {
         CHECK(!NSGlobalHostKey(bad));
     }
     CHECK([NSGlobalPortKey(@"00443") isEqual:@"port:443"]);
+    CHECK([NSGlobalLocalPortKey(@"00443") isEqual:@"localPort:443"]);
+    CHECK(NSValidGlobalRuleKey(@"localPort:65535"));
+    for (NSString *bad in @[ @"localPort:0", @"localPort:65536", @"localPort:00443", @"localPort:-1" ]) {
+        CHECK(!NSValidGlobalRuleKey(bad));
+    }
     for (NSString *bad in @[ @"", @"0", @"65536", @"-1", @"1.5", @"443junk" ]) {
         CHECK(!NSGlobalPortKey(bad));
+        CHECK(!NSGlobalLocalPortKey(bad));
     }
     CHECK(NSValidDestination(@{@"port" : @65535}));
     for (id bad in @[ @0, @65536, @1.5, @YES, @"443" ]) {
         CHECK(!NSValidDestination(@{@"port" : bad}));
+        CHECK(!NSValidDestination(@{@"localPort" : bad}));
     }
     NSMutableDictionary *document = [[NSPolicy defaultDocument] mutableCopy];
     [document removeObjectForKey:@"globalRules"];
     CHECK([NSPolicy policyWithDocument:document error:NULL] != nil);
-    NSDictionary *peer = @{@"address" : @"192.0.2.1", @"domain" : @"Example.COM.", @"port" : @443};
-    for (NSString *key in @[ @"ip:192.0.2.1", @"domain:example.com", @"port:443" ]) {
+    NSDictionary *peer =
+        @{@"address" : @"192.0.2.1",
+          @"domain" : @"Example.COM.",
+          @"port" : @443,
+          @"localPort" : @50000};
+    CHECK(NSValidDestination(peer));
+    for (NSString *key in @[ @"ip:192.0.2.1", @"domain:example.com", @"port:443", @"localPort:50000" ]) {
         for (NSString *action in @[ @"allow", @"block-inbound", @"block-outbound", @"block" ]) {
             document[@"globalRules"] = @{key : action};
             document[@"rules"] = @{@"app" : [action isEqual:@"allow"] ? @"block" : @"allow"};
@@ -393,6 +420,19 @@ static void TestGlobalRules(void) {
             CHECK([policy requiresPermissionForIdentity:@"new.app" destination:@{}]);
         }
     }
+    // Local and remote ports are distinct; existing remote rules retain precedence.
+    document[@"globalRules"] = @{@"localPort:50000" : @"block", @"port:443" : @"allow"};
+    NSPolicy *portPolicy = [NSPolicy policyWithDocument:document error:NULL];
+    CHECK([portPolicy allowsIdentity:@"app" direction:NSFlowDirectionOutbound destination:peer]);
+    CHECK(![portPolicy allowsIdentity:@"app"
+                            direction:NSFlowDirectionOutbound
+                          destination:@{
+                              @"localPort" : @50000,
+                              @"port" : @80
+                          }]);
+    CHECK([portPolicy requiresPermissionForIdentity:@"new.app" destination:@{@"port" : @50000}]);
+    CHECK([portPolicy requiresPermissionForIdentity:@"new.app" destination:@{@"localPort" : @443}]);
+    CHECK([portPolicy requiresPermissionForIdentity:@"new.app" destination:@{}]);
     document[@"globalRules"] =
         @{@"ip:192.0.2.1" : @"allow", @"domain:example.com" : @"block", @"port:443" : @"allow"};
     NSPolicy *policy = [NSPolicy policyWithDocument:document error:NULL];
@@ -530,7 +570,8 @@ static void TestGlobalRules(void) {
         NSPolicy *before = NSReadPolicy(NULL);
         CHECK(NSUpdatePolicy(
             ^BOOL(NSMutableDictionary *current, NSError **error) {
-                current[@"globalRules"] = @{@"port:443" : @"block"};
+                current[@"globalRules"] =
+                    @{(preserve.boolValue ? @"localPort:50000" : @"port:443") : @"block"};
                 return YES;
             },
             NULL));
