@@ -15,6 +15,7 @@ typedef NS_ENUM(NSInteger, NSFlowDirection) {
 - (BOOL)allowsIdentity:(nullable NSString *)identity direction:(NSFlowDirection)direction;
 - (BOOL)requiresPermissionForIdentity:(nullable NSString *)identity;
 - (BOOL)requiresPermissionForIdentity:(nullable NSString *)identity destination:(NSDictionary *)destination;
+- (BOOL)needsSocketDestination:(NSDictionary *)destination;
 - (BOOL)allowsIdentity:(nullable NSString *)identity
              direction:(NSFlowDirection)direction
            destination:(NSDictionary *)destination;

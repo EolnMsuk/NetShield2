@@ -13,6 +13,7 @@
 @property(nonatomic, copy) NSString *identity;
 @property(nonatomic, copy) NSDictionary *destination;
 @property(nonatomic, copy) NSString *token;
+@property(nonatomic, copy) NSString *askGeneration;
 @property(nonatomic, strong) NSDate *created;
 @property(nonatomic) NSTimeInterval deadline;
 @property(nonatomic) BOOL expired;
@@ -23,6 +24,7 @@
 - (NSDictionary *)document {
     return @{
         @"token" : self.token,
+        @"askGeneration" : self.askGeneration ?: @"",
         @"identity" : self.identity,
         @"destination" : self.destination ?: @{},
         @"created" : self.created,
@@ -36,6 +38,7 @@
 @interface NSPermissionQueue ()
 @property(nonatomic, strong) NSMutableArray<NSPermissionEntry *> *active;
 @property(nonatomic, strong) NSMutableArray<NSPermissionEntry *> *history;
+@property(nonatomic, copy) NSDictionary *generations;
 @property(nonatomic, readwrite) NSUInteger overflowCount;
 @property(nonatomic, readwrite) NSUInteger evictedRequestCount;
 @end
@@ -134,6 +137,7 @@
         entry.identity = identity;
         entry.destination = [destination copy];
         entry.token = NSUUID.UUID.UUIDString;
+        entry.askGeneration = self.generations[identity] ?: @"";
         entry.created = date;
         entry.deadline = now + NSPermissionTimeout;
         entry.waiters = [NSMutableArray new];
@@ -147,6 +151,19 @@
     return created ? entry.document : nil;
 }
 - (void)resolveWithPolicy:(NSPolicy *)policy now:(NSTimeInterval)now {
+    self.generations = policy.document[@"askGenerations"] ?: @{};
+    NSMutableArray *replaced = [NSMutableArray new];
+    for (NSPermissionEntry *entry in [self.active arrayByAddingObjectsFromArray:self.history]) {
+        if (![(entry.askGeneration ?: @"") isEqual:(self.generations[entry.identity] ?: @"")]) {
+            [replaced addObjectsFromArray:entry.waiters];
+            [entry.waiters removeAllObjects];
+            [self.active removeObject:entry];
+            [self.history removeObject:entry];
+        }
+    }
+    for (NSPermissionWaiter *waiter in replaced) {
+        waiter.completion(NO);
+    }
     [self expireAtTime:now];
     NSMutableArray<void (^)(void)> *callbacks = [NSMutableArray new];
     for (NSPermissionEntry *entry in [self.active copy]) {

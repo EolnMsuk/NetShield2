@@ -39,22 +39,6 @@
                 [self showError:error operation:@"Load filter configuration"];
             }
             NEFilterManager *manager = NEFilterManager.sharedManager;
-            // A reinstall can retain shared policy data after the system filter
-            // was removed. Restore socket coverage before its first enable.
-            if (!error && !manager.providerConfiguration) {
-                NSError *policyError = nil;
-                NSPolicy *policy = NSReadPolicy(&policyError);
-                if (policy && ![policy.document[@"filterSockets"] boolValue]) {
-                    if (!NSUpdatePolicy(
-                            ^BOOL(NSMutableDictionary *document, NSError **mutationError) {
-                                document[@"filterSockets"] = @YES;
-                                return YES;
-                            },
-                            &policyError)) {
-                        [self showError:policyError operation:@"Initialize socket filtering"];
-                    }
-                }
-            }
             NSInteger configuredEngine =
                 [manager.providerConfiguration.vendorConfiguration[@"engine"] integerValue];
             if (!error && manager.enabled && !self.attemptedProviderUpgrade &&
@@ -74,87 +58,92 @@
     if (self.busy) {
         return;
     }
-    NSError *policyError = nil;
-    if (operation == NSConfigurationEnable && !NSReadPolicy(&policyError)) {
-        [self showError:policyError];
+    self.busy = YES;
+    [self refreshTableKeepingPosition];
+    NEFilterManager *manager = NEFilterManager.sharedManager;
+    if (operation == NSConfigurationEnable) {
+        self.attemptedProviderUpgrade = YES;
+        NSFilterRestart *restart = [NSFilterRestart new];
+        self.restart = restart;
+        restart.manager = (id<NSFilterRestartManager>)manager;
+        restart.configuration = ^id(id previous, BOOL restoring, NSError **error) {
+            NSPolicy *policy = NSReadPolicy(error);
+            if (!policy) {
+                return nil;
+            }
+            NEFilterProviderConfiguration *configuration =
+                restoring ? [previous copy] : [NEFilterProviderConfiguration new];
+            if (!restoring) {
+                configuration.filterSockets = [policy.document[@"filterSockets"] boolValue];
+                configuration.filterBrowsers = YES;
+                configuration.organization = @"NetShield2";
+            }
+            NSMutableDictionary *vendor =
+                [configuration.vendorConfiguration mutableCopy] ?: [NSMutableDictionary new];
+            vendor[@"schema"] = @(NSSchemaVersion);
+            vendor[@"engine"] = @(NSEngineVersion);
+            vendor[@"activation"] = NSUUID.UUID.UUIDString;
+            configuration.vendorConfiguration = vendor;
+            return configuration;
+        };
+        restart.isStopped = ^BOOL(BOOL previouslyEnabled) {
+            NSStoreLock *lock = NSAcquireProviderLock(NULL);
+            if (!lock) {
+                return NO;
+            }
+            [lock unlock];
+            NSDictionary *monitor = NSReadMonitor();
+            NSInteger engine = [manager.providerConfiguration.vendorConfiguration[@"engine"] integerValue];
+            if (engine < 20014 && manager.providerConfiguration &&
+                (previouslyEnabled || [monitor[@"controlRunning"] boolValue])) {
+                return monitor.count && ![monitor[@"controlRunning"] boolValue];
+            }
+            return YES;
+        };
+        restart.isRunning = ^BOOL(NEFilterProviderConfiguration *configuration) {
+            NSDictionary *monitor = NSReadMonitor();
+            NSDate *updated = monitor[@"updated"];
+            NSTimeInterval age = updated ? -updated.timeIntervalSinceNow : NSMonitorFreshness;
+            return [monitor[@"activation"] isEqual:configuration.vendorConfiguration[@"activation"]] &&
+                   [monitor[@"controlRunning"] boolValue] && age >= 0 && age < NSMonitorFreshness &&
+                   ![monitor[@"policyError"] length];
+        };
+        [restart start:^(NSError *error) {
+            self.restart = nil;
+            self.busy = NO;
+            if (error) {
+                [self showError:error operation:@"Enable/restart filter"];
+            } else {
+                self.message = @"Filter configuration saved and control provider verified.";
+            }
+            [self loadConfiguration];
+        }];
         return;
     }
-    self.busy = YES;
-    NEFilterManager *manager = [NEFilterManager sharedManager];
     [manager loadFromPreferencesWithCompletionHandler:^(NSError *loadError) {
-        dispatch_async(dispatch_get_main_queue(), ^{
-            if (loadError) {
-                self.busy = NO;
-                self.loaded = NO;
-                [self showError:loadError operation:@"Load before configuration change"];
-                return;
-            }
-            void (^finished)(NSError *) = ^(NSError *error) {
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    self.busy = NO;
-                    NSString *operationName = @"Save disabled filter";
-                    NSString *successMessage = @"Firewall is off. Your rules are saved.";
-                    if (operation == NSConfigurationEnable) {
-                        operationName = @"Save enabled filter";
-                        successMessage = @"";
-                    } else if (operation == NSConfigurationRemove) {
-                        operationName = @"Remove filter configuration";
-                        successMessage = @"System filter removed. You can now uninstall NetShield2.";
-                    }
-                    if (error) {
-                        [self showError:error operation:operationName];
-                    } else {
-                        self.message = successMessage;
-                    }
-                    [self loadConfiguration];
-                });
-            };
-            if (operation == NSConfigurationRemove) {
-                [manager removeFromPreferencesWithCompletionHandler:finished];
-                return;
-            }
-            void (^saveRequestedState)(void) = ^{
-                if (operation == NSConfigurationEnable) {
-                    NEFilterProviderConfiguration *configuration = [NEFilterProviderConfiguration new];
-                    configuration.filterSockets = [NSReadPolicy(NULL).document[@"filterSockets"] boolValue];
-                    configuration.filterBrowsers = YES;
-                    configuration.organization = @"NetShield2";
-                    configuration.vendorConfiguration =
-                        @{@"schema" : @(NSSchemaVersion),
-                          @"engine" : @(NSEngineVersion)};
-                    manager.providerConfiguration = configuration;
-                    manager.localizedDescription = @"NetShield2 network access control";
-                }
-                manager.enabled = operation == NSConfigurationEnable;
-                [manager saveToPreferencesWithCompletionHandler:finished];
-            };
-            if (operation == NSConfigurationEnable && manager.enabled) {
-                manager.enabled = NO;
-                [manager saveToPreferencesWithCompletionHandler:^(NSError *disableError) {
-                    dispatch_async(dispatch_get_main_queue(), ^{
-                        if (disableError) {
-                            self.busy = NO;
-                            [self showError:disableError operation:@"Stop filter before restart"];
-                            [self loadConfiguration];
-                            return;
-                        }
-                        [manager loadFromPreferencesWithCompletionHandler:^(NSError *reloadError) {
-                            dispatch_async(dispatch_get_main_queue(), ^{
-                                if (reloadError) {
-                                    self.busy = NO;
-                                    self.loaded = NO;
-                                    [self showError:reloadError operation:@"Reload filter before restart"];
-                                    return;
-                                }
-                                saveRequestedState();
-                            });
-                        }];
-                    });
-                }];
+        if (loadError) {
+            self.busy = NO;
+            self.loaded = NO;
+            [self showError:loadError operation:@"Load before configuration change"];
+            return;
+        }
+        void (^finished)(NSError *) = ^(NSError *error) {
+            self.busy = NO;
+            if (error) {
+                [self showError:error operation:@"Disable/remove filter"];
             } else {
-                saveRequestedState();
+                self.message = operation == NSConfigurationRemove
+                                   ? @"System filter removed. You can now uninstall NetShield2."
+                                   : @"Firewall is off. Your rules are saved.";
             }
-        });
+            [self loadConfiguration];
+        };
+        if (operation == NSConfigurationRemove) {
+            [manager removeFromPreferencesWithCompletionHandler:finished];
+        } else {
+            manager.enabled = NO;
+            [manager saveToPreferencesWithCompletionHandler:finished];
+        }
     }];
 }
 - (void)finishResetWhenStopped:(NSUInteger)attempt {

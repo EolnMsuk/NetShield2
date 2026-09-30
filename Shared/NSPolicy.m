@@ -2,6 +2,7 @@
 #import "NSConstants.h"
 #import "NSDestination.h"
 #import "NSGlobalRule.h"
+#import "NSDNSCache.h"
 #import <CoreFoundation/CoreFoundation.h>
 
 @implementation NSPolicy
@@ -82,6 +83,34 @@
             }
         }
     }
+    id expirations = d[@"globalDomainExpirations"];
+    if (valid && expirations) {
+        valid = [expirations isKindOfClass:NSDictionary.class] && [expirations count] <= NSMaximumRules;
+        if (valid) {
+            for (id key in expirations) {
+                if (!NSValidGlobalRuleKey(key) || ![key hasPrefix:@"domain:"] ||
+                    ![expirations[key] isKindOfClass:NSDate.class]) {
+                    valid = NO;
+                    break;
+                }
+            }
+        }
+    }
+    id generations = d[@"askGenerations"];
+    if (valid && generations) {
+        valid = [generations isKindOfClass:NSDictionary.class] && [generations count] <= NSMaximumRules;
+        if (valid) {
+            for (id identity in generations) {
+                if (![identity isKindOfClass:NSString.class] || ![identity length] ||
+                    [identity length] > NSMaximumIdentityLength ||
+                    ![generations[identity] isKindOfClass:NSString.class] ||
+                    ![generations[identity] length] || [generations[identity] length] > 128) {
+                    valid = NO;
+                    break;
+                }
+            }
+        }
+    }
     id destinations = d[@"ruleDestinations"];
     if (valid && destinations) {
         valid = [destinations isKindOfClass:NSDictionary.class] && [destinations count] <= NSMaximumRules;
@@ -107,6 +136,25 @@
         }
         return nil;
     }
+    NSMutableDictionary *canonicalDocument = [d mutableCopy];
+    NSMutableDictionary *canonicalRules = [NSMutableDictionary new];
+    for (NSString *key in globalRules) {
+        NSString *canonical = [key hasPrefix:@"ip:"] ? NSGlobalHostKey([key substringFromIndex:3]) : key;
+        canonicalRules[canonical] = NSMergeGlobalActions(canonicalRules[canonical], globalRules[key]);
+    }
+    canonicalDocument[@"globalRules"] = canonicalRules;
+    NSMutableDictionary *canonicalAddresses = [NSMutableDictionary new];
+    for (NSString *key in addresses) {
+        NSMutableOrderedSet *values = [NSMutableOrderedSet new];
+        for (NSString *address in addresses[key]) {
+            [values addObject:NSGlobalHostKey([address substringFromIndex:3])];
+        }
+        canonicalAddresses[key] = values.array;
+    }
+    if (addresses) {
+        canonicalDocument[@"globalDomainAddresses"] = canonicalAddresses;
+    }
+    d = canonicalDocument;
     // Older policies have no socket preference. Default to full flow coverage,
     // while preserving an explicit choice to disable socket filtering.
     if (!sockets) {
@@ -151,8 +199,10 @@
     // Only blocks use DNS address fallback: a shared hosting IP must never grant access.
     // Combine directional blocks deterministically when several domains share an IP.
     BOOL inbound = NO, outbound = NO;
+    NSDate *now = NSDate.date;
     for (NSString *key in self.document[@"globalDomainAddresses"]) {
         if ([domainKey hasPrefix:@"domain:"] || !addressKey ||
+            !NSDNSExpiryIsLive(self.document[@"globalDomainExpirations"][key], now) ||
             ![self.document[@"globalDomainAddresses"][key] containsObject:addressKey]) {
             continue;
         }
@@ -173,6 +223,24 @@
 }
 - (BOOL)requiresPermissionForIdentity:(NSString *)identity destination:(NSDictionary *)destination {
     return ![self globalActionForDestination:destination] && [self requiresPermissionForIdentity:identity];
+}
+- (BOOL)needsSocketDestination:(NSDictionary *)destination {
+    for (NSString *key in self.document[@"globalRules"]) {
+        BOOL needsAddress =
+            [key hasPrefix:@"ip:"] ||
+            ([key hasPrefix:@"domain:"] && ![NSGlobalHostKey(destination[@"domain"]) hasPrefix:@"domain:"] &&
+             ![self.document[@"globalRules"][key] isEqual:@"allow"]);
+        if (needsAddress && ![destination[@"address"] length]) {
+            return YES;
+        }
+        if ([key hasPrefix:@"port:"] && !destination[@"port"]) {
+            return YES;
+        }
+        if ([key hasPrefix:@"localPort:"] && !destination[@"localPort"]) {
+            return YES;
+        }
+    }
+    return NO;
 }
 - (BOOL)requiresPermissionForIdentity:(NSString *)identity {
     return ![self automaticallyAllowsIdentity:identity] && identity.length > 0 &&

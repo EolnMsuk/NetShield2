@@ -3,6 +3,7 @@
 #import "../Shared/NSStore.h"
 #import "../Shared/NSNotifications.h"
 #import "../Shared/NSDestination.h"
+#import "NSFilterRestart.h"
 
 typedef NS_ENUM(NSInteger, NSConfigurationOperation) {
     NSConfigurationDisable,
@@ -40,6 +41,7 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 @property(nonatomic) BOOL busy;
 @property(nonatomic) BOOL loaded;
 @property(nonatomic) BOOL attemptedProviderUpgrade;
+@property(nonatomic, strong) NSFilterRestart *restart;
 @property(nonatomic) BOOL resetRequiresLegacyStop;
 @property(nonatomic) BOOL resetAllSettings;
 @property(nonatomic) BOOL restoreFirewallAfterReset;

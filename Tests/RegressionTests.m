@@ -448,6 +448,8 @@ static void TestGlobalRules(void) {
     document[@"globalRules"] = @{@"domain:www.example.com" : @"block", @"port:443" : @"allow"};
     document[@"globalDomainAddresses"] =
         @{@"domain:www.example.com" : @[ @"ip:192.0.2.1", @"ip:2001:db8::1" ]};
+    document[@"globalDomainExpirations"] =
+        @{@"domain:www.example.com" : [NSDate dateWithTimeIntervalSinceNow:120]};
     policy = [NSPolicy policyWithDocument:document error:NULL];
     for (NSString *host in @[ @"example.com", @"WWW.EXAMPLE.COM." ]) {
         CHECK(![policy allowsIdentity:@"com.apple.test"
@@ -723,8 +725,8 @@ static void TestSocketSettingsAndDestinations(void) {
     CHECK(NSResetSharedStateWithOptions(NO, YES, NULL));
     CHECK([NSReadPolicy(NULL).document[@"rules"] count] == 0);
     CHECK(NSReadMonitor().count == 0);
-    CHECK([NSReadPolicy(NULL).document[@"filterSockets"] boolValue]);
-    CHECK([NSReadPolicy(NULL).document[@"allowAppleSystemProcesses"] boolValue]);
+    CHECK(![NSReadPolicy(NULL).document[@"filterSockets"] boolValue]);
+    CHECK(![NSReadPolicy(NULL).document[@"allowAppleSystemProcesses"] boolValue]);
     CHECK([NSReadPolicy(NULL).document[@"unattributed"] isEqual:@"block"]);
     CHECK(NSUpdatePolicy(
         ^BOOL(NSMutableDictionary *current, NSError **error) {
@@ -770,6 +772,13 @@ static void TestSocketSettingsAndDestinations(void) {
 }
 - (void)removeDeliveredNotificationsWithIdentifiers:(NSArray<NSString *> *)identifiers {
     [self.removed addObjectsFromArray:identifiers];
+}
+- (void)getPendingNotificationRequestsWithCompletionHandler:
+    (void (^)(NSArray<UNNotificationRequest *> *))completion {
+    completion([self.requests copy]);
+}
+- (void)getDeliveredNotificationsWithCompletionHandler:(void (^)(NSArray<UNNotification *> *))completion {
+    completion(@[]);
 }
 - (void)getNotificationSettingsWithCompletionHandler:(void (^)(UNNotificationSettings *))completion {
     [self.settingsCompletions addObject:[completion copy]];
@@ -885,6 +894,8 @@ static void TestFilterRemoval(void) {
     }
 }
 
+extern void NSRunRecoveryTests(void);
+
 int main(void) {
     @autoreleasepool {
         NSURL *root = [NSURL
@@ -908,6 +919,7 @@ int main(void) {
         TestSocketSettingsAndDestinations();
         TestLateNotifications();
         TestFilterRemoval();
+        NSRunRecoveryTests();
         CHECK([NSFileManager.defaultManager removeItemAtURL:root error:NULL]);
         NSLog(@"Passed %lu regression checks", (unsigned long)checks);
     }

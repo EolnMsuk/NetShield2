@@ -2,7 +2,7 @@
 #include <arpa/inet.h>
 
 // Canonical exact host/port keys shared by input validation and flow matching.
-static inline NSString *NSGlobalHostKey(id value) {
+static inline NSString *NSGlobalRawHostKey(id value) {
     if (![value isKindOfClass:NSString.class]) {
         return nil;
     }
@@ -39,6 +39,50 @@ static inline NSString *NSGlobalHostKey(id value) {
         }
     }
     return [@"domain:" stringByAppendingString:host];
+}
+static inline NSString *NSGlobalHostKey(id value) {
+    // An unscoped address rule applies on every interface. Never mistake a
+    // scoped IPv6 endpoint for a DNS name.
+    if ([value isKindOfClass:NSString.class]) {
+        NSString *host =
+            [value stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        if ([host hasPrefix:@"["] && [host hasSuffix:@"]"]) {
+            host = [host substringWithRange:NSMakeRange(1, host.length - 2)];
+        }
+        NSRange scope = [host rangeOfString:@"%"];
+        if (scope.location != NSNotFound) {
+            NSString *address = [host substringToIndex:scope.location];
+            struct in6_addr bytes;
+            if (scope.location + 1 == host.length || inet_pton(AF_INET6, address.UTF8String, &bytes) != 1) {
+                return nil;
+            }
+            value = address;
+        }
+    }
+    NSString *key = NSGlobalRawHostKey(value);
+    if ([key hasPrefix:@"ip:"]) {
+        struct in6_addr bytes;
+        if (inet_pton(AF_INET6, [key substringFromIndex:3].UTF8String, &bytes) == 1 &&
+            IN6_IS_ADDR_V4MAPPED(&bytes)) {
+            char text[INET_ADDRSTRLEN];
+            inet_ntop(AF_INET, &bytes.s6_addr[12], text, sizeof(text));
+            return [@"ip:" stringByAppendingString:@(text)];
+        }
+    }
+    return key;
+}
+// Merge equivalent persisted IP keys conservatively during normalization.
+static inline NSString *NSMergeGlobalActions(NSString *left, NSString *right) {
+    if (!left || [left isEqual:right]) {
+        return right;
+    }
+    if ([left isEqual:@"allow"]) {
+        return right;
+    }
+    if ([right isEqual:@"allow"]) {
+        return left;
+    }
+    return @"block";
 }
 // Input normalization is separate from validation of existing persisted keys.
 static inline NSString *NSGlobalInputHostKey(id value) {
@@ -86,5 +130,5 @@ static inline BOOL NSValidGlobalRuleKey(id key) {
     NSString *canonical = [key hasPrefix:@"localPort:"] ? NSGlobalLocalPortKey(value)
                           : [key hasPrefix:@"port:"]    ? NSGlobalPortKey(value)
                                                         : NSGlobalHostKey(value);
-    return [key isEqual:canonical];
+    return [key isEqual:canonical] || ([key hasPrefix:@"ip:"] && [key isEqual:NSGlobalRawHostKey(value)]);
 }

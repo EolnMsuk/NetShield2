@@ -15,6 +15,7 @@ FOUNDATION_EXPORT void NSInvalidatePolicyCache(void);
 FOUNDATION_EXPORT BOOL NSEnsurePolicy(NSError **error);
 FOUNDATION_EXPORT BOOL NSUpdatePolicy(BOOL (^mutation)(NSMutableDictionary *document, NSError **error),
                                       NSError **error);
+FOUNDATION_EXPORT BOOL NSUseDefaultRule(NSMutableDictionary *document, NSString *identity, NSError **error);
 FOUNDATION_EXPORT NSStoreLock *_Nullable NSAcquireProviderLock(NSError **error);
 FOUNDATION_EXPORT BOOL NSResetSharedState(BOOL legacyProviderMayBeRunning, NSError **error);
 FOUNDATION_EXPORT BOOL NSResetSharedStateWithOptions(BOOL legacyProviderMayBeRunning, BOOL preserveSettings,

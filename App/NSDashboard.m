@@ -176,7 +176,8 @@
                                                         } else {
                                                             NSMutableDictionary *rules = document[@"rules"];
                                                             if ([action isEqual:@"use-default"]) {
-                                                                [rules removeObjectForKey:identity];
+                                                                return NSUseDefaultRule(document, identity,
+                                                                                        error);
                                                             } else {
                                                                 rules[identity] = action;
                                                             }
@@ -380,13 +381,7 @@
         return;
     }
     NSError *error = nil;
-    if (!NSUpdatePolicy(
-            ^BOOL(NSMutableDictionary *document, NSError **mutationError) {
-                document[@"allowAppleSystemProcesses"] = @YES;
-                document[@"filterSockets"] = @YES;
-                return YES;
-            },
-            &error)) {
+    if (!NSReadPolicy(&error)) {
         [self showError:error];
         [self reloadMonitor];
         return;

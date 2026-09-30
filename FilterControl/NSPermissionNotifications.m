@@ -9,6 +9,7 @@
 @property(nonatomic, copy) NSString *retryRevision;
 @property(nonatomic, strong) NSMutableSet<NSString *> *submitted;
 @property(nonatomic, strong) NSMutableSet<NSString *> *submitting;
+@property(nonatomic, strong) NSMutableDictionary<NSString *, NSString *> *submissionIDs;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *attempts;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *attemptTimes;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSString *> *issues;
@@ -34,11 +35,40 @@ static void NSWithdrawNotifications(id<NSPermissionNotificationCenter> center, N
         _tokens = [NSSet set];
         _submitted = [NSMutableSet new];
         _submitting = [NSMutableSet new];
+        _submissionIDs = [NSMutableDictionary new];
         _attempts = [NSMutableDictionary new];
         _attemptTimes = [NSMutableDictionary new];
         _issues = [NSMutableDictionary new];
+        [self reconcileNotifications];
     }
     return self;
+}
+- (void)reconcileNotifications {
+    __weak typeof(self) weakSelf = self;
+    void (^reconcile)(NSArray<UNNotificationRequest *> *) = ^(NSArray<UNNotificationRequest *> *requests) {
+        NSPermissionNotifications *owner = weakSelf;
+        if (!owner) {
+            return;
+        }
+        @synchronized(owner) {
+            NSMutableArray *orphaned = [NSMutableArray new];
+            for (UNNotificationRequest *request in requests) {
+                if ([request.content.categoryIdentifier isEqual:NSPermissionCategory] &&
+                    ![owner isCurrent:request.identifier]) {
+                    [orphaned addObject:request.identifier];
+                }
+            }
+            NSWithdrawNotifications(owner.center, orphaned);
+        }
+    };
+    [self.center getPendingNotificationRequestsWithCompletionHandler:reconcile];
+    [self.center getDeliveredNotificationsWithCompletionHandler:^(NSArray<UNNotification *> *notifications) {
+        NSMutableArray *requests = [NSMutableArray new];
+        for (UNNotification *notification in notifications) {
+            [requests addObject:notification.request];
+        }
+        reconcile(requests);
+    }];
 }
 - (NSString *)deliveryIssue {
     @synchronized(self) {
@@ -48,6 +78,14 @@ static void NSWithdrawNotifications(id<NSPermissionNotificationCenter> center, N
 }
 - (BOOL)isCurrent:(NSString *)token {
     return !self.stopped && [self.tokens containsObject:token];
+}
+- (BOOL)publishSnapshot:(NSDictionary *)snapshot
+                 policy:(NSPolicy *)policy
+          retryRevision:(NSString *)revision
+                  error:(NSError **)error {
+    BOOL published = NSWriteDocument(snapshot, NSMonitorFile, error);
+    [self updateRequests:published ? snapshot[@"requests"] : @[] policy:policy retryRevision:revision];
+    return published;
 }
 - (void)updateRequests:(NSArray<NSDictionary *> *)requests
                 policy:(NSPolicy *)policy
@@ -61,6 +99,7 @@ static void NSWithdrawNotifications(id<NSPermissionNotificationCenter> center, N
         [removed minusSet:next];
         NSWithdrawNotifications(self.center, removed.allObjects);
         for (NSString *token in removed) {
+            [self.submissionIDs removeObjectForKey:token];
             [self.submitted removeObject:token];
             [self.attempts removeObjectForKey:token];
             [self.attemptTimes removeObjectForKey:token];
@@ -73,6 +112,7 @@ static void NSWithdrawNotifications(id<NSPermissionNotificationCenter> center, N
             [self.attempts removeAllObjects];
             [self.attemptTimes removeAllObjects];
             [self.issues removeAllObjects];
+            [self.submissionIDs removeAllObjects];
         }
         for (NSDictionary *request in requests) {
             if ([policy requiresPermissionForIdentity:request[@"identity"]]) {
@@ -93,6 +133,8 @@ static void NSWithdrawNotifications(id<NSPermissionNotificationCenter> center, N
     self.attempts[token] = @(attempts + 1);
     self.attemptTimes[token] = @(now);
     [self.submitting addObject:token];
+    NSString *submission = NSUUID.UUID.UUIDString;
+    self.submissionIDs[token] = submission;
     UNMutableNotificationContent *content = [UNMutableNotificationContent new];
     // Keep destination details in the request/history, never in the system banner.
     content.title = identity;
@@ -120,6 +162,12 @@ static void NSWithdrawNotifications(id<NSPermissionNotificationCenter> center, N
                  }
                  @synchronized(owner) {
                      [owner.submitting removeObject:token];
+                     if (![owner.submissionIDs[token] isEqual:submission]) {
+                         // A failed monitor write or retry revoked this attempt.
+                         // Do not let a late success suppress its replacement.
+                         NSWithdrawNotifications(center, @[ token ]);
+                         return;
+                     }
                      if (NSShouldWithdrawPermissionNotification(NSReadPolicy(NULL), identity,
                                                                 [owner isCurrent:token])) {
                          NSWithdrawNotifications(center, @[ token ]);
@@ -141,6 +189,9 @@ static void NSWithdrawNotifications(id<NSPermissionNotificationCenter> center, N
                          return;
                      }
                      @synchronized(current) {
+                         if (![current.submissionIDs[token] isEqual:submission]) {
+                             return;
+                         }
                          if (NSShouldWithdrawPermissionNotification(NSReadPolicy(NULL), identity,
                                                                     [current isCurrent:token])) {
                              return;

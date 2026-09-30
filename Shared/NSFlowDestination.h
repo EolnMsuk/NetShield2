@@ -27,10 +27,9 @@ static inline NSDictionary *NSDestinationForFlow(NEFilterFlow *flow) {
             NSString *portKey = NSGlobalPortKey(((NWHostEndpoint *)socket.remoteEndpoint).port);
             port = portKey ? @([[portKey substringFromIndex:5] integerValue]) : nil;
             NSString *host = NSCleanDestinationHost(((NWHostEndpoint *)socket.remoteEndpoint).hostname);
-            struct in6_addr bytes;
-            if (inet_pton(AF_INET, host.UTF8String, &bytes) == 1 ||
-                inet_pton(AF_INET6, host.UTF8String, &bytes) == 1) {
-                address = host;
+            NSString *key = NSGlobalHostKey(host);
+            if ([key hasPrefix:@"ip:"]) {
+                address = [key substringFromIndex:3];
             } else if (!domain.length) {
                 domain = host;
             }

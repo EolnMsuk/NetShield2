@@ -4,7 +4,9 @@
 #import "NSPermissionNotifications.h"
 #import "../Shared/NSDestination.h"
 #import "../Shared/NSFlowDestination.h"
-#include <netdb.h>
+#import "NSDomainResolver.h"
+#import "../Shared/NSDNSCache.h"
+#include <errno.h>
 
 @interface NSFilterControlProvider : NEFilterControlProvider
 @property(nonatomic, strong) dispatch_source_t timer;
@@ -17,87 +19,52 @@
 @property(nonatomic, strong) NSPermissionQueue *permissions;
 @property(nonatomic, strong) NSPermissionNotifications *notifications;
 @property(nonatomic, strong) NSStoreLock *providerLock;
-@property(nonatomic) BOOL resolvingDomains;
-@property(nonatomic, copy) NSDictionary *resolvedRules;
-@property(nonatomic, strong) NSDate *lastDomainResolution;
+@property(nonatomic, strong) NSDomainResolver *resolver;
+@property(nonatomic, strong) NSMutableDictionary *pendingDNS;
+@property(nonatomic, strong) NSMutableDictionary *dnsIssues;
+@property(nonatomic, copy) NSString *dnsPublicationIssue;
+@property(nonatomic, copy) NSString *monitorIssue;
+@property(nonatomic) NSTimeInterval nextDNSPublication;
 @end
 
 @implementation NSFilterControlProvider
 - (void)refreshDomainAddresses:(NSPolicy *)policy {
-    NSDictionary *rules = policy.document[@"globalRules"] ?: @{};
-    if (self.resolvingDomains || ([rules isEqual:self.resolvedRules] && self.lastDomainResolution &&
-                                  -self.lastDomainResolution.timeIntervalSinceNow < 60)) {
+    [self.resolver refreshRules:policy.document[@"globalRules"] ?: @{}];
+    for (NSString *key in self.dnsIssues.allKeys) {
+        NSString *rule = policy.document[@"globalRules"][key];
+        if (!rule || [rule isEqual:@"allow"]) {
+            [self.dnsIssues removeObjectForKey:key];
+        }
+    }
+    NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
+    if (now < self.nextDNSPublication) {
         return;
     }
-    self.resolvingDomains = YES;
-    NSString *session = self.session;
-    NSArray *events = [self.events copy];
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-        NSMutableDictionary *resolved = [NSMutableDictionary new];
-        for (NSString *key in rules) {
-            if (![key hasPrefix:@"domain:"] || [rules[key] isEqual:@"allow"]) {
-                continue;
-            }
-            NSMutableOrderedSet *addresses = [NSMutableOrderedSet
-                orderedSetWithArray:policy.document[@"globalDomainAddresses"][key] ?: @[]];
-            NSArray *aliases = NSGlobalDomainAliases(key);
-            for (NSString *host in aliases) {
-                struct addrinfo hints = {0}, *answer = NULL;
-                hints.ai_family = AF_UNSPEC;
-                hints.ai_socktype = SOCK_STREAM;
-                if (getaddrinfo(host.UTF8String, NULL, &hints, &answer) == 0) {
-                    for (struct addrinfo *entry = answer; entry; entry = entry->ai_next) {
-                        char address[NI_MAXHOST];
-                        if (getnameinfo(entry->ai_addr, entry->ai_addrlen, address, sizeof(address), NULL, 0,
-                                        NI_NUMERICHOST) == 0) {
-                            NSString *addressKey = NSGlobalHostKey(@(address));
-                            if ([addressKey hasPrefix:@"ip:"]) {
-                                [addresses removeObject:addressKey];
-                                [addresses addObject:addressKey];
-                            }
-                        }
-                    }
-                    freeaddrinfo(answer);
-                }
-            }
-            // Retain observed peers too: DNS answers can vary between clients.
-            for (NSDictionary *event in events) {
-                NSDictionary *peer = event[@"destination"];
-                NSString *hostKey = NSGlobalHostKey(peer[@"domain"]);
-                NSString *addressKey = NSGlobalHostKey(peer[@"address"]);
-                if ([hostKey hasPrefix:@"domain:"] &&
-                    [aliases containsObject:[hostKey substringFromIndex:7]] &&
-                    [addressKey hasPrefix:@"ip:"]) {
-                    [addresses removeObject:addressKey];
-                    [addresses addObject:addressKey];
-                }
-            }
-            while (addresses.count > 128) {
-                [addresses removeObjectAtIndex:0];
-            }
-            resolved[key] = addresses.array;
-        }
-        @synchronized(self) {
-            if (self.stopped || ![self.session isEqual:session]) {
-                return;
-            }
-            self.resolvingDomains = NO;
-            self.resolvedRules = rules;
-            self.lastDomainResolution = NSDate.date;
-            NSUpdatePolicy(
-                ^BOOL(NSMutableDictionary *document, NSError **error) {
-                    // Never publish answers for a rule set that changed during DNS lookup.
-                    if (![rules isEqual:document[@"globalRules"] ?: @{}] ||
-                        [resolved isEqual:document[@"globalDomainAddresses"] ?: @{}]) {
-                        return NO;
-                    }
-                    document[@"globalDomainAddresses"] = resolved;
-                    return YES;
-                },
-                NULL);
-            [self refresh];
-        }
-    });
+    NSMutableDictionary *preview = [policy.document mutableCopy];
+    if (!NSApplyDNSResults(preview, self.pendingDNS, NSDate.date)) {
+        [self.pendingDNS removeAllObjects];
+        self.dnsPublicationIssue = @"";
+        return;
+    }
+    NSError *error = nil;
+    __block BOOL changed = NO;
+    BOOL saved = NSUpdatePolicy(
+        ^BOOL(NSMutableDictionary *document, NSError **mutationError) {
+            changed = NSApplyDNSResults(document, self.pendingDNS, NSDate.date);
+            return changed;
+        },
+        &error);
+    if (saved || (!changed && !error)) {
+        [self.pendingDNS removeAllObjects];
+        self.dnsPublicationIssue = @"";
+        self.nextDNSPublication = 0;
+    } else {
+        BOOL busy =
+            [error.domain isEqual:NSPOSIXErrorDomain] && (error.code == EAGAIN || error.code == EWOULDBLOCK);
+        self.nextDNSPublication = now + (busy ? 1 : 5);
+        self.dnsPublicationIssue =
+            [NSString stringWithFormat:@"DNS answers could not be saved: %@", error.localizedDescription];
+    }
 }
 - (NSDictionary *)snapshotWithRunning:(BOOL)running policyError:(NSError *)error {
     return @{
@@ -105,10 +72,12 @@
         @"schema" : @(NSSchemaVersion),
         @"controlRunning" : @(running),
         @"session" : self.session ?: @"",
+        @"activation" : self.filterConfiguration.vendorConfiguration[@"activation"] ?: @"",
         @"updated" : NSDate.date,
         @"lastReport" : self.lastReport ?: [NSDate dateWithTimeIntervalSince1970:0],
         @"revision" : self.revision ?: @"",
-        @"policyError" : error.localizedDescription ?: @"",
+        @"policyError" : error.localizedDescription ?: self.monitorIssue ?: @"",
+        @"dnsIssue" : self.dnsPublicationIssue.length ? self.dnsPublicationIssue : (self.dnsIssues.allValues.firstObject ?: @""),
         @"events" : [self.events copy] ?: @[],
         @"requests" : self.permissions.requests ?: @[],
         @"notificationDeliveryIssue" : self.notifications.deliveryIssue ?: @"",
@@ -125,6 +94,7 @@
         NSPolicy *policy = NSReadPolicy(&error);
         if (policy) {
             [self refreshDomainAddresses:policy];
+            policy = NSReadPolicy(&error);
         }
         [self.permissions resolveWithPolicy:policy now:NSProcessInfo.processInfo.systemUptime];
         NSString *retry = NSReadDocument(NSNotificationRetryFile, NULL)[@"revision"];
@@ -136,8 +106,17 @@
             self.revision = revision;
             [self notifyRulesChanged];
         }
-        NSWriteDocument([self snapshotWithRunning:YES policyError:error], NSMonitorFile, NULL);
-        [self.notifications updateRequests:self.permissions.requests policy:policy retryRevision:retry];
+        NSError *writeError = nil;
+        BOOL published = [self.notifications publishSnapshot:[self snapshotWithRunning:YES policyError:error]
+                                                      policy:policy
+                                               retryRevision:retry
+                                                       error:&writeError];
+        self.monitorIssue =
+            published ? @""
+                      : [NSString stringWithFormat:@"Permission requests could not be published: %@",
+                                                   writeError.localizedDescription];
+        // Withdraw unusable banners during storage failure. Recovery publishes
+        // the retained requests before re-submission, with their original tokens.
     }
 }
 - (void)scheduleRefresh {
@@ -184,13 +163,45 @@
         self.notifications = [NSPermissionNotifications new];
         self.session = NSUUID.UUID.UUIDString;
         self.refreshScheduled = NO;
-        self.resolvingDomains = NO;
-        self.resolvedRules = nil;
-        self.lastDomainResolution = nil;
+        self.pendingDNS = [NSMutableDictionary new];
+        self.dnsIssues = [NSMutableDictionary new];
+        self.dnsPublicationIssue = @"";
+        self.monitorIssue = @"";
+        self.nextDNSPublication = 0;
+        __weak typeof(self) dnsOwner = self;
+        NSString *dnsSession = self.session;
+        self.resolver = [[NSDomainResolver alloc]
+            initWithCompletion:^(NSString *key, NSString *rule, NSDictionary *result, NSError *lookupError) {
+                NSFilterControlProvider *owner = dnsOwner;
+                if (!owner) {
+                    return;
+                }
+                @synchronized(owner) {
+                    if (owner.stopped || ![owner.session isEqual:dnsSession]) {
+                        return;
+                    }
+                    if (lookupError) {
+                        owner.dnsIssues[key] = lookupError.localizedDescription;
+                    } else {
+                        [owner.dnsIssues removeObjectForKey:key];
+                        NSMutableDictionary *entry = [result mutableCopy];
+                        entry[@"rule"] = rule;
+                        // Bound unpublished data even while shared storage is unavailable.
+                        if (owner.pendingDNS.count < 64 || owner.pendingDNS[key]) {
+                            owner.pendingDNS[key] = entry;
+                        } else {
+                            owner.dnsIssues[key] =
+                                @"DNS publication backlog is full; answers will be retried.";
+                        }
+                    }
+                    [owner scheduleRefresh];
+                }
+            }];
         self.stopped = NO;
         if (!NSWriteDocument([self snapshotWithRunning:YES policyError:nil], NSMonitorFile, &error)) {
             self.stopped = YES;
             [self.notifications stop];
+            [self.resolver stop];
             [self.providerLock unlock];
             self.providerLock = nil;
             completionHandler(error);
@@ -277,6 +288,7 @@
             completionHandler([NEFilterControlVerdict updateRules]);
             return;
         }
+        [self.permissions resolveWithPolicy:policy now:NSProcessInfo.processInfo.systemUptime];
         self.lastReport = NSDate.date;
         __weak typeof(self) weakSelf = self;
         [self.permissions
@@ -321,6 +333,7 @@
         self.stopped = YES;
         [self.permissions cancelAll];
         [self.notifications stop];
+        [self.resolver stop];
         if (self.timer) {
             dispatch_source_cancel(self.timer);
             self.timer = nil;

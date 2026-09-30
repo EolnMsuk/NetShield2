@@ -41,8 +41,9 @@
 - (void)refreshTableKeepingPosition {
     NSArray *signature = @[
         self.policy.document ?: @{}, self.monitor[@"requests"] ?: @[], self.monitor[@"events"] ?: @[],
-        self.monitor[@"policyError"] ?: @"", self.monitor[@"notificationDeliveryIssue"] ?: @"",
-        @([self hasFreshMonitor]), @(self.loaded), @(self.busy), @(NEFilterManager.sharedManager.enabled),
+        self.monitor[@"policyError"] ?: @"", self.monitor[@"dnsIssue"] ?: @"",
+        self.monitor[@"notificationDeliveryIssue"] ?: @"", @([self hasFreshMonitor]), @(self.loaded),
+        @(self.busy), @(NEFilterManager.sharedManager.enabled),
         @(NEFilterManager.sharedManager.providerConfiguration.filterSockets), self.message ?: @"",
         self.notificationStatus ?: @"", self.policyReadError ?: @"", self.monitor[@"overflowCount"] ?: @0,
         self.monitor[@"evictedRequestCount"] ?: @0
@@ -135,7 +136,8 @@
     if (section == NSDashboardSectionGlobalRules) {
         return @"Overrides app rules and the iOS system traffic allowance. Matching order: "
                @"exact IP, domain, remote port, then local port. Tap to edit or remove. Changes apply "
-               @"to new connections.";
+               @"to new connections. Domain blocks also use DNS addresses for flows without a hostname; "
+               @"shared-hosting peers can be affected. DNS answers expire within five minutes.";
     }
     if (section == NSDashboardSectionFirewall) {
         return @"Your rules are kept when you turn the firewall off. Ask me prompts only for apps without a "
@@ -161,13 +163,14 @@
     if (section == NSDashboardSectionActivity) {
         return @"Up to 300 recorded events grouped by process, IP, direction and outcome, newest "
                @"first. "
-               @"Counts and totals cover retained events. Data totals arrive when a connection closes; "
+               @"Connections count distinct flow IDs in retained history. Data totals arrive when a "
+               @"connection closes; "
                @"permission decisions show no data totals. Tap a process to change its rule.";
     }
     if (section == NSDashboardSectionSupport) {
         return @"Developed by EolnMsuk.";
     }
-    return @"NetShield2 2.2.3 / iOS 15-18 rootless. Filters connections provided by iOS; system-exempt "
+    return @"NetShield2 2.2.4 / iOS 15-18 rootless. Filters connections provided by iOS; system-exempt "
            @"traffic is not guaranteed covered.";
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)path {
@@ -243,6 +246,9 @@
         }
         if ([self.monitor[@"policyError"] length]) {
             detail = self.monitor[@"policyError"];
+        }
+        if ([self.monitor[@"dnsIssue"] length]) {
+            detail = [detail stringByAppendingFormat:@"\n%@", self.monitor[@"dnsIssue"]];
         }
         if (self.policyReadError.length) {
             detail = self.policyReadError;

@@ -174,12 +174,34 @@ BOOL NSUpdatePolicy(BOOL (^mutation)(NSMutableDictionary *, NSError **), NSError
         if (addresses) {
             document[@"globalDomainAddresses"] = addresses;
         }
+        NSMutableDictionary *expirations = [document[@"globalDomainExpirations"] mutableCopy];
+        for (NSString *key in expirations.allKeys) {
+            if (!addresses[key]) {
+                [expirations removeObjectForKey:key];
+            }
+        }
+        if (expirations) {
+            document[@"globalDomainExpirations"] = expirations;
+        }
         document[@"revision"] = NSUUID.UUID.UUIDString;
         NSPolicy *validated = [NSPolicy policyWithDocument:document error:error];
         return validated && NSWriteDocument(validated.document, NSPolicyFile, error);
     } @finally {
         [lock unlock];
     }
+}
+BOOL NSUseDefaultRule(NSMutableDictionary *document, NSString *identity, NSError **error) {
+    NSMutableDictionary *generations = [document[@"askGenerations"] mutableCopy] ?: [NSMutableDictionary new];
+    if (!generations[identity] && generations.count >= NSMaximumRules) {
+        if (error) {
+            *error = NSStorageError(@"The ask-again history is full. Reset Rules & History to clear it.");
+        }
+        return NO;
+    }
+    generations[identity] = NSUUID.UUID.UUIDString;
+    document[@"askGenerations"] = generations;
+    [document[@"rules"] removeObjectForKey:identity];
+    return YES;
 }
 BOOL NSResetSharedState(BOOL legacyProviderMayBeRunning, NSError **error) {
     return NSResetSharedStateWithOptions(legacyProviderMayBeRunning, NO, error);
@@ -220,9 +242,9 @@ BOOL NSResetSharedStateWithOptions(BOOL legacyProviderMayBeRunning, BOOL preserv
                 replacement[@"rules"] = @{};
                 replacement[@"globalRules"] = @{};
                 [replacement removeObjectForKey:@"globalDomainAddresses"];
-                replacement[@"allowAppleSystemProcesses"] = @YES;
-                replacement[@"filterSockets"] = @YES;
+                [replacement removeObjectForKey:@"globalDomainExpirations"];
                 [replacement removeObjectForKey:@"ruleDestinations"];
+                [replacement removeObjectForKey:@"askGenerations"];
                 replacement[@"revision"] = NSUUID.UUID.UUIDString;
             }
             if (!NSWriteDocument(replacement, NSPolicyFile, error)) {
@@ -298,6 +320,11 @@ NSDictionary *NSReadMonitor(void) {
     if (d[@"notificationDeliveryIssue"] && ![d[@"notificationDeliveryIssue"] isKindOfClass:NSString.class]) {
         return @{};
     }
+    for (NSString *key in @[ @"dnsIssue", @"activation", @"session" ]) {
+        if (d[key] && ![d[key] isKindOfClass:NSString.class]) {
+            return @{};
+        }
+    }
     for (NSString *key in @[ @"overflowCount", @"evictedRequestCount", @"engine" ]) {
         if (d[key] && ![d[key] isKindOfClass:NSNumber.class]) {
             return @{};
@@ -359,6 +386,16 @@ NSDictionary *NSPermissionResponseDocument(NSDictionary *request, NSDictionary *
                                     @"NetShield2 to review it.");
         }
         return nil;
+    }
+    for (NSDictionary *candidate in monitor[@"requests"]) {
+        if ([candidate[@"token"] isEqual:request[@"token"]] &&
+            ![(candidate[@"askGeneration"]
+                   ?: @"") isEqual:(policy.document[@"askGenerations"][request[@"identity"]] ?: @"")]) {
+            if (error) {
+                *error = NSStorageError(@"This request was replaced by Ask Again. Retry the app.");
+            }
+            return nil;
+        }
     }
     if (![policy requiresPermissionForIdentity:request[@"identity"]]) {
         if (error) {
