@@ -23,10 +23,12 @@ sources = [
 ]
 with tempfile.TemporaryDirectory(prefix="netshield-tests-") as directory:
     executable = pathlib.Path(directory) / "regression-tests"
+    # Apple SDKs expose DNSService APIs through the automatically linked
+    # libSystem; there is no separate libdns_sd to request here.
     subprocess.run([
         "xcrun", "--sdk", "macosx", "clang", "-fobjc-arc", "-fblocks",
         "-DNS_TESTING=1", "-Wall", "-Wextra", "-Werror", "-Wno-unused-parameter",
-        "-framework", "Foundation", "-framework", "UserNotifications", "-ldns_sd",
+        "-framework", "Foundation", "-framework", "UserNotifications",
         *sources, "-o", str(executable),
     ], cwd=ROOT, check=True)
     subprocess.run([str(executable)], cwd=ROOT, check=True)

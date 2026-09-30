@@ -5,5 +5,5 @@ NetShield2Control_FRAMEWORKS = Foundation NetworkExtension UserNotifications
 NetShield2Control_CFLAGS = -fobjc-arc -Wall -Wextra -Wno-unused-parameter -Werror=unguarded-availability
 NetShield2Control_CODESIGN_FLAGS = -SEntitlements.plist
 NetShield2Control_INSTALL_PATH = /Applications/NetShield2.app/PlugIns
-NetShield2Control_LIBRARIES = dns_sd
+# DNSService APIs are supplied by the automatically linked libSystem on iOS.
 include $(THEOS_MAKE_PATH)/appex.mk
