@@ -143,9 +143,8 @@
     if (section == NSDashboardSectionRequests) {
         return [NSString
             stringWithFormat:
-                @"Unanswered connections are blocked after 30 seconds. The latest %d expired requests stay "
-                @"available. During this filter session: %@ connections rejected at queue capacity; %@ older "
-                @"requests removed. Retry an app if its request is no longer listed.",
+                @"The latest %d expired requests stay available. During this filter session: %@ connections "
+                @"rejected at queue capacity; %@ older requests removed. ",
                 NSMaximumRequestHistory, self.monitor[@"overflowCount"] ?: @0,
                 self.monitor[@"evictedRequestCount"] ?: @0];
     }
