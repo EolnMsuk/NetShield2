@@ -148,26 +148,18 @@
                 self.monitor[@"evictedRequestCount"] ?: @0];
     }
     if (section == NSDashboardSectionRules) {
-        return @"Tap an app identity to change its rule. Changes affect new connections; close and reopen "
-               @"the app to end existing connections.";
+        return @"Tap an app identity to change its rule.";
     }
     if (section == NSDashboardSectionNotifications) {
-        return @"Do Not Disturb silences banners unless you allow NetShield2 in Settings > Focus > Do Not "
-               @"Disturb > Apps.";
+        return @"Tap Notification Settings to customize.";
     }
     if (section == NSDashboardSectionActivity) {
-        return @"Up to 300 recorded events grouped by process, matching domain or IP, remote port and "
-               @"direction, newest first. Local ports and allowed/blocked outcomes do not split groups. "
-               @"The latest connection supplies the details and color; received and sent totals cover the "
-               @"group. "
-               @"Connections count distinct flow IDs in retained history. Data totals arrive when a "
-               @"connection closes. Tap a process to change its rule.";
+        return @"Up to 300 recorded events";
     }
     if (section == NSDashboardSectionSupport) {
         return @"Developed by EolnMsuk.";
     }
-    return @"NetShield2 2.2.5 / iOS 15-18 rootless. Filters connections provided by iOS; system-exempt "
-           @"traffic is not guaranteed covered.";
+    return @"NetShield2 2.2.5 / iOS 15-18.";
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)path {
     UITableViewCell *cached = nil;
