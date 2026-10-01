@@ -15,8 +15,6 @@ void NSRemoveInstalledFilter(id<NSFilterRemovalManager> manager, void (^completi
                 completion(removeError);
                 return;
             }
-            // Removal leaves the manager's in-memory configuration populated.
-            // Reload before confirming that persistent preferences are gone.
             [manager loadFromPreferencesWithCompletionHandler:^(NSError *verifyError) {
                 if (verifyError) {
                     completion(verifyError);

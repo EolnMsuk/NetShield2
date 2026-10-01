@@ -5,13 +5,9 @@ static inline BOOL NSDNSExpiryIsLive(id expiry, NSDate *now) {
         return NO;
     }
     NSTimeInterval remaining = [expiry timeIntervalSinceDate:now];
-    // The resolver never grants a lifetime over five minutes. A clock rollback
-    // must not turn an old entry into a long-lived block.
     return remaining > 0 && remaining <= 300;
 }
 
-// Caller owns policy.lock. Replace answer sets, never union old or observed IPs.
-// Returns NO only when the document is unchanged; persistence owns I/O errors.
 static inline BOOL NSApplyDNSResults(NSMutableDictionary *document, NSDictionary *pending, NSDate *now) {
     NSMutableDictionary *addresses =
         [document[@"globalDomainAddresses"] mutableCopy] ?: [NSMutableDictionary new];

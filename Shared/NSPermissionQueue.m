@@ -111,7 +111,6 @@
         completion(NO);
         return nil;
     }
-    // Retain the decision prompt after timeout, without holding a connection open.
     for (NSPermissionEntry *old in self.history) {
         if ([old.identity isEqual:identity]) {
             completion(NO);

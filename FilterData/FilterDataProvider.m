@@ -20,8 +20,6 @@
     NSPolicy *policy = NSReadPolicy(NULL);
     NSDictionary *destination = NSDestinationForFlow(flow);
     if ([flow isKindOfClass:NEFilterSocketFlow.class] && [policy needsSocketDestination:destination]) {
-        // Hold data until endpoint metadata arrives. No payload bytes are admitted
-        // or persisted. The first data callback either decides or fails closed.
         return [NEFilterNewFlowVerdict filterDataVerdictWithFilterInbound:YES
                                                          peekInboundBytes:1
                                                            filterOutbound:YES

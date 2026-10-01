@@ -115,8 +115,6 @@
             published ? @""
                       : [NSString stringWithFormat:@"Permission requests could not be published: %@",
                                                    writeError.localizedDescription];
-        // Withdraw unusable banners during storage failure. Recovery publishes
-        // the retained requests before re-submission, with their original tokens.
     }
 }
 - (void)scheduleRefresh {
@@ -186,7 +184,6 @@
                         [owner.dnsIssues removeObjectForKey:key];
                         NSMutableDictionary *entry = [result mutableCopy];
                         entry[@"rule"] = rule;
-                        // Bound unpublished data even while shared storage is unavailable.
                         if (owner.pendingDNS.count < 64 || owner.pendingDNS[key]) {
                             owner.pendingDNS[key] = entry;
                         } else {

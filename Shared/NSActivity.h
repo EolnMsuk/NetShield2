@@ -9,7 +9,6 @@ static inline NSUInteger NSActivityRoot(NSMutableArray<NSNumber *> *parents, NSU
     return index;
 }
 
-// A display-only projection of the retained event history. Never persist these totals.
 static inline NSArray<NSDictionary *> *NSGroupedActivity(NSArray<NSDictionary *> *events) {
     NSMutableDictionary<NSNumber *, NSMutableDictionary *> *groups = [NSMutableDictionary new];
     NSMutableArray<NSMutableDictionary *> *ordered = [NSMutableArray new];
@@ -17,8 +16,6 @@ static inline NSArray<NSDictionary *> *NSGroupedActivity(NSArray<NSDictionary *>
         sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *left, NSDictionary *right) {
             return [right[@"time"] compare:left[@"time"]];
         }];
-    // Reports carry cumulative flow totals. Coalesce admission, permission, and
-    // closure events before grouping; never add the same flow's totals twice.
     NSMutableDictionary *flows = [NSMutableDictionary new];
     NSMutableArray *unique = [NSMutableArray new];
     for (NSDictionary *event in newestFirst) {
@@ -44,8 +41,6 @@ static inline NSArray<NSDictionary *> *NSGroupedActivity(NSArray<NSDictionary *>
         }
         flow[@"destination"] = peer;
     }
-    // Either host can join peers within the same process, remote port and direction.
-    // Resolve all links before totaling: an older event can bridge two newer groups.
     NSMutableArray<NSNumber *> *parents = [NSMutableArray new];
     NSMutableDictionary<NSArray *, NSNumber *> *hosts = [NSMutableDictionary new];
     for (NSUInteger index = 0; index < unique.count; index++) {
@@ -79,7 +74,6 @@ static inline NSArray<NSDictionary *> *NSGroupedActivity(NSArray<NSDictionary *>
         }[action]
                                 ?: @"other";
         NSDictionary *destination = event[@"destination"];
-        // Newest first: only counts and byte totals change on the representative.
         NSArray *key = @[
             event[@"identity"], NSGlobalHostKey(destination[@"address"]) ?: NSGlobalHostKey(destination[@"domain"]) ?: @"",
             destination[@"port"] ?: @0, event[@"direction"]
@@ -92,7 +86,6 @@ static inline NSArray<NSDictionary *> *NSGroupedActivity(NSArray<NSDictionary *>
             group[@"connections"] = @0;
             group[@"bytesIn"] = @0;
             group[@"bytesOut"] = @0;
-            // Unknown peers cannot match one another merely because both are missing.
             group[@"groupKey"] = [key[1] length] ? key : [key arrayByAddingObject:@(index)];
             groups[root] = group;
             [ordered addObject:group];

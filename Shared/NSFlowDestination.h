@@ -35,7 +35,6 @@ static inline NSDictionary *NSDestinationForFlow(NEFilterFlow *flow) {
             }
         }
     }
-    // URL hosts can themselves be literal IP addresses.
     NSString *hostKey = NSGlobalHostKey(domain);
     if ([hostKey hasPrefix:@"ip:"]) {
         if (!address.length) {

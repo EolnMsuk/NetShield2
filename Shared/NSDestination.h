@@ -23,7 +23,6 @@ static inline BOOL NSValidDestination(id value) {
     return YES;
 }
 
-// Keep only host information, never URL paths, credentials, queries or payloads.
 static inline NSString *NSCleanDestinationHost(id value) {
     if (![value isKindOfClass:NSString.class] || [value length] > 253) {
         return @"";

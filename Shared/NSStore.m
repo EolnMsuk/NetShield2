@@ -155,7 +155,6 @@ BOOL NSUpdatePolicy(BOOL (^mutation)(NSMutableDictionary *, NSError **), NSError
         if (!mutation(document, error)) {
             return NO;
         }
-        // Remove stale context when a manually edited rule is deleted.
         NSMutableDictionary *destinations = [document[@"ruleDestinations"] mutableCopy];
         for (NSString *identity in destinations.allKeys) {
             if (!document[@"rules"][identity]) {
@@ -213,7 +212,6 @@ BOOL NSResetSharedStateWithOptions(BOOL legacyProviderMayBeRunning, BOOL preserv
     }
     @try {
         NSDictionary *monitor = NSReadMonitor();
-        // Older providers did not hold the lifetime lock. Require their explicit stop report.
         if ((legacyProviderMayBeRunning && (!monitor.count || [monitor[@"controlRunning"] boolValue])) ||
             ([monitor[@"controlRunning"] boolValue] && [monitor[@"engine"] integerValue] < 20014)) {
             if (error) {

@@ -136,7 +136,6 @@ static void NSWithdrawNotifications(id<NSPermissionNotificationCenter> center, N
     NSString *submission = NSUUID.UUID.UUIDString;
     self.submissionIDs[token] = submission;
     UNMutableNotificationContent *content = [UNMutableNotificationContent new];
-    // Keep destination details in the request/history, never in the system banner.
     content.title = identity;
     content.body = @"Wants network access. Long-press this banner to allow, block incoming or keep blocking.";
     content.categoryIdentifier = NSPermissionCategory;
@@ -155,7 +154,6 @@ static void NSWithdrawNotifications(id<NSPermissionNotificationCenter> center, N
                      return;
                  }
                  NSPermissionNotifications *owner = weakSelf;
-                 // Each provider run owns a separate dispatcher. Old callbacks cannot touch the next run.
                  if (!owner) {
                      NSWithdrawNotifications(center, @[ token ]);
                      return;
@@ -163,8 +161,6 @@ static void NSWithdrawNotifications(id<NSPermissionNotificationCenter> center, N
                  @synchronized(owner) {
                      [owner.submitting removeObject:token];
                      if (![owner.submissionIDs[token] isEqual:submission]) {
-                         // A failed monitor write or retry revoked this attempt.
-                         // Do not let a late success suppress its replacement.
                          NSWithdrawNotifications(center, @[ token ]);
                          return;
                      }

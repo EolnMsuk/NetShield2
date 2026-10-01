@@ -145,7 +145,6 @@ static void TestBoundedResolver(void) {
     dispatch_sync(queue, ^{
         operations[0].completion(answer, nil);
         VERIFY(operations.count == 5 && delivered == 1);
-        // An old callback cannot remove the replacement or deliver twice.
         operations[0].completion(answer, nil);
         VERIFY(operations.count == 5 && delivered == 1);
     });
@@ -211,7 +210,6 @@ static void TestExplicitAskAgain(void) {
             return NSUseDefaultRule(document, @"ask.app", error);
         },
         NULL));
-    // The old monitor is still fresh, but its generation must not answer a new request.
     VERIFY(!NSAnswerPermissionRequest(old, YES, NULL));
     [queue resolveWithPolicy:NSReadPolicy(NULL) now:32];
     VERIFY(queue.requests.count == 0);
@@ -232,7 +230,6 @@ static void TestExplicitAskAgain(void) {
         NULL));
     [queue resolveWithPolicy:NSReadPolicy(NULL) now:33];
     VERIFY([queue.requests.firstObject[@"token"] isEqual:fresh[@"token"]]);
-    // Save and immediately remove before the provider observes the saved rule.
     VERIFY(NSUpdatePolicy(
         ^BOOL(NSMutableDictionary *document, NSError **error) {
             document[@"rules"][@"ask.app"] = @"allow";
@@ -327,7 +324,6 @@ static void TestNotificationPublicationAndOrphans(void) {
                                                                          trigger:nil];
     center.pendingEnumeration(@[ orphan, center.requests.firstObject ]);
     VERIFY([center.removed containsObject:@"orphan"] && ![center.removed containsObject:@"live"]);
-    // Storage fails after submitting; a late successful submit must be withdrawn.
     VERIFY([NSFileManager.defaultManager removeItemAtURL:monitorURL error:NULL]);
     VERIFY([NSFileManager.defaultManager createDirectoryAtURL:monitorURL
                                   withIntermediateDirectories:NO

@@ -21,8 +21,6 @@ static void NSDNSAnswer(DNSServiceRef reference, DNSServiceFlags flags, uint32_t
     if (!lookup.completion) {
         return;
     }
-    // Apple leaves all other callback parameters undefined on error. In
-    // particular, never dereference address for a negative DNS response.
     if (error != kDNSServiceErr_NoError) {
         return;
     }
@@ -80,8 +78,6 @@ static void NSDNSAnswer(DNSServiceRef reference, DNSServiceFlags flags, uint32_t
             }
         }
         _timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, queue);
-        // Collect both address families within a fixed window, then release all
-        // DNS resources. Slow DNS never leaves an uncancellable worker behind.
         dispatch_source_set_timer(_timer, dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC),
                                   DISPATCH_TIME_FOREVER, NSEC_PER_MSEC * 50);
         __weak typeof(self) weakSelf = self;

@@ -155,8 +155,6 @@
         canonicalDocument[@"globalDomainAddresses"] = canonicalAddresses;
     }
     d = canonicalDocument;
-    // Older policies have no socket preference. Default to full flow coverage,
-    // while preserving an explicit choice to disable socket filtering.
     if (!sockets) {
         NSMutableDictionary *normalized = [d mutableCopy];
         normalized[@"filterSockets"] = @YES;
@@ -196,8 +194,6 @@
             return action;
         }
     }
-    // Only blocks use DNS address fallback: a shared hosting IP must never grant access.
-    // Combine directional blocks deterministically when several domains share an IP.
     BOOL inbound = NO, outbound = NO;
     NSDate *now = NSDate.date;
     for (NSString *key in self.document[@"globalDomainAddresses"]) {

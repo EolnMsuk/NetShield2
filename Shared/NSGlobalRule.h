@@ -1,7 +1,6 @@
 #import <Foundation/Foundation.h>
 #include <arpa/inet.h>
 
-// Canonical exact host/port keys shared by input validation and flow matching.
 static inline NSString *NSGlobalRawHostKey(id value) {
     if (![value isKindOfClass:NSString.class]) {
         return nil;
@@ -41,8 +40,6 @@ static inline NSString *NSGlobalRawHostKey(id value) {
     return [@"domain:" stringByAppendingString:host];
 }
 static inline NSString *NSGlobalHostKey(id value) {
-    // An unscoped address rule applies on every interface. Never mistake a
-    // scoped IPv6 endpoint for a DNS name.
     if ([value isKindOfClass:NSString.class]) {
         NSString *host =
             [value stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
@@ -71,7 +68,6 @@ static inline NSString *NSGlobalHostKey(id value) {
     }
     return key;
 }
-// Merge equivalent persisted IP keys conservatively during normalization.
 static inline NSString *NSMergeGlobalActions(NSString *left, NSString *right) {
     if (!left || [left isEqual:right]) {
         return right;
@@ -84,7 +80,6 @@ static inline NSString *NSMergeGlobalActions(NSString *left, NSString *right) {
     }
     return @"block";
 }
-// Input normalization is separate from validation of existing persisted keys.
 static inline NSString *NSGlobalInputHostKey(id value) {
     NSString *key = NSGlobalHostKey(value);
     if ([key hasPrefix:@"domain:"] && ![key hasPrefix:@"domain:www."]) {
@@ -113,7 +108,6 @@ static inline NSString *NSGlobalPortKey(id value) {
     }
     return [NSString stringWithFormat:@"port:%ld", (long)port.integerValue];
 }
-// Keep port: keys compatible with existing remote-port rules.
 static inline NSString *NSGlobalLocalPortKey(id value) {
     NSString *remoteKey = NSGlobalPortKey(value);
     return remoteKey ? [@"localPort:" stringByAppendingString:[remoteKey substringFromIndex:5]] : nil;

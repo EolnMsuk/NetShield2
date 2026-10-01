@@ -90,7 +90,6 @@ static void TestStorageFailureAndRecovery(void) {
     NSPolicy *policy = NSReadPolicy(NULL);
     NSMutableDictionary *replacement = [policy.document mutableCopy];
     replacement[@"default"] = @"block";
-    // Even an external replacement that reuses the revision must invalidate the cache.
     CHECK(NSWriteDocument(replacement, NSPolicyFile, NULL));
     CHECK(NSReadPolicy(NULL) != policy);
     CHECK(![NSReadPolicy(NULL) allowsIdentity:@"new.app" direction:NSFlowDirectionOutbound]);
@@ -361,7 +360,6 @@ static void TestActivityGrouping(void) {
     CHECK([localGroups[0][@"bytesOut"] integerValue] == 10);
     CHECK([localGroups[0][@"action"] isEqual:@"allow"]);
     CHECK([localGroups[0][@"destination"] isEqual:localEvent[@"destination"]]);
-    // The oldest record bridges two newer peers by domain on one side and IP on the other.
     NSDictionary *bridge = ActivityEvent(@"app", @{@"domain" : @"A.TEST.", @"address" : @"192.0.2.1"},
                                          @"outbound", @"allow", 1, 10, 20);
     NSDictionary *byDomain = ActivityEvent(@"app", @{@"domain" : @"a.test", @"address" : @"192.0.2.2"},
@@ -452,7 +450,6 @@ static void TestGlobalRules(void) {
             CHECK([policy requiresPermissionForIdentity:@"new.app" destination:@{}]);
         }
     }
-    // Local and remote ports are distinct; existing remote rules retain precedence.
     document[@"globalRules"] = @{@"localPort:50000" : @"block", @"port:443" : @"allow"};
     NSPolicy *portPolicy = [NSPolicy policyWithDocument:document error:NULL];
     CHECK([portPolicy allowsIdentity:@"app" direction:NSFlowDirectionOutbound destination:peer]);
@@ -551,7 +548,6 @@ static void TestGlobalRules(void) {
         document[@"globalRules"] = bad;
         CHECK([NSPolicy policyWithDocument:document error:NULL] == nil);
     }
-    // Each waiting flow keeps its own peer; resolving one must not decide another.
     NSPermissionQueue *queue = [NSPermissionQueue new];
     __block NSUInteger allowed = 0, blocked = 0, other = 0;
     [queue enqueueIdentity:@"new.app"
@@ -598,7 +594,6 @@ static void TestGlobalRules(void) {
     document[@"rules"] = @{@"new.app" : @"block"};
     [queue resolveWithPolicy:[NSPolicy policyWithDocument:document error:NULL] now:3];
     CHECK(other == 1 && queue.requests.count == 0);
-    // Persistence, cache invalidation, and both reset modes include global rules.
     for (NSNumber *preserve in @[ @YES, @NO ]) {
         CHECK(NSWriteDocument([NSPolicy defaultDocument], NSPolicyFile, NULL));
         NSPolicy *before = NSReadPolicy(NULL);
@@ -895,7 +890,6 @@ static void TestLateNotifications(void) {
 }
 - (void)removeFromPreferencesWithCompletionHandler:(void (^)(NSError *))completion {
     self.removals++;
-    // Like NEFilterManager, leave the cached configuration until reload.
     completion(self.removeError);
 }
 @end

@@ -54,7 +54,6 @@
         self.previous = [self.manager.providerConfiguration copy];
         self.previousDescription = self.manager.localizedDescription;
         self.wasEnabled = self.manager.enabled;
-        // Validate before deliberately interrupting an active filter.
         NSError *validationError = nil;
         if (!self.configuration(nil, NO, &validationError)) {
             [self finish:validationError ?: [self error:@"Policy unavailable; configuration unchanged."]];
@@ -107,8 +106,6 @@
             [self recover:error];
             return;
         }
-        // Re-read policy after the asynchronous stop/reload, never enable with
-        // preferences inferred from a failed policy read.
         NSError *buildError = nil;
         id configuration = self.configuration(self.previous, self.restoring, &buildError);
         if (!configuration) {
@@ -165,8 +162,6 @@
     }
     self.originalError = error;
     self.restoring = YES;
-    // A failed startup may still own the provider lock. Stop it before a single
-    // bounded rollback attempt. Never race an outstanding preference save.
     NSUInteger generation = ++self.generation;
     [self.manager loadFromPreferencesWithCompletionHandler:^(NSError *loadError) {
         if (generation != self.generation || !self.completion) {
