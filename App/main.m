@@ -10,8 +10,6 @@
 #include <unistd.h>
 
 static BOOL NSUseMobileAccount(void) {
-    // Package scripts run as root. Filter preferences belong to the same mobile
-    // user that runs the UI; do not query root's preferences and report success.
     struct passwd *account = getpwnam("mobile");
     if (!account) {
         fprintf(stderr, "NetShield2: cannot find the mobile account.\n");
@@ -35,8 +33,6 @@ static BOOL NSUseMobileAccount(void) {
 }
 
 static int NSUninstallFilter(void) {
-    // Independent of the main run loop so even a stalled framework call cannot
-    // leave the package manager waiting indefinitely.
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 30 * NSEC_PER_SEC),
                    dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
                        const char message[] = "NetShield2: filter removal timed out; uninstall cancelled.\n";
