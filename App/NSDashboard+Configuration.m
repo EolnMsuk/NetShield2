@@ -207,7 +207,6 @@
                 [self finishResetWhenStopped:0];
                 return;
             }
-            // Build 20014 introduced the provider lifetime lock.
             self.resetRequiresLegacyStop =
                 manager.enabled &&
                 [manager.providerConfiguration.vendorConfiguration[@"engine"] integerValue] < 20014;
