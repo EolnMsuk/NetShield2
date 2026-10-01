@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
 static BOOL NSUseMobileAccount(void) {
     struct passwd *account = getpwnam("mobile");
     if (!account) {
