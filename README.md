@@ -2,7 +2,7 @@
 
 NetShield2 is a customizable firewall & live network monitor with actionable notifications for jailbroken iOS 15 16 17 18 devices. Unlike the original [NetShield](https://github.com/EolnMsuk/NetShield) and paid [NetFence](https://havoc.app/package/netfence), the new [**NetShield2**](https://github.com/EolnMsuk/NetShield2/) is a system wide content filter, which does not require app injection to function.
 
-<img width="3857" height="5001" alt="1" src="https://github.com/user-attachments/assets/5ca44368-0cbb-4886-9b02-3822578cd90a" />
+<img width="1280" height="1676 alt="ALL" src="https://github.com/user-attachments/assets/95b961ac-1314-4133-93c4-e77f74f54e33" />
 
 ## Get started
 
