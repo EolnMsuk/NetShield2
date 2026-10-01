@@ -1,6 +1,7 @@
 #import <Foundation/Foundation.h>
 #import "../Shared/NSStore.h"
 #import "../Shared/NSActivity.h"
+#import "../Shared/NSExport.h"
 #import "../Shared/NSGlobalRule.h"
 #import "../App/NSFilterRemoval.h"
 #import "../Shared/NSDestination.h"
@@ -62,6 +63,59 @@ static void TestPolicyAndCache(void) {
         },
         NULL));
     CHECK([NSReadPolicy(NULL).document[@"rules"][@"test.app"] isEqual:@"block"]);
+}
+
+static void TestRulesAndActivityExport(void) {
+    NSArray *systemIdentities = @[ @"com.apple.test", @".com.apple.test", @"Apple.com.apple.test" ];
+    CHECK(!NSIsAppleSystemIdentity(nil));
+    CHECK(!NSIsAppleSystemIdentity(@""));
+    CHECK(!NSIsAppleSystemIdentity(@"com.appleish.test"));
+    CHECK(!NSIsAppleSystemIdentity(@"test.com.apple.app"));
+    NSMutableDictionary *rules = [@{@"test.app" : @"block-outbound"} mutableCopy];
+    for (NSString *identity in systemIdentities) {
+        CHECK(NSIsAppleSystemIdentity(identity));
+        rules[identity] = @"block";
+    }
+    NSDictionary *event = @{
+        @"identity" : @"test.app",
+        @"time" : [NSDate dateWithTimeIntervalSince1970:0],
+        @"action" : @"block",
+        @"direction" : @"outbound",
+        @"bytesIn" : @0,
+        @"bytesOut" : @4294967296ULL,
+        @"destination" : @{@"domain" : @"example.com", @"port" : @443}
+    };
+    for (NSNumber *allowSystem in @[ @YES, @NO ]) {
+        NSMutableDictionary *document = [[NSPolicy defaultDocument] mutableCopy];
+        document[@"rules"] = rules;
+        document[@"allowAppleSystemProcesses"] = allowSystem;
+        document[@"globalRules"] = @{@"port:443" : @"block"};
+        document[@"ruleDestinations"] = @{@"test.app" : event[@"destination"]};
+        NSPolicy *policy = [NSPolicy policyWithDocument:document error:NULL];
+        CHECK(policy != nil);
+        NSError *error = nil;
+        NSData *data = NSRulesAndActivityJSON(policy, @[ event ], @"2.2.6", &error);
+        CHECK(data && !error);
+        NSDictionary *export = [NSJSONSerialization JSONObjectWithData:data options:0 error:&error];
+        CHECK(export && !error);
+        CHECK([export[@"appRules"] isEqual:@{@"test.app" : @"block-outbound"}]);
+        CHECK([export[@"systemRules"] count] == systemIdentities.count);
+        for (NSString *identity in systemIdentities) {
+            CHECK([export[@"systemRules"][identity] isEqual:@"block"]);
+            CHECK([policy automaticallyAllowsIdentity:identity] == allowSystem.boolValue);
+        }
+        CHECK([export[@"allowAppleSystemProcesses"] isEqual:allowSystem]);
+        CHECK([export[@"globalRules"] isEqual:document[@"globalRules"]]);
+        CHECK([export[@"ruleDestinations"] isEqual:document[@"ruleDestinations"]]);
+        CHECK([export[@"recentActivity"][0][@"time"] isEqual:@"1970-01-01T00:00:00Z"]);
+        CHECK([export[@"recentActivity"][0][@"bytesOut"] isEqual:event[@"bytesOut"]]);
+        CHECK([event[@"time"] isKindOfClass:NSDate.class]);
+        CHECK([policy.document[@"rules"] isEqual:rules]);
+    }
+    NSData *empty = NSRulesAndActivityJSON(Policy(@{}), @[], @"2.2.6", NULL);
+    NSDictionary *export = [NSJSONSerialization JSONObjectWithData:empty options:0 error:NULL];
+    CHECK([export[@"appRules"] count] == 0 && [export[@"systemRules"] count] == 0);
+    CHECK([export[@"recentActivity"] count] == 0);
 }
 
 static void TestStorageFailureAndRecovery(void) {
@@ -933,6 +987,7 @@ int main(void) {
                                                            error:NULL]);
         NSSetTestContainer(root);
         TestPolicyAndCache();
+        TestRulesAndActivityExport();
         TestStorageFailureAndRecovery();
         TestConcurrentMutations();
         TestPermissionQueue();

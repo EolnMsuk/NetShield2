@@ -1,6 +1,7 @@
 #import "NSDashboard+Internal.h"
 #include <float.h>
 #import "../Shared/NSGlobalRule.h"
+#import "../Shared/NSExport.h"
 
 @implementation NSDashboard
 - (void)presentViewController:(UIViewController *)viewControllerToPresent
@@ -97,12 +98,15 @@
             [identities addObject:identity];
         }
     }
+    NSMutableSet *systemIdentities = [NSMutableSet new];
     for (NSString *identity in [identities allObjects]) {
-        if ([self.policy automaticallyAllowsIdentity:identity]) {
+        if (NSIsAppleSystemIdentity(identity)) {
+            [systemIdentities addObject:identity];
             [identities removeObject:identity];
         }
     }
     self.identities = [[identities allObjects] sortedArrayUsingSelector:@selector(compare:)];
+    self.systemIdentities = [[systemIdentities allObjects] sortedArrayUsingSelector:@selector(compare:)];
     self.globalRuleKeys =
         [[self.policy.document[@"globalRules"] allKeys] sortedArrayUsingSelector:@selector(compare:)];
     NSSet *tokens = [NSSet setWithArray:[self.monitor[@"requests"] valueForKey:@"token"] ?: @[]];
@@ -126,6 +130,52 @@
 }
 - (void)showError:(NSError *)error {
     [self showError:error operation:@"Policy/storage"];
+}
+- (void)exportRulesAndRecentActivityFromRow:(NSIndexPath *)path {
+    NSError *error = nil;
+    NSPolicy *policy = NSReadPolicy(&error);
+    if (!policy) {
+        [self showError:error operation:@"Export"];
+        return;
+    }
+    NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"";
+    NSData *data = NSRulesAndActivityJSON(policy, NSReadMonitor()[@"events"] ?: @[], version, &error);
+    if (!data) {
+        [self showError:error operation:@"Export"];
+        return;
+    }
+    NSURL *directory = [NSURL
+        fileURLWithPath:[NSTemporaryDirectory()
+                            stringByAppendingPathComponent:[@"NetShield2-Export-"
+                                                               stringByAppendingString:NSUUID.UUID
+                                                                                           .UUIDString]]
+            isDirectory:YES];
+    NSFileManager *files = NSFileManager.defaultManager;
+    if (![files createDirectoryAtURL:directory withIntermediateDirectories:YES attributes:nil error:&error]) {
+        [self showError:error operation:@"Export"];
+        return;
+    }
+    NSURL *url = [directory URLByAppendingPathComponent:@"NetShield2-Rules-and-Recent-Activity.json"];
+    if (![data writeToURL:url options:NSDataWritingAtomic error:&error]) {
+        [files removeItemAtURL:directory error:NULL];
+        [self showError:error operation:@"Export"];
+        return;
+    }
+    UIActivityViewController *share = [[UIActivityViewController alloc] initWithActivityItems:@[ url ]
+                                                                        applicationActivities:nil];
+    share.popoverPresentationController.sourceView = self.tableView;
+    share.popoverPresentationController.sourceRect = [self.tableView rectForRowAtIndexPath:path];
+    __weak typeof(self) weakSelf = self;
+    share.completionWithItemsHandler =
+        ^(UIActivityType activityType, BOOL completed, NSArray *returnedItems, NSError *activityError) {
+            [files removeItemAtURL:directory error:NULL];
+            if (activityError) {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    [weakSelf showError:activityError operation:@"Export"];
+                });
+            }
+        };
+    [self presentViewController:share animated:YES completion:nil];
 }
 - (void)showError:(NSError *)error operation:(NSString *)operation {
     self.message = [NSString stringWithFormat:@"%@: %@ (%@ %ld).", operation, error.localizedDescription,

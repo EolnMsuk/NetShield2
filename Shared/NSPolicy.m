@@ -175,10 +175,7 @@
     return policy->_document ? policy : nil;
 }
 - (BOOL)automaticallyAllowsIdentity:(NSString *)identity {
-    return [identity isKindOfClass:NSString.class] &&
-           [self.document[@"allowAppleSystemProcesses"] boolValue] &&
-           ([identity hasPrefix:@"com.apple."] || [identity hasPrefix:@".com.apple."] ||
-            [identity hasPrefix:@"Apple.com.apple."]);
+    return [self.document[@"allowAppleSystemProcesses"] boolValue] && NSIsAppleSystemIdentity(identity);
 }
 - (NSString *)globalActionForDestination:(NSDictionary *)destination {
     NSDictionary *rules = self.document[@"globalRules"];

@@ -2,7 +2,7 @@
 set -eu
 case "${1:-}" in
     configure)
-        printf '%s\n' 'NetShield2 2.2.5: open the app and turn on Firewall. No respring required.'
+        printf '%s\n' 'NetShield2 2.2.6: open the app and turn on Firewall. No respring required.'
         if [ -n "${2:-}" ]; then
             if [ -d /var/jb/Applications/NetShield.app ]; then
                 /var/jb/usr/bin/uicache -u /var/jb/Applications/NetShield.app || true

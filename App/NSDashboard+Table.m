@@ -2,6 +2,12 @@
 #import "../Shared/NSActivity.h"
 
 @implementation NSDashboard (Table)
+- (BOOL)showsSystemRules {
+    return self.policy && ![self.policy.document[@"allowAppleSystemProcesses"] boolValue];
+}
+- (NSArray<NSString *> *)identitiesForSection:(NSInteger)section {
+    return section == NSDashboardSectionSystemRules ? self.systemIdentities : self.identities;
+}
 - (id)rowKey:(NSIndexPath *)path {
     if (path.section == NSDashboardSectionGlobalRules && self.globalRuleKeys.count) {
         return self.globalRuleKeys[path.row];
@@ -9,8 +15,9 @@
     if (path.section == NSDashboardSectionRequests && [self.monitor[@"requests"] count]) {
         return self.monitor[@"requests"][path.row][@"token"];
     }
-    if (path.section == NSDashboardSectionRules && self.identities.count) {
-        return self.identities[path.row];
+    if ((path.section == NSDashboardSectionRules || path.section == NSDashboardSectionSystemRules) &&
+        [self identitiesForSection:path.section].count) {
+        return [self identitiesForSection:path.section][path.row];
     }
     if (path.section == NSDashboardSectionActivity && self.activityGroups.count) {
         return self.activityGroups[path.row][@"groupKey"];
@@ -112,6 +119,9 @@
     if (section == NSDashboardSectionRules) {
         return MAX((NSUInteger)1, self.identities.count);
     }
+    if (section == NSDashboardSectionSystemRules) {
+        return [self showsSystemRules] ? MAX((NSUInteger)1, self.systemIdentities.count) : 0;
+    }
     if (section == NSDashboardSectionNotifications) {
         return 2;
     }
@@ -119,7 +129,7 @@
         return MAX((NSUInteger)1, self.globalRuleKeys.count);
     }
     if (section == NSDashboardSectionAdvanced) {
-        return 5;
+        return 6;
     }
     if (section == NSDashboardSectionSupport) {
         return 2;
@@ -127,12 +137,18 @@
     return MAX((NSUInteger)1, self.activityGroups.count);
 }
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
+    if (section == NSDashboardSectionSystemRules && ![self showsSystemRules]) {
+        return nil;
+    }
     return @[
         @"Firewall", @"Waiting for your decision", @"Notifications", @"Advanced Settings", @"Support",
-        @"Global rules", @"App rules", @"Recent activity"
+        @"Global rules", @"App Rules", @"System Rules", @"Recent activity"
     ][section];
 }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
+    if (section == NSDashboardSectionSystemRules) {
+        return [self showsSystemRules] ? @"Tap a system identity to change its rule." : nil;
+    }
     if (section == NSDashboardSectionGlobalRules) {
         return @"Overrides app rules and the iOS system traffic allowance.";
     }
@@ -159,7 +175,17 @@
     if (section == NSDashboardSectionSupport) {
         return @"Developed by EolnMsuk.";
     }
-    return @"NetShield2 2.2.5 / iOS 15-18.";
+    return @"NetShield2 2.2.6 / iOS 15-18.";
+}
+- (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section {
+    return section == NSDashboardSectionSystemRules && ![self showsSystemRules]
+               ? CGFLOAT_MIN
+               : UITableViewAutomaticDimension;
+}
+- (CGFloat)tableView:(UITableView *)tableView heightForFooterInSection:(NSInteger)section {
+    return section == NSDashboardSectionSystemRules && ![self showsSystemRules]
+               ? CGFLOAT_MIN
+               : UITableViewAutomaticDimension;
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)path {
     UITableViewCell *cached = nil;
@@ -313,12 +339,15 @@
             cell.textLabel.text = [self globalRuleTitle:key];
             cell.detailTextLabel.text = [self ruleTitle:rule];
         }
-    } else if (path.section == NSDashboardSectionRules) {
-        if (!self.identities.count) {
-            cell.textLabel.text = @"Apps appear here when they connect";
+    } else if (path.section == NSDashboardSectionRules || path.section == NSDashboardSectionSystemRules) {
+        NSArray<NSString *> *identities = [self identitiesForSection:path.section];
+        if (!identities.count) {
+            cell.textLabel.text = path.section == NSDashboardSectionSystemRules
+                                      ? @"System processes appear here when they connect"
+                                      : @"Apps appear here when they connect";
             cell.accessoryType = UITableViewCellAccessoryNone;
         } else {
-            NSString *identity = self.identities[path.row];
+            NSString *identity = identities[path.row];
             NSString *rule = self.policy.document[@"rules"][identity];
             UIColor *color = [rule isEqual:@"allow"] ? UIColor.systemGreenColor
                              : [rule isEqual:@"block"] || [rule isEqual:@"block-outbound"]
@@ -390,14 +419,17 @@
     } else {
         cell.textLabel.text = @[
             @"Add a rule by app identity", @"Add a rule by IP / Domain", @"Add a rule by port number",
-            @"Reset Rules & History", @"Reset ALL Settings"
+            @"Export Rules and Recent Activity", @"Reset Rules & History", @"Reset ALL Settings"
         ][path.row];
         cell.detailTextLabel.text = @[
             @"For an exact identity supplied by iOS", @"For an IP or domain across all processes",
-            @"For a port across all processes", @"Reset rules and history only",
+            @"For a port across all processes", @"Share rules and recent activity as a JSON file",
+            @"Reset rules and history only",
             @"Removes all rules, permissions and filters. Runs automatically during uninstall."
         ][path.row];
-        if (path.row > 2) {
+        if (path.row == 3) {
+            cell.textLabel.textColor = UIColor.systemBlueColor;
+        } else if (path.row > 3) {
             cell.textLabel.textColor = UIColor.systemRedColor;
         }
     }
@@ -420,8 +452,9 @@
         [self presentRequest:self.monitor[@"requests"][path.row]];
     } else if (path.section == NSDashboardSectionGlobalRules && self.globalRuleKeys.count) {
         [self chooseGlobalRule:self.globalRuleKeys[path.row]];
-    } else if (path.section == NSDashboardSectionRules && self.identities.count) {
-        [self chooseActionForIdentity:self.identities[path.row] defaultKey:nil];
+    } else if ((path.section == NSDashboardSectionRules || path.section == NSDashboardSectionSystemRules) &&
+               [self identitiesForSection:path.section].count) {
+        [self chooseActionForIdentity:[self identitiesForSection:path.section][path.row] defaultKey:nil];
     } else if (path.section == NSDashboardSectionActivity && self.activityGroups.count) {
         NSString *identity = self.activityGroups[path.row][@"identity"];
         if (identity.length) {
@@ -446,8 +479,10 @@
             [self addIdentity];
         } else if (path.row == 1 || path.row == 2) {
             [self addGlobalRuleByPort:path.row == 2];
-        } else if (path.row < 5) {
-            BOOL reset = path.row == 3;
+        } else if (path.row == 3) {
+            [self exportRulesAndRecentActivityFromRow:path];
+        } else if (path.row < 6) {
+            BOOL reset = path.row == 4;
             UIAlertController *alert = [UIAlertController
                 alertControllerWithTitle:reset ? @"Reset Rules & History?" : @"Reset ALL Settings?"
                                  message:reset ? @"Deletes app and global rules, pending requests and "

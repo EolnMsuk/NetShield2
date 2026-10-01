@@ -18,6 +18,7 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
     NSDashboardSectionSupport,
     NSDashboardSectionGlobalRules,
     NSDashboardSectionRules,
+    NSDashboardSectionSystemRules,
     NSDashboardSectionActivity,
     NSDashboardSectionCount,
 };
@@ -28,6 +29,7 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 @property(nonatomic, copy) NSDictionary *monitor;
 @property(nonatomic, copy) NSArray<NSDictionary *> *activityGroups;
 @property(nonatomic, copy) NSArray<NSString *> *identities;
+@property(nonatomic, copy) NSArray<NSString *> *systemIdentities;
 @property(nonatomic, copy) NSArray<NSString *> *globalRuleKeys;
 @property(nonatomic, copy) NSString *message;
 @property(nonatomic, strong) NSTimer *timer;
@@ -51,6 +53,7 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 - (BOOL)hasFreshMonitor;
 - (void)chooseActionForIdentity:(NSString *)identity defaultKey:(NSString *)key;
 - (void)addIdentity;
+- (void)exportRulesAndRecentActivityFromRow:(NSIndexPath *)path;
 - (void)addGlobalRuleByPort:(BOOL)port;
 - (void)chooseGlobalRule:(NSString *)key;
 - (void)chooseGlobalRule:(NSString *)key portCreation:(BOOL)portCreation;

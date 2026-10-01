@@ -1,6 +1,12 @@
 #import <Foundation/Foundation.h>
 
 NS_ASSUME_NONNULL_BEGIN
+static inline BOOL NSIsAppleSystemIdentity(NSString *_Nullable identity) {
+    return [identity isKindOfClass:NSString.class] &&
+           ([identity hasPrefix:@"com.apple."] || [identity hasPrefix:@".com.apple."] ||
+            [identity hasPrefix:@"Apple.com.apple."]);
+}
+
 typedef NS_ENUM(NSInteger, NSFlowDirection) {
     NSFlowDirectionUnknown = 0,
     NSFlowDirectionInbound = 1,
