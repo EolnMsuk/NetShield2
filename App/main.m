@@ -51,7 +51,6 @@ static int NSUninstallFilter(void) {
         }
         finished = YES;
     });
-    // Network Extension delivers completion handlers on the main thread.
     while (!finished) {
         [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
     }
