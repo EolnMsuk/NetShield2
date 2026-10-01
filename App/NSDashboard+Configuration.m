@@ -1,5 +1,6 @@
 #import "NSDashboard+Internal.h"
 #include <errno.h>
+#import "../Shared/NSProviderHealth.h"
 
 @implementation NSDashboard (Configuration)
 - (void)socketFilteringChanged:(UISwitch *)sender {
@@ -102,10 +103,8 @@
         };
         restart.isRunning = ^BOOL(NEFilterProviderConfiguration *configuration) {
             NSDictionary *monitor = NSReadMonitor();
-            NSDate *updated = monitor[@"updated"];
-            NSTimeInterval age = updated ? -updated.timeIntervalSinceNow : NSMonitorFreshness;
-            return [monitor[@"activation"] isEqual:configuration.vendorConfiguration[@"activation"]] &&
-                   [monitor[@"controlRunning"] boolValue] && age >= 0 && age < NSMonitorFreshness &&
+            return NSHasCurrentControlHeartbeat(monitor, configuration.vendorConfiguration[@"activation"],
+                                                NSDate.date) &&
                    ![monitor[@"policyError"] length];
         };
         [restart start:^(NSError *error) {

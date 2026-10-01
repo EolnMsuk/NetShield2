@@ -155,6 +155,10 @@
 }
 - (void)recover:(NSError *)error {
     if (self.restoring || !self.wasEnabled || !self.touchedPreferences || !self.previous) {
+        if (self.touchedPreferences) {
+            [self disableFailedConfiguration:error];
+            return;
+        }
         [self finish:[self error:[NSString stringWithFormat:@"%@ Filtering is not verified; check Firewall "
                                                             @"status before relying on protection.",
                                                             error.localizedDescription]]];
@@ -184,6 +188,66 @@
             } else {
                 [self waitForStop:0];
             }
+        }];
+    }];
+}
+- (void)finishDisabledConfiguration:(NSError *)startupError {
+    [self finish:[self error:[NSString stringWithFormat:@"%@ Firewall is off because startup could not be "
+                                                        @"verified. Traffic is no longer protected by "
+                                                        @"NetShield2. Your rules are saved.",
+                                                        startupError.localizedDescription]]];
+}
+- (void)disableFailedConfiguration:(NSError *)startupError {
+    // An enabled configuration whose providers never start can hold all traffic.
+    // After a failed first activation or failed rollback, persist OFF and verify it.
+    // Never claim that a failed preference write restored connectivity.
+    NSUInteger generation = ++self.generation;
+    void (^failed)(NSError *) = ^(NSError *cleanupError) {
+        [self finish:[self error:[NSString
+                                     stringWithFormat:@"%@ Automatic disable failed: %@. Turn Firewall off "
+                                                      @"in Settings > General > VPN & Device Management > "
+                                                      @"Content Filter. Filtering is not verified.",
+                                                      startupError.localizedDescription,
+                                                      cleanupError.localizedDescription]]];
+    };
+    [self.manager loadFromPreferencesWithCompletionHandler:^(NSError *loadError) {
+        if (generation != self.generation || !self.completion) {
+            return;
+        }
+        self.generation++;
+        if (loadError) {
+            failed(loadError);
+            return;
+        }
+        if (!self.manager.enabled) {
+            // Do not create/save a configuration after the user denies the
+            // initial content-filter permission prompt.
+            [self finishDisabledConfiguration:startupError];
+            return;
+        }
+        self.manager.enabled = NO;
+        NSUInteger saveGeneration = self.generation;
+        [self.manager saveToPreferencesWithCompletionHandler:^(NSError *saveError) {
+            if (saveGeneration != self.generation || !self.completion) {
+                return;
+            }
+            self.generation++;
+            if (saveError) {
+                failed(saveError);
+                return;
+            }
+            NSUInteger verifyGeneration = self.generation;
+            [self.manager loadFromPreferencesWithCompletionHandler:^(NSError *verifyError) {
+                if (verifyGeneration != self.generation || !self.completion) {
+                    return;
+                }
+                self.generation++;
+                if (verifyError || self.manager.enabled) {
+                    failed(verifyError ?: [self error:@"The saved filter is still enabled."]);
+                    return;
+                }
+                [self finishDisabledConfiguration:startupError];
+            }];
         }];
     }];
 }

@@ -1,7 +1,7 @@
 #import "NSDashboard+Internal.h"
-#include <float.h>
 #import "../Shared/NSGlobalRule.h"
 #import "../Shared/NSExport.h"
+#import "../Shared/NSProviderHealth.h"
 
 @implementation NSDashboard
 - (void)presentViewController:(UIViewController *)viewControllerToPresent
@@ -124,9 +124,9 @@
     }
 }
 - (BOOL)hasFreshMonitor {
-    NSDate *updated = self.monitor[@"updated"];
-    NSTimeInterval age = [updated isKindOfClass:NSDate.class] ? -updated.timeIntervalSinceNow : DBL_MAX;
-    return age >= 0 && age < NSMonitorFreshness && [self.monitor[@"controlRunning"] boolValue];
+    NSString *activation =
+        NEFilterManager.sharedManager.providerConfiguration.vendorConfiguration[@"activation"];
+    return NSHasCurrentControlHeartbeat(self.monitor, activation, NSDate.date);
 }
 - (void)showError:(NSError *)error {
     [self showError:error operation:@"Policy/storage"];

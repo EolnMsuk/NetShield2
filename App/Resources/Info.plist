@@ -17,9 +17,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>2.2.6</string>
+	<string>2.2.7</string>
 	<key>CFBundleVersion</key>
-	<string>20025</string>
+	<string>20026</string>
 	<key>SBAppUsesLocalNotifications</key>
 	<true/>
 	<key>LSRequiresIPhoneOS</key>

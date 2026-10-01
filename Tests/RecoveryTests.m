@@ -5,6 +5,7 @@
 #import "../Shared/NSDestination.h"
 #import "../Shared/NSPermissionQueue.h"
 #import "../Shared/NSNotifications.h"
+#import "../Shared/NSProviderHealth.h"
 #import "../App/NSFilterRestart.h"
 #import "../FilterControl/NSPermissionNotifications.h"
 #import "../FilterControl/NSDomainResolver.h"
@@ -347,6 +348,7 @@ static void TestNotificationPublicationAndOrphans(void) {
 @property(nonatomic) NSUInteger saves;
 @property(nonatomic) NSUInteger failingLoad;
 @property(nonatomic, copy) NSSet *failingSaves;
+@property(nonatomic) NSUInteger ignoredSave;
 @property(nonatomic, strong) NSMutableArray *callbacks;
 @end
 @implementation RestartManager
@@ -374,7 +376,7 @@ static void TestNotificationPublicationAndOrphans(void) {
     self.saves++;
     [self.callbacks addObject:[completion copy]];
     BOOL failed = [self.failingSaves containsObject:@(self.saves)];
-    if (!failed) {
+    if (!failed && self.saves != self.ignoredSave) {
         self.saved = self.providerConfiguration;
         self.savedEnabled = self.enabled;
     }
@@ -383,10 +385,25 @@ static void TestNotificationPublicationAndOrphans(void) {
 @end
 
 static void TestRestartRecovery(void) {
-    for (NSUInteger scenario = 0; scenario < 8; scenario++) {
+    for (NSUInteger scenario = 0; scenario < 16; scenario++) {
         RestartManager *manager = [RestartManager new];
-        if (scenario == 7) {
+        if (scenario == 7 || (scenario >= 8 && scenario <= 12) || scenario == 15) {
             manager.savedEnabled = NO;
+        }
+        if ((scenario >= 8 && scenario <= 12) || scenario == 15) {
+            manager.saved = nil; // First installation, no previous configuration to restore.
+        }
+        if (scenario == 9) {
+            manager.failingSaves = [NSSet setWithObject:@2]; // Cleanup save fails.
+        }
+        if (scenario == 10 || scenario == 11) {
+            manager.failingLoad = scenario == 10 ? 3 : 4; // Cleanup load or verification fails.
+        }
+        if (scenario == 12) {
+            manager.ignoredSave = 2; // Save claims success but reload still says enabled.
+        }
+        if (scenario == 15) {
+            manager.failingSaves = [NSSet setWithObject:@1]; // User denies the initial save.
         }
         if (scenario == 1 || scenario == 6) {
             manager.failingSaves =
@@ -400,7 +417,7 @@ static void TestRestartRecovery(void) {
         __block NSUInteger builds = 0;
         restart.configuration = ^id(id previous, BOOL restoring, NSError **error) {
             builds++;
-            if (scenario == 5 && builds == 2) {
+            if ((scenario == 5 && builds == 2) || scenario == 14) {
                 if (error) {
                     *error = manager.failure;
                 }
@@ -414,6 +431,7 @@ static void TestRestartRecovery(void) {
         };
         restart.isRunning = ^BOOL(id configuration) {
             return manager.savedEnabled && [manager.saved isEqual:configuration] &&
+                   !(scenario >= 8 && scenario <= 13) &&
                    !(scenario == 3 && [configuration[@"name"] isEqual:@"new"]);
         };
         NSMutableArray *scheduled = [NSMutableArray new];
@@ -435,9 +453,30 @@ static void TestRestartRecovery(void) {
         }
         VERIFY(completed == 1);
         VERIFY((result == nil) == (scenario == 0 || scenario == 7));
-        if (scenario != 4 && scenario != 6) {
+        if (scenario < 8 && scenario != 4 && scenario != 6) {
             VERIFY(manager.savedEnabled);
             VERIFY([manager.saved[@"name"] isEqual:scenario == 0 || scenario == 7 ? @"new" : @"old"]);
+        }
+        if (scenario == 4 || scenario == 6 || scenario == 8 || scenario == 11 || scenario == 13) {
+            VERIFY(!manager.savedEnabled);
+        }
+        if (scenario == 8 || scenario == 13) {
+            VERIFY([result.localizedDescription containsString:@"Firewall is off"]);
+        }
+        if (scenario >= 9 && scenario <= 12) {
+            VERIFY([result.localizedDescription containsString:@"Automatic disable failed"]);
+            VERIFY([result.localizedDescription containsString:@"Settings"]);
+        }
+        if (scenario == 9 || scenario == 10 || scenario == 12) {
+            VERIFY(manager.savedEnabled);
+        }
+        if (scenario == 14) {
+            VERIFY(manager.saves == 0 && manager.savedEnabled);
+            VERIFY([manager.saved[@"name"] isEqual:@"old"]);
+        }
+        if (scenario == 15) {
+            VERIFY(manager.saves == 1 && !manager.savedEnabled && !manager.saved);
+            VERIFY([result.localizedDescription containsString:@"Firewall is off"]);
         }
         NSUInteger saves = manager.saves;
         for (void (^callback)(NSError *) in manager.callbacks) {
@@ -445,6 +484,28 @@ static void TestRestartRecovery(void) {
         }
         VERIFY(completed == 1 && saves == manager.saves);
     }
+}
+
+static void TestCurrentProviderHeartbeat(void) {
+    NSDate *now = NSDate.date;
+    NSMutableDictionary *monitor =
+        [@{@"activation" : @"current",
+           @"controlRunning" : @YES,
+           @"updated" : now} mutableCopy];
+    VERIFY(NSHasCurrentControlHeartbeat(monitor, @"current", now));
+    VERIFY(!NSHasCurrentControlHeartbeat(monitor, @"previous", now));
+    VERIFY(!NSHasCurrentControlHeartbeat(monitor, nil, now));
+    VERIFY(!NSHasCurrentControlHeartbeat(monitor, @"", now));
+    VERIFY(!NSHasCurrentControlHeartbeat(@{}, @"current", now));
+    monitor[@"updated"] = @"invalid";
+    VERIFY(!NSHasCurrentControlHeartbeat(monitor, @"current", now));
+    monitor[@"updated"] = [now dateByAddingTimeInterval:1];
+    VERIFY(!NSHasCurrentControlHeartbeat(monitor, @"current", now));
+    monitor[@"updated"] = [now dateByAddingTimeInterval:-NSMonitorFreshness];
+    VERIFY(!NSHasCurrentControlHeartbeat(monitor, @"current", now));
+    monitor[@"updated"] = now;
+    monitor[@"controlRunning"] = @NO;
+    VERIFY(!NSHasCurrentControlHeartbeat(monitor, @"current", now));
 }
 
 static void TestDistinctFlowActivity(void) {
@@ -497,6 +558,7 @@ void NSRunRecoveryTests(void) {
     TestExplicitAskAgain();
     TestNotificationPublicationAndOrphans();
     TestRestartRecovery();
+    TestCurrentProviderHeartbeat();
     TestDistinctFlowActivity();
     NSLog(
         @"Passed recovery, destination, DNS lifetime, notification publication, and flow aggregation checks");
