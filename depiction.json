@@ -8,10 +8,6 @@
       "tabname": "Details",
       "views": [
         {
-          "class": "DepictionHeaderView",
-          "title": "NetShield2"
-        },
-        {
           "class": "DepictionSubheaderView",
           "title": "System wide Firewall and Network Monitor",
           "useBoldText": false
