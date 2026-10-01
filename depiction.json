@@ -12,6 +12,11 @@
           "title": "NetShield2"
         },
         {
+          "class": "DepictionSubheaderView",
+          "title": "System wide Firewall and Network Monitor",
+          "useBoldText": false
+        },
+        {
           "class": "DepictionScreenshotsView",
           "itemSize": "{160, 346.453333}",
           "itemCornerRadius": 8,
