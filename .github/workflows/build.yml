@@ -77,7 +77,7 @@ jobs:
           chmod 755 layout/DEBIAN/postinst layout/DEBIAN/prerm
           gmake clean
           gmake package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME="$THEOS_PACKAGE_SCHEME"
-          test -f "packages/com.eolnmsuk.netshield_2.2.7_${PACKAGE_ARCH}.deb"
+          test -f "packages/com.eolnmsuk.netshield_2.2.8_${PACKAGE_ARCH}.deb"
       - name: Verify signed entitlements
         shell: bash
         run: |
@@ -85,11 +85,11 @@ jobs:
           app="$APP_PATH"
           for component in NetShield2 PlugIns/NetShield2Data.appex/NetShield2Data PlugIns/NetShield2Control.appex/NetShield2Control; do
             ldid -e "$app/$component" > "$RUNNER_TEMP/entitlements.plist"
-            python3 scripts/check_entitlements.py "$RUNNER_TEMP/entitlements.plist" "$component" --scheme "$THEOS_PACKAGE_SCHEME"
+            python3 scripts/check_entitlements.py "$RUNNER_TEMP/entitlements.plist" "$component"
           done
       - name: Upload release deb
         uses: actions/upload-artifact@v4
         with:
-          name: NetShield2-2.2.7-iOS15-18-${{ matrix.scheme }}
-          path: packages/com.eolnmsuk.netshield_2.2.7_${{ matrix.package_arch }}.deb
+          name: NetShield2-2.2.8-iOS15-18-${{ matrix.scheme }}
+          path: packages/com.eolnmsuk.netshield_2.2.8_${{ matrix.package_arch }}.deb
           if-no-files-found: error
