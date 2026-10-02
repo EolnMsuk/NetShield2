@@ -23,7 +23,7 @@ def plist(path):
 control = (ROOT / 'control').read_bytes()
 require(b'\r' not in control, 'control must have LF line endings')
 metadata = dict(line.split(': ', 1) for line in control.decode().splitlines() if ': ' in line)
-require(metadata['Version'] == '2.2.7', 'Wrong package version')
+require(metadata['Version'] == '2.2.8', 'Wrong package version')
 require(metadata['Name'] == 'NetShield2', 'Wrong product name')
 require(metadata['Architecture'] == 'iphoneos-arm64', 'Wrong rootless architecture')
 require(metadata['Depends'] == 'firmware (>= 15.0), firmware (<< 19.0), uikittools', 'Expected iOS 15-18 package range')
@@ -78,22 +78,7 @@ for directory, binary, suffix, point, principal in bundles:
     require(ent['com.apple.developer.networking.networkextension'] == ['content-filter-provider'], 'Missing NE entitlement')
     require(ent['com.apple.security.application-groups'] == ['group.com.eolnmsuk.netshield'], 'App group mismatch')
     require('com.apple.private.security.no-sandbox' not in ent, 'Do not remove provider isolation')
-    # RootHide's published executable requirements are an explicit deployment
-    # exception, not a blanket relaxation of the rootless signing policy.
-    expected_roothide = dict(ent)
-    expected_roothide.update({key: True for key in (
-        'platform-application',
-        'com.apple.private.security.no-sandbox',
-        'com.apple.private.security.storage.AppBundles',
-        'com.apple.private.security.storage.AppDataContainers',
-    )})
-    require(plist(source / 'Entitlements-roothide.plist') == expected_roothide,
-            f'{directory}: RootHide must add only the four documented deployment entitlements')
     make = (source / 'Makefile').read_text()
-    signing = (f'ifeq ($(THEOS_PACKAGE_SCHEME),roothide)\n'
-               f'{binary}_CODESIGN_FLAGS = -SEntitlements-roothide.plist\n'
-               f'else\n{binary}_CODESIGN_FLAGS = -SEntitlements.plist\nendif')
-    require(signing in make, f'{directory}: expected scheme-specific signing')
     files = re.search(rf'^{binary}_FILES = (.+)$', make, re.M)
     require(files is not None, 'Missing source list')
     for name in files.group(1).split():

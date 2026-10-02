@@ -7,7 +7,6 @@
 #import "NSDomainResolver.h"
 #import "../Shared/NSDNSCache.h"
 #include <errno.h>
-#import "../Shared/NSProviderDiagnostics.h"
 
 @interface NSFilterControlProvider : NEFilterControlProvider
 @property(nonatomic, strong) dispatch_source_t timer;
@@ -29,12 +28,6 @@
 @end
 
 @implementation NSFilterControlProvider
-- (instancetype)init {
-    if ((self = [super init])) {
-        NSProviderLog(@"control", @"initialized", nil, nil);
-    }
-    return self;
-}
 - (void)refreshDomainAddresses:(NSPolicy *)policy {
     [self.resolver refreshRules:policy.document[@"globalRules"] ?: @{}];
     for (NSString *key in self.dnsIssues.allKeys) {
@@ -147,19 +140,15 @@
                    });
 }
 - (void)startFilterWithCompletionHandler:(void (^)(NSError *))completionHandler {
-    NSString *activation = self.filterConfiguration.vendorConfiguration[@"activation"];
-    NSProviderLog(@"control", @"starting", activation, nil);
     NSError *error = nil;
     @synchronized(self) {
         self.stopped = YES;
         self.providerLock = NSAcquireProviderLock(&error);
         if (!self.providerLock) {
-            NSProviderLog(@"control", @"provider-lock-failed", activation, error);
             completionHandler(error);
             return;
         }
         if (!NSReadPolicy(&error)) {
-            NSProviderLog(@"control", @"policy-read-failed", activation, error);
             [self.providerLock unlock];
             self.providerLock = nil;
             completionHandler(error);
@@ -207,7 +196,6 @@
             }];
         self.stopped = NO;
         if (!NSWriteDocument([self snapshotWithRunning:YES policyError:nil], NSMonitorFile, &error)) {
-            NSProviderLog(@"control", @"monitor-write-failed", activation, error);
             self.stopped = YES;
             [self.notifications stop];
             [self.resolver stop];
@@ -234,7 +222,6 @@
         });
         dispatch_resume(self.timer);
     }
-    NSProviderLog(@"control", @"ready", activation, nil);
     completionHandler(nil);
 }
 - (void)handleReport:(NEFilterReport *)report {
@@ -339,8 +326,6 @@
 }
 - (void)stopFilterWithReason:(NEProviderStopReason)reason
            completionHandler:(void (^)(void))completionHandler {
-    NSProviderLog(@"control", [NSString stringWithFormat:@"stopped reason=%ld", (long)reason],
-                  self.filterConfiguration.vendorConfiguration[@"activation"], nil);
     @synchronized(self) {
         self.stopped = YES;
         [self.permissions cancelAll];

@@ -1,18 +1,12 @@
 import pathlib
 import plistlib
-import argparse
+import sys
 
 root = pathlib.Path(__file__).resolve().parents[1]
-parser = argparse.ArgumentParser()
-parser.add_argument('plist', type=pathlib.Path)
-parser.add_argument('component')
-parser.add_argument('--scheme', choices=('rootless', 'roothide'), default='rootless')
-args = parser.parse_args()
-component = args.component.split('/')[-1]
+component = sys.argv[2].split('/')[-1]
 directory = {'NetShield2': 'App', 'NetShield2Data': 'FilterData', 'NetShield2Control': 'FilterControl'}[component]
-actual = plistlib.loads(args.plist.read_bytes())
-filename = 'Entitlements-roothide.plist' if args.scheme == 'roothide' else 'Entitlements.plist'
-expected = plistlib.loads((root / directory / filename).read_bytes())
+actual = plistlib.loads(pathlib.Path(sys.argv[1]).read_bytes())
+expected = plistlib.loads((root / directory / 'Entitlements.plist').read_bytes())
 if actual != expected:
     raise SystemExit(f'Entitlement mismatch in {component}')
-print(f'Validated {args.scheme} signed entitlements for {component}')
+print(f'Validated signed entitlements for {component}')

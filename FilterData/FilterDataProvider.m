@@ -1,29 +1,19 @@
 #import <NetworkExtension/NetworkExtension.h>
 #import "../Shared/NSStore.h"
 #import "../Shared/NSFlowDestination.h"
-#import "../Shared/NSProviderDiagnostics.h"
 
 @interface NSFilterDataProvider : NEFilterDataProvider
 @end
 
 @implementation NSFilterDataProvider
-- (instancetype)init {
-    if ((self = [super init])) {
-        NSProviderLog(@"data", @"initialized", nil, nil);
-    }
-    return self;
-}
 - (NSFlowDirection)directionForFlow:(NEFilterFlow *)flow {
     return flow.direction == NETrafficDirectionInbound    ? NSFlowDirectionInbound
            : flow.direction == NETrafficDirectionOutbound ? NSFlowDirectionOutbound
                                                           : NSFlowDirectionUnknown;
 }
 - (void)startFilterWithCompletionHandler:(void (^)(NSError *))completionHandler {
-    NSString *activation = self.filterConfiguration.vendorConfiguration[@"activation"];
-    NSProviderLog(@"data", @"starting", activation, nil);
     NSError *error = nil;
     NSReadPolicy(&error);
-    NSProviderLog(@"data", error ? @"policy-read-failed" : @"ready", activation, error);
     completionHandler(error);
 }
 - (NEFilterNewFlowVerdict *)handleNewFlow:(NEFilterFlow *)flow {
@@ -93,8 +83,6 @@
 }
 - (void)stopFilterWithReason:(NEProviderStopReason)reason
            completionHandler:(void (^)(void))completionHandler {
-    NSProviderLog(@"data", [NSString stringWithFormat:@"stopped reason=%ld", (long)reason],
-                  self.filterConfiguration.vendorConfiguration[@"activation"], nil);
     completionHandler();
 }
 @end
