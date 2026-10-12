@@ -45,7 +45,9 @@ jobs:
         run: |
           set -euo pipefail
           git clone "https://github.com/$THEOS_REPOSITORY.git" "$THEOS"
-          git -C "$THEOS" checkout "$THEOS_REVISION"
+          # A pinned commit may no longer belong to an advertised upstream branch.
+          git -C "$THEOS" fetch origin "$THEOS_REVISION"
+          git -C "$THEOS" checkout --detach "$THEOS_REVISION"
           git -C "$THEOS" submodule update --init --recursive
           curl --fail --location --retry 3 \
             https://github.com/theos/sdks/releases/download/master-146e41f/iPhoneOS16.5.sdk.tar.xz \
