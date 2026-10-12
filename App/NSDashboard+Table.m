@@ -175,7 +175,7 @@
     if (section == NSDashboardSectionSupport) {
         return @"Developed by EolnMsuk.";
     }
-    return @"NetShield2 2.2.8 / iOS 15-18.";
+    return @"NetShield2 2.0.9 / iOS 15-18.";
 }
 - (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section {
     return section == NSDashboardSectionSystemRules && ![self showsSystemRules]
