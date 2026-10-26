@@ -419,16 +419,16 @@
         }
     } else if (path.section == NSDashboardSectionSupport) {
         cell.textLabel.text = @[
-            @"Reset Rules & History", @"Reset ALL Settings", @"Export Rules and Recent Activity",
-            @"GitHub Link", @"Support Developer"
+            @"Export Rules and Recent Activity", @"Reset Rules & History", @"Reset ALL Settings",
+            @"GitHub Link", @"Support the Developer"
         ][path.row];
         cell.detailTextLabel.text = @[
-            @"Reset rules and history only",
+            @"Share rules and recent activity as a JSON file", @"Reset rules and history only",
             @"Removes all rules, permissions and filters. Runs automatically during uninstall.",
-            @"Share rules and recent activity as a JSON file", @"Source code, releases and issues",
-            @"Choose Venmo or Crypto"
+            @"Source code, releases and issues", @"Choose Venmo or Crypto"
         ][path.row];
-        cell.textLabel.textColor = path.row < 2 ? UIColor.systemRedColor : UIColor.systemBlueColor;
+        cell.textLabel.textColor =
+            (path.row == 1 || path.row == 2) ? UIColor.systemRedColor : UIColor.systemBlueColor;
     } else {
         cell.textLabel.text =
             @[ @"Add a rule by app identity", @"Add a rule by IP / Domain",
@@ -484,10 +484,10 @@
             [self openSupportURL:[NSURL URLWithString:@"https://github.com/EolnMsuk/NetShield2/"]];
         } else if (path.row == 4) {
             [self supportDeveloper];
-        } else if (path.row == 2) {
+        } else if (path.row == 0) {
             [self exportRulesAndRecentActivityFromRow:path];
         } else {
-            BOOL reset = path.row == 0;
+            BOOL reset = path.row == 1;
             UIAlertController *alert = [UIAlertController
                 alertControllerWithTitle:reset ? @"Reset Rules & History?" : @"Reset ALL Settings?"
                                  message:reset ? @"Deletes app and global rules, pending requests and "

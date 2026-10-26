@@ -623,7 +623,7 @@
 }
 - (void)supportDeveloper {
     UIAlertController *alert = [UIAlertController
-        alertControllerWithTitle:@"Support Developer"
+        alertControllerWithTitle:@"Support the Developer"
                          message:@"Thank you for supporting EolnMsuk. Choose a donation method."
                   preferredStyle:UIAlertControllerStyleAlert];
     [alert

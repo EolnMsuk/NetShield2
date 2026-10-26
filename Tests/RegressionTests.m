@@ -503,7 +503,7 @@ static void TestGroupedGlobalRules(void) {
                        direction:NSFlowDirectionOutbound
                      destination:@{@"address" : @"192.168.1.13"}]);
     NSDictionary *export =
-        [NSJSONSerialization JSONObjectWithData:NSRulesAndActivityJSON(policy, @[], @"2.3.1", NULL)
+        [NSJSONSerialization JSONObjectWithData:NSRulesAndActivityJSON(policy, @[], @"2.3.2", NULL)
                                         options:0
                                           error:NULL];
     CHECK([export[@"globalRules"] isEqual:@{group : @"block"}]);
