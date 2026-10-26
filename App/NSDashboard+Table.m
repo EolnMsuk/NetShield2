@@ -176,7 +176,7 @@
     if (section == NSDashboardSectionActivity) {
         return @"Up to 300 recorded events";
     }
-    if (section == NSDashboardSectionSupport) {
+    if (section == NSDashboardSectionAdvanced) {
         NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
         return [NSString stringWithFormat:@"NetShield2 v%@ by EolnMsuk (%@ %@)", version,
                                           UIDevice.currentDevice.systemVersion, @NS_JAILBREAK_TYPE];

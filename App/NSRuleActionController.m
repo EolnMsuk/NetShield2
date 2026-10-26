@@ -29,6 +29,10 @@
         self.sheetPresentationController.detents = @[
             UISheetPresentationControllerDetent.mediumDetent, UISheetPresentationControllerDetent.largeDetent
         ];
+        if (self.opensExpanded) {
+            self.sheetPresentationController.selectedDetentIdentifier =
+                UISheetPresentationControllerDetentIdentifierLarge;
+        }
         self.sheetPresentationController.prefersGrabberVisible = YES;
     }
 }
@@ -72,6 +76,7 @@
         NSDictionary *choice = self.choices[path.row];
         UIColor *color = NSRuleColor(choice[@"rule"]);
         cell.textLabel.text = choice[@"title"];
+        cell.textLabel.textAlignment = self.centersActions ? NSTextAlignmentCenter : NSTextAlignmentNatural;
         cell.textLabel.textColor = color ?: UIColor.systemBlueColor;
         cell.tintColor = color ?: UIColor.systemBlueColor;
         if (color) {

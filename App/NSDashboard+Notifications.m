@@ -83,6 +83,8 @@
             NSIdentityDisplayName(request[@"identity"]), NSDestinationSummary(request[@"destination"])];
     NSRuleActionController *alert = [NSRuleActionController controllerWithTitle:@"Allow network access?"
                                                                         message:message];
+    alert.opensExpanded = YES;
+    alert.centersActions = YES;
     for (NSString *rule in @[ @"allow", @"block-inbound", @"block" ]) {
         [alert addActionWithTitle:[self ruleTitle:rule]
                              rule:rule
