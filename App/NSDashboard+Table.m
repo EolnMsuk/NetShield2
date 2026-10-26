@@ -145,8 +145,8 @@
         return nil;
     }
     return @[
-        @"Firewall", @"Waiting for your decision", @"Notifications", @"Advanced Settings", @"",
-        @"Global Rules", @"App Rules", @"System Rules", @"Recent activity"
+        @"Firewall", @"Waiting for your decision", @"Notifications", @"Reset Settings", @"", @"Global Rules",
+        @"App Rules", @"System Rules", @"Recent activity"
     ][section];
 }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
@@ -176,17 +176,34 @@
     if (section == NSDashboardSectionActivity) {
         return @"Up to 300 recorded events";
     }
-    if (section == NSDashboardSectionAdvanced) {
-        NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
-        return [NSString stringWithFormat:@"NetShield2 v%@ by EolnMsuk (%@ %@)", version,
-                                          UIDevice.currentDevice.systemVersion, @NS_JAILBREAK_TYPE];
-    }
     return nil;
 }
-- (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section {
-    if (section == NSDashboardSectionSupport) {
-        return 20;
+- (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section {
+    if (section != NSDashboardSectionSupport) {
+        return nil;
     }
+    UIView *header = [UIView new];
+    header.directionalLayoutMargins = NSDirectionalEdgeInsetsMake(20, 20, 8, 20);
+    UILabel *label = [UILabel new];
+    label.translatesAutoresizingMaskIntoConstraints = NO;
+    label.numberOfLines = 0;
+    label.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+    label.adjustsFontForContentSizeCategory = YES;
+    label.textColor = UIColor.secondaryLabelColor;
+    NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
+    label.text = [NSString stringWithFormat:@"NetShield2 v%@ by EolnMsuk (%@ %@)", version,
+                                            UIDevice.currentDevice.systemVersion, @NS_JAILBREAK_TYPE];
+    [header addSubview:label];
+    UILayoutGuide *margins = header.layoutMarginsGuide;
+    [NSLayoutConstraint activateConstraints:@[
+        [label.leadingAnchor constraintEqualToAnchor:margins.leadingAnchor],
+        [label.trailingAnchor constraintEqualToAnchor:margins.trailingAnchor],
+        [label.topAnchor constraintEqualToAnchor:margins.topAnchor],
+        [label.bottomAnchor constraintEqualToAnchor:margins.bottomAnchor]
+    ]];
+    return header;
+}
+- (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section {
     return section == NSDashboardSectionSystemRules && ![self showsSystemRules]
                ? CGFLOAT_MIN
                : UITableViewAutomaticDimension;
@@ -333,7 +350,7 @@
     } else if (path.section == NSDashboardSectionGlobalRules) {
         if (path.row == 0) {
             cell.textLabel.text = @"Add a Global Rule";
-            cell.textLabel.textColor = UIColor.systemBlueColor;
+            cell.textLabel.textColor = UIColor.labelColor;
             cell.detailTextLabel.text = @"Choose apps, destinations, ports and protocols";
         } else {
             NSString *key = self.globalRuleKeys[path.row - 1];

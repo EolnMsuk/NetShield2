@@ -68,7 +68,7 @@ with tempfile.TemporaryDirectory(prefix="netshield-uninstall-") as directory:
         assert "LYNX" not in result.stderr and "SnowBoard" not in result.stderr
         assert "Icon cache" not in result.stderr
         if expected_status:
-            assert "Reset ALL Settings" in result.stderr
+            assert "Reset Settings & Filter" in result.stderr
             assert "NetShield2: filter removal failed: mock error." in result.stderr
             assert f"exit {app_status}" in result.stderr
         else:
@@ -81,5 +81,5 @@ with tempfile.TemporaryDirectory(prefix="netshield-uninstall-") as directory:
                             capture_output=True, text=True, timeout=5)
     assert result.returncode != 0 and not log.read_text(), "Missing helper must stop removal"
     assert result.stdout == "" and "filter cleanup failed" in result.stderr
-    assert "Reset ALL Settings" in result.stderr
+    assert "Reset Settings & Filter" in result.stderr
 print("Passed uninstall hook checks: cleanup ordering, failures, missing helper and upgrade preservation")

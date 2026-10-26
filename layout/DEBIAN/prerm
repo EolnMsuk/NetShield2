@@ -14,7 +14,7 @@ case "${1:-}" in
                 esac
             done
             printf 'NetShield2: filter cleanup failed (exit %s); uninstall cancelled.\n' "$cleanup_status" >&2
-            printf '%s\n' 'Open NetShield2 > Advanced Settings > Reset ALL Settings, then retry removal.' >&2
+            printf '%s\n' 'Open NetShield2 > Reset Settings > Reset Settings & Filter, then retry removal.' >&2
             exit 1
         fi
         /var/jb/usr/bin/uicache -u /var/jb/Applications/NetShield2.app >/dev/null 2>&1 || true
