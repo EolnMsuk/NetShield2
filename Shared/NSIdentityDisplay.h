@@ -9,5 +9,6 @@ static inline NSString *NSIdentityDisplayName(id identity) {
     NSRange period = [identity rangeOfString:@"."];
     NSString *name =
         period.location == NSNotFound ? identity : [identity substringFromIndex:period.location + 1];
+    name = [name stringByReplacingOccurrencesOfString:@"com." withString:@""];
     return name.length ? name : @"Unidentified app";
 }

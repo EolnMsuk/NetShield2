@@ -448,9 +448,9 @@ static void TestActivityGrouping(void) {
 }
 static void TestIdentityDisplay(void) {
     CHECK([NSIdentityDisplayName(@"53Q6R32WPB.com.hammerandchisel.discord")
-        isEqual:@"com.hammerandchisel.discord"]);
+        isEqual:@"hammerandchisel.discord"]);
     CHECK([NSIdentityDisplayName(@"com.example.app") isEqual:@"example.app"]);
-    CHECK([NSIdentityDisplayName(@".com.apple.test") isEqual:@"com.apple.test"]);
+    CHECK([NSIdentityDisplayName(@".com.apple.test") isEqual:@"apple.test"]);
     CHECK([NSIdentityDisplayName(@"networkd") isEqual:@"networkd"]);
     CHECK([NSIdentityDisplayName(@"prefix.") isEqual:@"Unidentified app"]);
     CHECK([NSIdentityDisplayName(nil) isEqual:@"Unidentified app"]);
