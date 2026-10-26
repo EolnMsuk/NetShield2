@@ -6,7 +6,7 @@
 #import <CoreFoundation/CoreFoundation.h>
 
 static BOOL NSCustomRuleApplies(NSDictionary *rule, NSString *identity, NSDictionary *destination) {
-    if ([rule[@"identity"] length] && ![rule[@"identity"] isEqual:identity]) {
+    if ([rule[@"identities"] count] && ![rule[@"identities"] containsObject:identity ?: @""]) {
         return NO;
     }
     NSString *protocol = rule[@"protocol"];
@@ -233,12 +233,12 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
     policy->_globalRuleConditions = [NSGlobalRuleConditions(policy->_document[@"globalRules"]) copy];
     NSMutableArray *customRules = [NSMutableArray new];
     for (NSString *key in policy->_document[@"globalRules"]) {
-        NSArray<NSString *> *parts = NSCustomGlobalRuleComponents(key);
+        NSArray *parts = NSCustomGlobalRuleComponents(key);
         if (parts) {
             [customRules addObject:@{
-                @"identity" : parts[0],
-                @"hosts" : parts[1].length ? NSGlobalRuleMembers(parts[1]) : @[],
-                @"ports" : parts[2].length ? NSGlobalRuleMembers(parts[2]) : @[],
+                @"identities" : NSCustomGlobalRuleIdentities(parts),
+                @"hosts" : [parts[1] length] ? NSGlobalRuleMembers(parts[1]) : @[],
+                @"ports" : [parts[2] length] ? NSGlobalRuleMembers(parts[2]) : @[],
                 @"protocol" : parts[3],
                 @"action" : policy->_document[@"globalRules"][key]
             }];

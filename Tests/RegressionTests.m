@@ -556,6 +556,24 @@ static void TestCustomGlobalRules(void) {
         @"domain" : @"example.com"
     }));
     CHECK(!NSValidDestination(@{@"protocol" : @"invalid"}));
+    NSString *multi = NSCustomGlobalRuleKey(@[ @"test.app", @"other.app" ], hosts, @"port:443", @"tcp");
+    CHECK([multi isEqual:NSCustomGlobalRuleKey(@[ @"other.app", @"test.app", @"test.app" ], hosts,
+                                               @"port:443", @"tcp")]);
+    CHECK([NSCustomGlobalRuleKey(@[ @"test.app" ], hosts, @"port:443", @"tcp") isEqual:key]);
+    CHECK([NSCustomGlobalRuleKey(@[], @"", @"", @"any") isEqual:all]);
+    document[@"globalRules"] = @{multi : @"block"};
+    policy = [NSPolicy policyWithDocument:document error:NULL];
+    CHECK(policy && NSCustomGlobalRuleIdentities(NSCustomGlobalRuleComponents(multi)).count == 2);
+    CHECK(![policy allowsIdentity:@"test.app" direction:NSFlowDirectionOutbound destination:match]);
+    CHECK(![policy allowsIdentity:@"other.app" direction:NSFlowDirectionOutbound destination:match]);
+    CHECK([policy allowsIdentity:@"third.app" direction:NSFlowDirectionOutbound destination:match]);
+    CHECK([policy allowsIdentity:@"other.app"
+                       direction:NSFlowDirectionOutbound
+                     destination:@{
+                         @"domain" : @"example.com",
+                         @"port" : @443,
+                         @"protocol" : @"udp"
+                     }]);
 }
 
 static void TestReleaseVersions(void) {

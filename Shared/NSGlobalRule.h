@@ -123,7 +123,7 @@ static inline BOOL NSValidGlobalMemberKey(id key) {
 }
 
 // Custom rules store independent AND conditions; entries within a host/port group are OR conditions.
-static inline NSArray<NSString *> *NSCustomGlobalRuleComponents(NSString *key) {
+static inline NSArray *NSCustomGlobalRuleComponents(NSString *key) {
     if (![key hasPrefix:@"custom:"]) {
         return nil;
     }
@@ -134,15 +134,40 @@ static inline NSArray<NSString *> *NSCustomGlobalRuleComponents(NSString *key) {
     if (![parts isKindOfClass:NSArray.class] || [parts count] != 4) {
         return nil;
     }
-    for (id part in parts) {
-        if (![part isKindOfClass:NSString.class]) {
+    id apps = parts[0];
+    if (![apps isKindOfClass:NSString.class] && ![apps isKindOfClass:NSArray.class]) {
+        return nil;
+    }
+    if ([apps isKindOfClass:NSArray.class]) {
+        for (id identity in apps) {
+            if (![identity isKindOfClass:NSString.class] || ![identity length]) {
+                return nil;
+            }
+        }
+    }
+    for (NSUInteger index = 1; index < 4; index++) {
+        if (![parts[index] isKindOfClass:NSString.class]) {
             return nil;
         }
     }
     return parts;
 }
-static inline NSString *NSCustomGlobalRuleKey(NSString *identity, NSString *hosts, NSString *ports,
+// Single-app keys retain their original representation for compatibility with 2.3.5.
+// Display labels must never replace the exact OS identities stored here.
+static inline NSArray<NSString *> *NSCustomGlobalRuleIdentities(NSArray *parts) {
+    if (!parts) {
+        return @[];
+    }
+    id apps = parts[0];
+    return [apps isKindOfClass:NSArray.class] ? apps : [apps length] ? @[ apps ] : @[];
+}
+static inline NSString *NSCustomGlobalRuleKey(id identity, NSString *hosts, NSString *ports,
                                               NSString *protocol) {
+    if ([identity isKindOfClass:NSArray.class]) {
+        NSArray *apps =
+            [[NSSet setWithArray:identity].allObjects sortedArrayUsingSelector:@selector(compare:)];
+        identity = apps.count > 1 ? apps : apps.firstObject ?: @"";
+    }
     NSData *data = [NSJSONSerialization
         dataWithJSONObject:@[ identity ?: @"", hosts ?: @"", ports ?: @"", protocol ?: @"any" ]
                    options:0
@@ -177,10 +202,16 @@ static inline BOOL NSValidGlobalRuleKey(id key) {
         return NO;
     }
     if ([key hasPrefix:@"custom:"]) {
-        NSArray<NSString *> *parts = NSCustomGlobalRuleComponents(key);
-        if (!parts || parts[0].length > NSMaximumIdentityLength ||
+        NSArray *parts = NSCustomGlobalRuleComponents(key);
+        NSArray *identities = NSCustomGlobalRuleIdentities(parts);
+        if (!parts || identities.count > NSMaximumRules ||
             ![@[ @"any", @"tcp", @"udp" ] containsObject:parts[3]]) {
             return NO;
+        }
+        for (NSString *identity in identities) {
+            if (identity.length > NSMaximumIdentityLength) {
+                return NO;
+            }
         }
         for (NSUInteger index = 1; index <= 2; index++) {
             NSString *condition = parts[index];

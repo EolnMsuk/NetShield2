@@ -342,14 +342,18 @@
     [self presentViewController:alert animated:YES completion:nil];
 }
 - (NSString *)globalRuleTitle:(NSString *)key {
-    NSArray<NSString *> *parts = NSCustomGlobalRuleComponents(key);
+    NSArray *parts = NSCustomGlobalRuleComponents(key);
     if (parts) {
+        NSMutableArray *names = [NSMutableArray new];
+        for (NSString *identity in NSCustomGlobalRuleIdentities(parts)) {
+            [names addObject:NSIdentityDisplayName(identity)];
+        }
         return [NSString
             stringWithFormat:@"%@\n%@\n%@ / %@",
-                             parts[0].length ? NSIdentityDisplayName(parts[0]) : @"All apps",
-                             parts[1].length ? [self globalRuleTitle:parts[1]] : @"All domains / IPs",
-                             parts[2].length ? [self globalRuleTitle:parts[2]] : @"All ports",
-                             [parts[3] isEqual:@"any"] ? @"UDP & TCP" : parts[3].uppercaseString];
+                             names.count ? [names componentsJoinedByString:@", "] : @"All apps",
+                             [parts[1] length] ? [self globalRuleTitle:parts[1]] : @"All domains / IPs",
+                             [parts[2] length] ? [self globalRuleTitle:parts[2]] : @"All ports",
+                             [parts[3] isEqual:@"any"] ? @"UDP & TCP" : [parts[3] uppercaseString]];
     }
     if ([key hasPrefix:@"group:"]) {
         NSString *first = NSGlobalRuleMembers(key).firstObject;
@@ -443,10 +447,7 @@
     NSMutableSet *identities = [NSMutableSet setWithArray:self.identities ?: @[]];
     [identities addObjectsFromArray:self.systemIdentities ?: @[]];
     for (NSString *key in self.globalRuleKeys) {
-        NSString *identity = NSCustomGlobalRuleComponents(key).firstObject;
-        if (identity.length) {
-            [identities addObject:identity];
-        }
+        [identities addObjectsFromArray:NSCustomGlobalRuleIdentities(NSCustomGlobalRuleComponents(key))];
     }
     editor.identities =
         [identities.allObjects sortedArrayUsingSelector:@selector(localizedCaseInsensitiveCompare:)];
