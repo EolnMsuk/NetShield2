@@ -21,14 +21,16 @@ Unanswered connections are blocked after 30 seconds. The latest 64 expired reque
 - **Unidentified:** Allowed by default, set to blocked to prevent unknown processes from accessing network (not recommended).
 - **Default Rule:** Ask me by default, changing this to Allow or Block will prevent prompting / notifications and block or allow any new requests.
 - **Notifications:** notification settings and instructions for banners and Do Not Disturb.
-- **Advanced Settings:** manual rules, Reset Rules & History and Reset ALL Settings.
-- **Global Rules:** IP/domain and remote port rules apply across all processes.
-- **App Rules:** change saved decisions. Changes apply to new connection requests only.
+- **Support:** Export Rules and Recent Activity, Reset Rules & History, Reset ALL Settings, Check for Update, GitHub Link, and Support Developer Links.
+- **Advanced Settings:** manual app identity, IP/domain and local/remote port rules.
+- **Global Rules:** IP/domain and local/remote port rules apply across all processes. Separate entries with commas (or range with - between IPs) to save one grouped rule.
+- **App Rules:** change saved decisions. Swipe left on a saved app or global rule and tap **Remove** to delete it. Changes apply to new connection requests only. Apps observed in history can remain listed with **Use Default Rule** after removal.
 - **Recent Activity:** the rolling 300-event record grouped by process, IP/domain, remote port, direction and allowed/blocked outcome.
 
 ## Coverage
 
 Rules apply to new connections delivered by iOS, not every raw packet or OS-exempt path. Direction rules refer to who initiates a connection. No VPN server entry is needed: it uses a content filter, not a VPN tunnel.
-## Support Developer
+
+## Support the Developer
 
 [Venmo](https://venmo.com/u/rustonrails) | Bitcoin: `31uHLpioo1TbxAmo9kM7rrKcLz3wvcoZaL`
