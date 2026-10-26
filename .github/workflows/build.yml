@@ -17,19 +17,28 @@ jobs:
       matrix:
         include:
           - scheme: rootless
+            theos_scheme: rootless
             theos_repository: theos/theos
             theos_revision: dd5c14bb9d91311e221d51b5bfb8c9e5948156db
             package_arch: iphoneos-arm64
             app_path: .theos/_/var/jb/Applications/NetShield2.app
           - scheme: roothide
+            theos_scheme: roothide
             theos_repository: roothide/theos
             theos_revision: 88506b2c22e9e07dd4ed055f23c9e398a117a2c7
             package_arch: iphoneos-arm64e
             app_path: .theos/_/Applications/NetShield2.app
+          - scheme: rootful
+            theos_scheme: ""
+            theos_repository: theos/theos
+            theos_revision: dd5c14bb9d91311e221d51b5bfb8c9e5948156db
+            package_arch: iphoneos-arm
+            app_path: .theos/_/Applications/NetShield2.app
     env:
       THEOS_REPOSITORY: ${{ matrix.theos_repository }}
       THEOS_REVISION: ${{ matrix.theos_revision }}
-      THEOS_PACKAGE_SCHEME: ${{ matrix.scheme }}
+      PACKAGE_VARIANT: ${{ matrix.scheme }}
+      THEOS_PACKAGE_SCHEME: ${{ matrix.theos_scheme }}
       PACKAGE_ARCH: ${{ matrix.package_arch }}
       APP_PATH: ${{ matrix.app_path }}
       SDK_SHA256: 5e0fd3f01266cce4ce012d4a99b38eb56578fca40d09edc81cd83dee958202fb
@@ -39,7 +48,7 @@ jobs:
         shell: bash
         run: printf 'THEOS=%s/netshield-theos\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Install build tools
-        run: brew install make ldid xz
+        run: brew install make ldid xz dpkg
       - name: Install pinned Theos and iOS 16.5 SDK
         shell: bash
         run: |
@@ -59,10 +68,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 scripts/validate.py
+          python3 scripts/validate.py --scheme "$PACKAGE_VARIANT"
+          python3 scripts/test_packaging.py
           sh -n layout/DEBIAN/postinst
           sh -n layout/DEBIAN/prerm
-          python3 scripts/test_uninstall.py --scheme "$THEOS_PACKAGE_SCHEME"
+          python3 scripts/test_uninstall.py --scheme "$PACKAGE_VARIANT"
       - name: Check Objective-C formatting
         shell: bash
         run: |
@@ -79,12 +89,18 @@ jobs:
           chmod 755 layout/DEBIAN/postinst layout/DEBIAN/prerm
           gmake clean
           gmake package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME="$THEOS_PACKAGE_SCHEME"
-          test -f "packages/com.eolnmsuk.netshield_2.3.0_${PACKAGE_ARCH}.deb"
+          test -f "packages/com.eolnmsuk.netshield_2.3.1_${PACKAGE_ARCH}.deb"
+      - name: Verify release deb contents
+        shell: bash
+        run: |
+          set -euo pipefail
+          dpkg-deb --raw-extract "packages/com.eolnmsuk.netshield_2.3.1_${PACKAGE_ARCH}.deb" "$RUNNER_TEMP/netshield-package"
+          python3 scripts/validate.py --stage "$RUNNER_TEMP/netshield-package" --scheme "$PACKAGE_VARIANT"
       - name: Verify signed entitlements
         shell: bash
         run: |
           set -euo pipefail
-          app="$APP_PATH"
+          app="$RUNNER_TEMP/netshield-package/${APP_PATH#.theos/_/}"
           for component in NetShield2 PlugIns/NetShield2Data.appex/NetShield2Data PlugIns/NetShield2Control.appex/NetShield2Control; do
             ldid -e "$app/$component" > "$RUNNER_TEMP/entitlements.plist"
             python3 scripts/check_entitlements.py "$RUNNER_TEMP/entitlements.plist" "$component"
@@ -92,6 +108,6 @@ jobs:
       - name: Upload release deb
         uses: actions/upload-artifact@v4
         with:
-          name: NetShield2-2.3.0-iOS15-18-${{ matrix.scheme }}
-          path: packages/com.eolnmsuk.netshield_2.3.0_${{ matrix.package_arch }}.deb
+          name: NetShield2-2.3.1-iOS15-18-${{ matrix.scheme }}
+          path: packages/com.eolnmsuk.netshield_2.3.1_${{ matrix.package_arch }}.deb
           if-no-files-found: error
