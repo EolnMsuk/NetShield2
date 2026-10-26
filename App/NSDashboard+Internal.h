@@ -33,6 +33,10 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 @property(nonatomic, copy) NSArray<NSString *> *globalRuleKeys;
 @property(nonatomic, copy) NSString *message;
 @property(nonatomic, strong) NSTimer *timer;
+@property(nonatomic, strong) NSURLSessionDataTask *updateTask;
+@property(nonatomic) BOOL checkedForUpdateOnLaunch;
+@property(nonatomic) BOOL updateCheckWasManual;
+@property(nonatomic, copy) NSDictionary *pendingUpdateResult;
 @property(nonatomic, strong) UITableViewCell *firewallCell;
 @property(nonatomic, strong) UITableViewCell *appleCell;
 @property(nonatomic, copy) NSArray *displayedRows;
@@ -92,4 +96,9 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 
 @interface NSDashboard (Table)
 - (void)refreshTableKeepingPosition;
+@end
+
+@interface NSDashboard (Updates)
+- (void)checkForUpdateManually:(BOOL)manual;
+- (void)presentPendingUpdateResult;
 @end

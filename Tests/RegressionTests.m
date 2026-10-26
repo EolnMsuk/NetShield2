@@ -3,6 +3,7 @@
 #import "../Shared/NSActivity.h"
 #import "../Shared/NSExport.h"
 #import "../Shared/NSGlobalRule.h"
+#import "../Shared/NSReleaseVersion.h"
 #import "../Shared/NSDNSCache.h"
 #import "../App/NSFilterRemoval.h"
 #import "../Shared/NSDestination.h"
@@ -443,6 +444,39 @@ static void TestActivityGrouping(void) {
     CHECK(![hostOnly[0][@"groupKey"] isEqual:hostOnly[1][@"groupKey"]]);
     CHECK([NSGroupedActivity(@[ ActivityEvent(@"", @{}, @"unknown", @"other", 0, 0, 0) ])[0][@"action"]
         isEqual:@"other"]);
+}
+static void TestReleaseVersions(void) {
+    CHECK([NSCompareReleaseVersions(@"v2.3.3", @"2.3.2") isEqual:@(NSOrderedDescending)]);
+    CHECK([NSCompareReleaseVersions(@"2.10.0", @"2.9.9") isEqual:@(NSOrderedDescending)]);
+    CHECK([NSCompareReleaseVersions(@"3.0.0", @"2.99.99") isEqual:@(NSOrderedDescending)]);
+    CHECK([NSCompareReleaseVersions(@"2.3.2", @"2.3.2") isEqual:@(NSOrderedSame)]);
+    CHECK([NSCompareReleaseVersions(@" V2.3.2 ", @"2.3.2.0") isEqual:@(NSOrderedSame)]);
+    CHECK([NSCompareReleaseVersions(@"2.3.0", @"2.3.2") isEqual:@(NSOrderedAscending)]);
+    for (id bad in @[
+             @"", @"v", @"2..3", @"2.3.2-beta", @"release-2.3.2", @"2.3.2junk", @"2.3.-1", @"9999999999.1",
+             @42, NSNull.null
+         ]) {
+        CHECK(!NSCompareReleaseVersions(bad, @"2.3.2"));
+        CHECK(!NSCompareReleaseVersions(@"2.3.2", bad));
+    }
+    CHECK([NSPublishedReleaseVersion(
+        @{@"tag_name" : @"v2.3.3",
+          @"draft" : @NO,
+          @"prerelease" : @NO}) isEqual:@"v2.3.3"]);
+    for (id bad in @[
+             @[], NSNull.null, @{}, @{@"message" : @"rate limited"}, @{@"tag_name" : @"2.3.3"},
+             @{@"tag_name" : @"2.3.3",
+               @"draft" : @YES,
+               @"prerelease" : @NO},
+             @{@"tag_name" : @"2.3.3",
+               @"draft" : @NO,
+               @"prerelease" : @YES},
+             @{@"tag_name" : @123,
+               @"draft" : @NO,
+               @"prerelease" : @NO}
+         ]) {
+        CHECK(!NSPublishedReleaseVersion(bad));
+    }
 }
 static void TestGroupedGlobalRules(void) {
     NSString *group =
@@ -1123,6 +1157,7 @@ int main(void) {
         TestActivityGrouping();
         TestGlobalRules();
         TestGroupedGlobalRules();
+        TestReleaseVersions();
         TestDirectionalPermissionAnswers();
         TestAnswersAndReset();
         TestSocketSettingsAndDestinations();

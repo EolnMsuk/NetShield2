@@ -136,7 +136,7 @@
         return 3;
     }
     if (section == NSDashboardSectionSupport) {
-        return 5;
+        return 6;
     }
     return MAX((NSUInteger)1, self.activityGroups.count);
 }
@@ -420,12 +420,13 @@
     } else if (path.section == NSDashboardSectionSupport) {
         cell.textLabel.text = @[
             @"Export Rules and Recent Activity", @"Reset Rules & History", @"Reset ALL Settings",
-            @"GitHub Link", @"Support the Developer"
+            @"Check for Update", @"GitHub Link", @"Support the Developer"
         ][path.row];
         cell.detailTextLabel.text = @[
             @"Share rules and recent activity as a JSON file", @"Reset rules and history only",
             @"Removes all rules, permissions and filters. Runs automatically during uninstall.",
-            @"Source code, releases and issues", @"Choose Venmo or Crypto"
+            @"Check GitHub for a newer version", @"Source code, releases and issues",
+            @"Choose Venmo or Crypto"
         ][path.row];
         cell.textLabel.textColor =
             (path.row == 1 || path.row == 2) ? UIColor.systemRedColor : UIColor.systemBlueColor;
@@ -481,8 +482,10 @@
         }
     } else if (path.section == NSDashboardSectionSupport) {
         if (path.row == 3) {
-            [self openSupportURL:[NSURL URLWithString:@"https://github.com/EolnMsuk/NetShield2/"]];
+            [self checkForUpdateManually:YES];
         } else if (path.row == 4) {
+            [self openSupportURL:[NSURL URLWithString:@"https://github.com/EolnMsuk/NetShield2/"]];
+        } else if (path.row == 5) {
             [self supportDeveloper];
         } else if (path.row == 0) {
             [self exportRulesAndRecentActivityFromRow:path];

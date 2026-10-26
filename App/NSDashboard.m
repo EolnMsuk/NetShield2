@@ -123,6 +123,7 @@
 - (void)dealloc {
     [NSNotificationCenter.defaultCenter removeObserver:self];
     [self.timer invalidate];
+    [self.updateTask cancel];
 }
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
@@ -133,6 +134,13 @@
                                                        [weakSelf reloadMonitor];
                                                    }];
     [self reloadMonitor];
+}
+- (void)viewDidAppear:(BOOL)animated {
+    [super viewDidAppear:animated];
+    if (!self.checkedForUpdateOnLaunch) {
+        [self checkForUpdateManually:NO];
+    }
+    [self presentPendingUpdateResult];
 }
 - (void)viewDidDisappear:(BOOL)animated {
     [super viewDidDisappear:animated];
@@ -195,6 +203,7 @@
             }
         }
     }
+    [self presentPendingUpdateResult];
 }
 - (BOOL)hasFreshMonitor {
     NSString *activation =
@@ -598,7 +607,9 @@
             alertControllerWithTitle:@"Opening a link with Firewall enabled"
                              message:
                                  @"If the destination app or browser needs network permission, the link may "
-                                 @"not load and a banner may not appear. Return to NetShield2, choose Allow "
+                                 @"not load. Notification banners are suppressed while you are in "
+                                 @"NetShield2. "
+                                 @"You may need to return to NetShield2 to allow your browser. Choose Allow "
                                  @"In & Out "
                                  @"under Waiting for your decision, then open the link again. If you "
                                  @"previously blocked that app, change its rule under App rules."
