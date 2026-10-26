@@ -1,7 +1,7 @@
 #import <Foundation/Foundation.h>
 
 enum {
-    NSEngineVersion = 20034,
+    NSEngineVersion = 20035,
     NSSchemaVersion = 2,
     NSMaximumRules = 4096,
     NSMaximumIdentityLength = 1024,

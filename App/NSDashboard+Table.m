@@ -170,9 +170,6 @@
     if (section == NSDashboardSectionRules) {
         return @"Tap an app identity to change its rule.";
     }
-    if (section == NSDashboardSectionNotifications) {
-        return @"Tap Notification Settings to customize.";
-    }
     if (section == NSDashboardSectionActivity) {
         return @"Up to 300 recorded events";
     }
@@ -209,6 +206,11 @@
                : UITableViewAutomaticDimension;
 }
 - (CGFloat)tableView:(UITableView *)tableView heightForFooterInSection:(NSInteger)section {
+    // The links header already supplies the inter-section gap and keeps the
+    // version label close to GitHub Link; don't stack an empty footer above it.
+    if (section == NSDashboardSectionAdvanced) {
+        return CGFLOAT_MIN;
+    }
     return section == NSDashboardSectionSystemRules && ![self showsSystemRules]
                ? CGFLOAT_MIN
                : UITableViewAutomaticDimension;
