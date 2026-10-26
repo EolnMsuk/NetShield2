@@ -165,7 +165,7 @@
     }
     if (section == NSDashboardSectionRequests) {
         return [NSString stringWithFormat:@"During this filter session: %@ connections rejected at queue "
-                                           @"capacity; %@ older requests removed. ",
+                                          @"capacity; %@ older requests removed. ",
                                           self.monitor[@"overflowCount"] ?: @0,
                                           self.monitor[@"evictedRequestCount"] ?: @0];
     }
