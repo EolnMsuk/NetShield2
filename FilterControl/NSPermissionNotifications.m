@@ -1,3 +1,4 @@
+#import "../Shared/NSIdentityDisplay.h"
 #import "NSPermissionNotifications.h"
 #import "../Shared/NSNotifications.h"
 #import "../Shared/NSNotificationPolicy.h"
@@ -136,7 +137,7 @@ static void NSWithdrawNotifications(id<NSPermissionNotificationCenter> center, N
     NSString *submission = NSUUID.UUID.UUIDString;
     self.submissionIDs[token] = submission;
     UNMutableNotificationContent *content = [UNMutableNotificationContent new];
-    content.title = identity;
+    content.title = NSIdentityDisplayName(identity);
     content.body = @"Wants network access. Long-press this banner to allow, block incoming or keep blocking.";
     content.categoryIdentifier = NSPermissionCategory;
     content.sound = UNNotificationSound.defaultSound;

@@ -3,6 +3,7 @@
 #import "../Shared/NSStore.h"
 #import "../Shared/NSNotifications.h"
 #import "../Shared/NSDestination.h"
+#import "../Shared/NSIdentityDisplay.h"
 #import "NSFilterRestart.h"
 
 typedef NS_ENUM(NSInteger, NSConfigurationOperation) {

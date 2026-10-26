@@ -10,6 +10,7 @@ NetShield2_CFLAGS += -DNS_JAILBREAK_TYPE=\"rootless\"
 else
 NetShield2_CFLAGS += -DNS_JAILBREAK_TYPE=\"rootful\"
 endif
-NetShield2_CODESIGN_FLAGS = -SEntitlements.plist
+# Theos signs a temporary .unsigned file; never use its basename as the signing identity.
+NetShield2_CODESIGN_FLAGS = -SEntitlements.plist -Icom.eolnmsuk.netshield
 NetShield2_INSTALL_PATH = /Applications
 include $(THEOS_MAKE_PATH)/application.mk

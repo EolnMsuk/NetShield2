@@ -281,7 +281,7 @@
     if (!self.policy) {
         return;
     }
-    NSString *title = identity;
+    NSString *title = NSIdentityDisplayName(identity);
     NSString *explanation = @"Choose a rule for new connections.";
     NSArray *actions = @[ @"allow", @"block-inbound", @"block", @"use-default" ];
     if ([key isEqual:@"default"]) {

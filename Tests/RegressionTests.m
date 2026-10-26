@@ -4,6 +4,7 @@
 #import "../Shared/NSExport.h"
 #import "../Shared/NSGlobalRule.h"
 #import "../Shared/NSReleaseVersion.h"
+#import "../Shared/NSIdentityDisplay.h"
 #import "../Shared/NSDNSCache.h"
 #import "../App/NSFilterRemoval.h"
 #import "../Shared/NSDestination.h"
@@ -444,6 +445,22 @@ static void TestActivityGrouping(void) {
     CHECK(![hostOnly[0][@"groupKey"] isEqual:hostOnly[1][@"groupKey"]]);
     CHECK([NSGroupedActivity(@[ ActivityEvent(@"", @{}, @"unknown", @"other", 0, 0, 0) ])[0][@"action"]
         isEqual:@"other"]);
+}
+static void TestIdentityDisplay(void) {
+    CHECK([NSIdentityDisplayName(@"53Q6R32WPB.com.hammerandchisel.discord")
+        isEqual:@"com.hammerandchisel.discord"]);
+    CHECK([NSIdentityDisplayName(@"com.example.app") isEqual:@"example.app"]);
+    CHECK([NSIdentityDisplayName(@".com.apple.test") isEqual:@"com.apple.test"]);
+    CHECK([NSIdentityDisplayName(@"networkd") isEqual:@"networkd"]);
+    CHECK([NSIdentityDisplayName(@"prefix.") isEqual:@"Unidentified app"]);
+    CHECK([NSIdentityDisplayName(nil) isEqual:@"Unidentified app"]);
+    CHECK([NSIdentityDisplayName(@42) isEqual:@"Unidentified app"]);
+    // Display collisions must never collapse distinct firewall decisions.
+    NSString *first = @"TEAMONE.com.example.app", *second = @"TEAMTWO.com.example.app";
+    CHECK([NSIdentityDisplayName(first) isEqual:NSIdentityDisplayName(second)]);
+    NSPolicy *policy = Policy(@{first : @"allow", second : @"block"});
+    CHECK([policy allowsIdentity:first direction:NSFlowDirectionOutbound]);
+    CHECK(![policy allowsIdentity:second direction:NSFlowDirectionOutbound]);
 }
 static void TestReleaseVersions(void) {
     CHECK([NSCompareReleaseVersions(@"v2.3.3", @"2.3.2") isEqual:@(NSOrderedDescending)]);
@@ -1038,7 +1055,7 @@ static void TestLateNotifications(void) {
     [old updateRequests:@[ request ] policy:NSReadPolicy(NULL) retryRevision:nil];
     CHECK(center.requests.count == 1);
     UNNotificationRequest *banner = center.requests.firstObject;
-    CHECK([banner.content.title isEqual:@"notify.app"]);
+    CHECK([banner.content.title isEqual:@"app"]);
     CHECK([banner.content.body
         isEqual:@"Wants network access. Long-press this banner to allow, block incoming or keep blocking."]);
     CHECK(banner.content.subtitle.length == 0);
@@ -1158,6 +1175,7 @@ int main(void) {
         TestGlobalRules();
         TestGroupedGlobalRules();
         TestReleaseVersions();
+        TestIdentityDisplay();
         TestDirectionalPermissionAnswers();
         TestAnswersAndReset();
         TestSocketSettingsAndDestinations();

@@ -319,7 +319,7 @@
             cell.accessoryType = UITableViewCellAccessoryNone;
         } else {
             NSDictionary *request = requests[path.row];
-            cell.textLabel.text = request[@"identity"];
+            cell.textLabel.text = NSIdentityDisplayName(request[@"identity"]);
             cell.detailTextLabel.text = [request[@"expired"] boolValue]
                                             ? @"Blocked while waiting. Tap to decide."
                                             : @"Tap to allow or keep blocking";
@@ -363,7 +363,7 @@
             if (color) {
                 cell.backgroundColor = [color colorWithAlphaComponent:0.14];
             }
-            cell.textLabel.text = identity;
+            cell.textLabel.text = NSIdentityDisplayName(identity);
             cell.detailTextLabel.text =
                 [self.policy automaticallyAllowsIdentity:identity]
                     ? [NSString stringWithFormat:
@@ -403,9 +403,8 @@
                 cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
                 cell.selectionStyle = UITableViewCellSelectionStyleDefault;
             }
-            cell.textLabel.text = [NSString
-                stringWithFormat:@"%@ / %@", action,
-                                 [event[@"identity"] length] ? event[@"identity"] : @"Unidentified app"];
+            cell.textLabel.text =
+                [NSString stringWithFormat:@"%@ / %@", action, NSIdentityDisplayName(event[@"identity"])];
             NSString *time = [NSDateFormatter localizedStringFromDate:event[@"time"]
                                                             dateStyle:NSDateFormatterShortStyle
                                                             timeStyle:NSDateFormatterShortStyle];

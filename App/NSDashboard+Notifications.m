@@ -66,7 +66,7 @@
         self.message = [NSString
             stringWithFormat:@"Rule saved for %@. First requested peer: %@. Applies to all connections from "
                              @"this app. Retry the app if its connection timed out.",
-                             request[@"identity"], NSDestinationSummary(destination)];
+                             NSIdentityDisplayName(request[@"identity"]), NSDestinationSummary(destination)];
     }
     [self reloadMonitor];
 }
@@ -76,11 +76,11 @@
         return;
     }
     [self.deferredRequests addObject:request[@"token"]];
-    NSString *message =
-        [NSString stringWithFormat:
-                      @"%@\nFirst requested peer: %@\nCountry: unavailable\n\nUnanswered "
-                      @"connections are blocked after 30 seconds; retry the app if it has already timed out.",
-                      request[@"identity"], NSDestinationSummary(request[@"destination"])];
+    NSString *message = [NSString
+        stringWithFormat:
+            @"%@\nFirst requested peer: %@\nCountry: unavailable\n\nUnanswered "
+            @"connections are blocked after 30 seconds; retry the app if it has already timed out.",
+            NSIdentityDisplayName(request[@"identity"]), NSDestinationSummary(request[@"destination"])];
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Allow network access?"
                                                                    message:message
                                                             preferredStyle:UIAlertControllerStyleAlert];

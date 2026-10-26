@@ -24,7 +24,7 @@ def plist(path):
 control = (ROOT / 'control').read_bytes()
 require(b'\r' not in control, 'control must have LF line endings')
 metadata = dict(line.split(': ', 1) for line in control.decode().splitlines() if ': ' in line)
-require(metadata['Version'] == '2.3.2', 'Wrong package version')
+require(metadata['Version'] == '2.3.3', 'Wrong package version')
 require(metadata['Name'] == 'NetShield2', 'Wrong product name')
 require(metadata['Architecture'] == 'iphoneos-arm', 'Expected base rootful architecture; Theos overrides it for rootless and RootHide')
 require(metadata['Depends'] == 'firmware (>= 15.0), firmware (<< 19.0), uikittools', 'Expected iOS 15-18 package range')
@@ -80,6 +80,11 @@ for directory, binary, suffix, point, principal in bundles:
     require(ent['com.apple.security.application-groups'] == ['group.com.eolnmsuk.netshield'], 'App group mismatch')
     require('com.apple.private.security.no-sandbox' not in ent, 'Do not remove provider isolation')
     make = (source / 'Makefile').read_text()
+    signing = re.search(rf'^{binary}_CODESIGN_FLAGS = (.+)$', make, re.M)
+    require(signing is not None and
+            '-SEntitlements.plist' in signing.group(1).split() and
+            ('-I' + info['CFBundleIdentifier']) in signing.group(1).split(),
+            f'{directory}: signing must explicitly set the bundle identifier and entitlements')
     files = re.search(rf'^{binary}_FILES = (.+)$', make, re.M)
     require(files is not None, 'Missing source list')
     for name in files.group(1).split():
