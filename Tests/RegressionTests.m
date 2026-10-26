@@ -1170,8 +1170,7 @@ static void TestLateNotifications(void) {
     CHECK(center.requests.count == 1);
     UNNotificationRequest *banner = center.requests.firstObject;
     CHECK([banner.content.title isEqual:@"app"]);
-    CHECK([banner.content.body
-        isEqual:@"Wants network access. Long-press this banner to allow, block incoming or keep blocking."]);
+    CHECK([banner.content.body isEqual:@"Long-press this banner to Allow or Block"]);
     CHECK(banner.content.subtitle.length == 0);
     CHECK(banner.content.attachments.count == 0);
     CHECK([banner.content.userInfo isEqual:@{@"token" : @"old-token", @"identity" : @"notify.app"}]);

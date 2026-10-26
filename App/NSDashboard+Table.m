@@ -9,8 +9,8 @@
     return section == NSDashboardSectionSystemRules ? self.systemIdentities : self.identities;
 }
 - (id)rowKey:(NSIndexPath *)path {
-    if (path.section == NSDashboardSectionGlobalRules && path.row > 0) {
-        return self.globalRuleKeys[path.row - 1];
+    if (path.section == NSDashboardSectionGlobalRules) {
+        return self.globalRuleKeys[path.row];
     }
     if (path.section == NSDashboardSectionRequests && [self.monitor[@"requests"] count]) {
         return self.monitor[@"requests"][path.row][@"token"];
@@ -129,8 +129,11 @@
     if (section == NSDashboardSectionNotifications) {
         return 2;
     }
+    if (section == NSDashboardSectionAddGlobalRule) {
+        return 1;
+    }
     if (section == NSDashboardSectionGlobalRules) {
-        return 1 + self.globalRuleKeys.count;
+        return self.globalRuleKeys.count;
     }
     if (section == NSDashboardSectionAdvanced) {
         return 3;
@@ -146,26 +149,25 @@
     }
     return @[
         @"Firewall", @"Waiting for your decision", @"Notifications", @"Reset Settings", @"", @"Global Rules",
-        @"App Rules", @"System Rules", @"Recent activity"
+        @"", @"App Rules", @"System Rules", @"Recent activity"
     ][section];
 }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     if (section == NSDashboardSectionSystemRules) {
         return [self showsSystemRules] ? @"Tap a system identity to change its rule." : nil;
     }
-    if (section == NSDashboardSectionGlobalRules) {
+    if ((section == NSDashboardSectionGlobalRules && self.globalRuleKeys.count) ||
+        (section == NSDashboardSectionAddGlobalRule && !self.globalRuleKeys.count)) {
         return @"Overrides app rules and the iOS system traffic allowance.";
     }
     if (section == NSDashboardSectionFirewall) {
         return @"Rules are saved when firewall is turned off.";
     }
     if (section == NSDashboardSectionRequests) {
-        return [NSString
-            stringWithFormat:
-                @"The latest %d expired requests stay available. During this filter session: %@ connections "
-                @"rejected at queue capacity; %@ older requests removed. ",
-                NSMaximumRequestHistory, self.monitor[@"overflowCount"] ?: @0,
-                self.monitor[@"evictedRequestCount"] ?: @0];
+        return [NSString stringWithFormat:@"During this filter session: %@ connections rejected at queue "
+                                           @"capacity; %@ older requests removed. ",
+                                          self.monitor[@"overflowCount"] ?: @0,
+                                          self.monitor[@"evictedRequestCount"] ?: @0];
     }
     if (section == NSDashboardSectionRules) {
         return @"Tap an app identity to change its rule.";
@@ -201,11 +203,18 @@
     return header;
 }
 - (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section {
+    if (section == NSDashboardSectionGlobalRules) {
+        return self.globalRuleKeys.count ? 16 : CGFLOAT_MIN;
+    }
     return section == NSDashboardSectionSystemRules && ![self showsSystemRules]
                ? CGFLOAT_MIN
                : UITableViewAutomaticDimension;
 }
 - (CGFloat)tableView:(UITableView *)tableView heightForFooterInSection:(NSInteger)section {
+    if ((section == NSDashboardSectionAddGlobalRule && self.globalRuleKeys.count) ||
+        (section == NSDashboardSectionGlobalRules && !self.globalRuleKeys.count)) {
+        return CGFLOAT_MIN;
+    }
     // The links header already supplies the inter-section gap and keeps the
     // version label close to GitHub Link; don't stack an empty footer above it.
     if (section == NSDashboardSectionAdvanced) {
@@ -349,21 +358,19 @@
                 stringByAppendingFormat:@"\nFirst requested peer: %@",
                                         NSDestinationSummary(request[@"destination"])];
         }
+    } else if (path.section == NSDashboardSectionAddGlobalRule) {
+        cell.textLabel.text = @"Add a Global Rule";
+        cell.textLabel.textColor = UIColor.systemGreenColor;
+        cell.detailTextLabel.text = @"Choose apps, destinations, ports and protocols";
     } else if (path.section == NSDashboardSectionGlobalRules) {
-        if (path.row == 0) {
-            cell.textLabel.text = @"Add a Global Rule";
-            cell.textLabel.textColor = UIColor.labelColor;
-            cell.detailTextLabel.text = @"Choose apps, destinations, ports and protocols";
-        } else {
-            NSString *key = self.globalRuleKeys[path.row - 1];
-            NSString *rule = self.policy.document[@"globalRules"][key];
-            UIColor *color = NSRuleColor(rule);
-            if (color) {
-                cell.backgroundColor = [color colorWithAlphaComponent:0.14];
-            }
-            cell.textLabel.text = [self globalRuleTitle:key];
-            cell.detailTextLabel.text = [self ruleTitle:rule];
+        NSString *key = self.globalRuleKeys[path.row];
+        NSString *rule = self.policy.document[@"globalRules"][key];
+        UIColor *color = NSRuleColor(rule);
+        if (color) {
+            cell.backgroundColor = [color colorWithAlphaComponent:0.14];
         }
+        cell.textLabel.text = [self globalRuleTitle:key];
+        cell.detailTextLabel.text = [self ruleTitle:rule];
     } else if (path.section == NSDashboardSectionRules || path.section == NSDashboardSectionSystemRules) {
         NSArray<NSString *> *identities = [self identitiesForSection:path.section];
         if (!identities.count) {
@@ -465,12 +472,10 @@
         [self chooseActionForIdentity:nil defaultKey:@"default"];
     } else if (path.section == NSDashboardSectionRequests && [self.monitor[@"requests"] count]) {
         [self presentRequest:self.monitor[@"requests"][path.row]];
+    } else if (path.section == NSDashboardSectionAddGlobalRule) {
+        [self editGlobalRule:nil];
     } else if (path.section == NSDashboardSectionGlobalRules) {
-        if (path.row == 0) {
-            [self editGlobalRule:nil];
-        } else {
-            [self chooseGlobalRule:self.globalRuleKeys[path.row - 1]];
-        }
+        [self chooseGlobalRule:self.globalRuleKeys[path.row]];
     } else if ((path.section == NSDashboardSectionRules || path.section == NSDashboardSectionSystemRules) &&
                [self identitiesForSection:path.section].count) {
         [self chooseActionForIdentity:[self identitiesForSection:path.section][path.row] defaultKey:nil];
@@ -535,12 +540,9 @@
         return nil;
     }
     BOOL global = path.section == NSDashboardSectionGlobalRules;
-    if (global && path.row == 0) {
-        return nil;
-    }
     BOOL app = path.section == NSDashboardSectionRules || path.section == NSDashboardSectionSystemRules;
     NSArray *keys = global ? self.globalRuleKeys : app ? [self identitiesForSection:path.section] : @[];
-    NSUInteger index = global ? path.row - 1 : path.row;
+    NSUInteger index = path.row;
     if (index >= keys.count) {
         return nil;
     }

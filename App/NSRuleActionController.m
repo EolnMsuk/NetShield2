@@ -12,6 +12,7 @@
     controller.title = title;
     controller.message = message;
     controller.choices = [NSMutableArray new];
+    controller.centersActions = YES;
     controller.modalPresentationStyle = UIModalPresentationPageSheet;
     return controller;
 }
@@ -75,9 +76,31 @@
     } else {
         NSDictionary *choice = self.choices[path.row];
         UIColor *color = NSRuleColor(choice[@"rule"]);
-        cell.textLabel.text = choice[@"title"];
-        cell.textLabel.textAlignment = self.centersActions ? NSTextAlignmentCenter : NSTextAlignmentNatural;
-        cell.textLabel.textColor = color ?: UIColor.systemBlueColor;
+        if (self.centersActions) {
+            // Subtitle cells size their built-in label to its text. Keep equal
+            // margins around this label, even when a selection checkmark is shown.
+            UILabel *label = [UILabel new];
+            label.translatesAutoresizingMaskIntoConstraints = NO;
+            label.text = choice[@"title"];
+            label.textAlignment = NSTextAlignmentCenter;
+            label.textColor = color ?: UIColor.systemBlueColor;
+            label.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
+            label.adjustsFontForContentSizeCategory = YES;
+            label.numberOfLines = 0;
+            [cell.contentView addSubview:label];
+            [NSLayoutConstraint activateConstraints:@[
+                [label.centerXAnchor constraintEqualToAnchor:cell.centerXAnchor],
+                [label.leadingAnchor constraintEqualToAnchor:cell.leadingAnchor constant:48],
+                [label.topAnchor constraintEqualToAnchor:cell.contentView.topAnchor constant:12],
+                [label.bottomAnchor constraintEqualToAnchor:cell.contentView.bottomAnchor constant:-12],
+                [cell.contentView.heightAnchor constraintGreaterThanOrEqualToConstant:44]
+            ]];
+            cell.isAccessibilityElement = YES;
+            cell.accessibilityLabel = choice[@"title"];
+        } else {
+            cell.textLabel.text = choice[@"title"];
+            cell.textLabel.textColor = color ?: UIColor.systemBlueColor;
+        }
         cell.tintColor = color ?: UIColor.systemBlueColor;
         if (color) {
             cell.backgroundColor = [color colorWithAlphaComponent:0.14];

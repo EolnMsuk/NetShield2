@@ -138,7 +138,7 @@ static void NSWithdrawNotifications(id<NSPermissionNotificationCenter> center, N
     self.submissionIDs[token] = submission;
     UNMutableNotificationContent *content = [UNMutableNotificationContent new];
     content.title = NSIdentityDisplayName(identity);
-    content.body = @"Wants network access. Long-press this banner to allow, block incoming or keep blocking.";
+    content.body = @"Long-press this banner to Allow or Block";
     content.categoryIdentifier = NSPermissionCategory;
     content.sound = UNNotificationSound.defaultSound;
     content.userInfo = @{@"token" : token, @"identity" : identity};

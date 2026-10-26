@@ -19,6 +19,7 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
     NSDashboardSectionNotifications,
     NSDashboardSectionAdvanced,
     NSDashboardSectionSupport,
+    NSDashboardSectionAddGlobalRule,
     NSDashboardSectionGlobalRules,
     NSDashboardSectionRules,
     NSDashboardSectionSystemRules,

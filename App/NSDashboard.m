@@ -381,6 +381,7 @@
         [NSRuleActionController controllerWithTitle:[self globalRuleTitle:key]
                                             message:@"Applies when all rule conditions match. Overrides app "
                                                     @"rules and the iOS system traffic allowance."];
+    alert.opensExpanded = YES;
     alert.selectedRule = self.policy.document[@"globalRules"][key];
     NSMutableArray *actions = [@[ @"allow", @"block-inbound", @"block" ] mutableCopy];
     BOOL existing = !original && self.policy.document[@"globalRules"][key] != nil;
