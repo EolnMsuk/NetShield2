@@ -5,6 +5,8 @@
 #import "../Shared/NSDestination.h"
 #import "../Shared/NSIdentityDisplay.h"
 #import "NSFilterRestart.h"
+#import "NSRuleActionController.h"
+#import "NSRuleAppearance.h"
 
 typedef NS_ENUM(NSInteger, NSConfigurationOperation) {
     NSConfigurationDisable,
@@ -15,8 +17,8 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
     NSDashboardSectionFirewall,
     NSDashboardSectionRequests,
     NSDashboardSectionNotifications,
-    NSDashboardSectionSupport,
     NSDashboardSectionAdvanced,
+    NSDashboardSectionSupport,
     NSDashboardSectionGlobalRules,
     NSDashboardSectionRules,
     NSDashboardSectionSystemRules,
@@ -43,7 +45,7 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 @property(nonatomic, copy) NSArray *displayedRows;
 @property(nonatomic, copy) NSArray *displaySignature;
 @property(nonatomic, strong) NSMutableDictionary *rowHeights;
-@property(nonatomic, weak) UIAlertController *permissionAlert;
+@property(nonatomic, weak) UIViewController *permissionAlert;
 @property(nonatomic, copy) NSDictionary *presentedRequest;
 @property(nonatomic) BOOL busy;
 @property(nonatomic) BOOL loaded;
@@ -65,7 +67,6 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 - (void)chooseGlobalRule:(NSString *)key editingKey:(NSString *)original;
 - (NSString *)globalRuleTitle:(NSString *)key;
 - (NSString *)ruleTitle:(NSString *)rule;
-- (UIAlertActionStyle)ruleActionStyle:(NSString *)rule;
 - (void)firewallChanged:(UISwitch *)sender;
 - (void)appleSystemProcessesChanged:(UISwitch *)sender;
 - (void)openSupportURL:(NSURL *)url;

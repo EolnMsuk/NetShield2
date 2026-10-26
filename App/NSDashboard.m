@@ -315,30 +315,28 @@
                       @"interrupting system services.";
         actions = @[ @"allow", @"block" ];
     }
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:title
-                                                                   message:explanation
-                                                            preferredStyle:UIAlertControllerStyleAlert];
+    NSRuleActionController *alert = [NSRuleActionController controllerWithTitle:title message:explanation];
+    alert.selectedRule = key ? self.policy.document[key] : self.policy.document[@"rules"][identity];
     for (NSString *action in actions) {
-        [alert addAction:[UIAlertAction actionWithTitle:[self ruleTitle:action]
-                                                  style:[self ruleActionStyle:action]
-                                                handler:^(UIAlertAction *selected) {
-                                                    if (!key && [action isEqual:@"remove"]) {
-                                                        [self removeAppRuleForIdentity:identity];
-                                                        return;
-                                                    }
-                                                    [self updatePolicy:^BOOL(NSMutableDictionary *document,
-                                                                             NSError **error) {
-                                                        if (key) {
-                                                            document[key] = action;
-                                                        } else {
-                                                            NSMutableDictionary *rules = document[@"rules"];
-                                                            rules[identity] = action;
-                                                        }
-                                                        return YES;
-                                                    }];
-                                                }]];
+        [alert addActionWithTitle:[self ruleTitle:action]
+                             rule:action
+                          handler:^{
+                              if (!key && [action isEqual:@"remove"]) {
+                                  [self removeAppRuleForIdentity:identity];
+                                  return;
+                              }
+                              [self updatePolicy:^BOOL(NSMutableDictionary *document, NSError **error) {
+                                  if (key) {
+                                      document[key] = action;
+                                  } else {
+                                      NSMutableDictionary *rules = document[@"rules"];
+                                      rules[identity] = action;
+                                  }
+                                  return YES;
+                              }];
+                          }];
     }
-    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addActionWithTitle:@"Cancel" rule:nil handler:nil];
     [self presentViewController:alert animated:YES completion:nil];
 }
 - (NSString *)globalRuleTitle:(NSString *)key {
@@ -379,64 +377,57 @@
     if (!self.policy) {
         return;
     }
-    UIAlertController *alert = [UIAlertController
-        alertControllerWithTitle:[self globalRuleTitle:key]
-                         message:@"Applies when all rule conditions match. Overrides app rules and "
-                                 @"the iOS system traffic allowance."
-                  preferredStyle:UIAlertControllerStyleAlert];
-    alert.view.tintColor = UIColor.systemBlueColor;
+    NSRuleActionController *alert =
+        [NSRuleActionController controllerWithTitle:[self globalRuleTitle:key]
+                                            message:@"Applies when all rule conditions match. Overrides app "
+                                                    @"rules and the iOS system traffic allowance."];
+    alert.selectedRule = self.policy.document[@"globalRules"][key];
     NSMutableArray *actions = [@[ @"allow", @"block-inbound", @"block" ] mutableCopy];
     BOOL existing = !original && self.policy.document[@"globalRules"][key] != nil;
     if (existing) {
         [actions addObject:@"remove"];
     }
     for (NSString *action in actions) {
-        [alert
-            addAction:[UIAlertAction
-                          actionWithTitle:[self ruleTitle:action]
-                                    style:[self ruleActionStyle:action]
-                                  handler:^(UIAlertAction *selected) {
-                                      [self updatePolicy:^BOOL(NSMutableDictionary *document,
-                                                               NSError **error) {
-                                          NSMutableDictionary *rules = [document[@"globalRules"] mutableCopy]
-                                                                           ?: [NSMutableDictionary new];
-                                          if (original) {
-                                              if (!rules[original] ||
-                                                  (![original isEqual:key] && rules[key])) {
-                                                  if (error) {
-                                                      *error = [NSError
-                                                          errorWithDomain:@"NetShield2.Policy"
-                                                                     code:2
-                                                                 userInfo:@{
-                                                                     NSLocalizedDescriptionKey :
-                                                                         @"The original rule was removed or "
-                                                                         @"an identical rule already exists."
-                                                                 }];
-                                                  }
-                                                  return NO;
-                                              }
-                                              [rules removeObjectForKey:original];
+        [alert addActionWithTitle:[self ruleTitle:action]
+                             rule:action
+                          handler:^{
+                              [self updatePolicy:^BOOL(NSMutableDictionary *document, NSError **error) {
+                                  NSMutableDictionary *rules =
+                                      [document[@"globalRules"] mutableCopy] ?: [NSMutableDictionary new];
+                                  if (original) {
+                                      if (!rules[original] || (![original isEqual:key] && rules[key])) {
+                                          if (error) {
+                                              *error =
+                                                  [NSError errorWithDomain:@"NetShield2.Policy"
+                                                                      code:2
+                                                                  userInfo:@{
+                                                                      NSLocalizedDescriptionKey :
+                                                                          @"The original rule was removed or "
+                                                                          @"an identical rule already exists."
+                                                                  }];
                                           }
-                                          if ([action isEqual:@"remove"]) {
-                                              [rules removeObjectForKey:key];
-                                          } else {
-                                              rules[key] = action;
-                                          }
-                                          document[@"globalRules"] = rules;
-                                          return YES;
-                                      }];
-                                  }]];
+                                          return NO;
+                                      }
+                                      [rules removeObjectForKey:original];
+                                  }
+                                  if ([action isEqual:@"remove"]) {
+                                      [rules removeObjectForKey:key];
+                                  } else {
+                                      rules[key] = action;
+                                  }
+                                  document[@"globalRules"] = rules;
+                                  return YES;
+                              }];
+                          }];
     }
     if (existing) {
-        [alert addAction:[UIAlertAction actionWithTitle:@"Edit Rule"
-                                                  style:UIAlertActionStyleDefault
-                                                handler:^(UIAlertAction *selected) {
-                                                    dispatch_async(dispatch_get_main_queue(), ^{
-                                                        [self editGlobalRule:key];
-                                                    });
-                                                }]];
+        [alert addActionWithTitle:@"Edit Rule"
+                             rule:nil
+                          handler:^{
+                              [self editGlobalRule:key];
+                          }];
     }
-    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addActionWithTitle:@"Cancel" rule:nil handler:nil];
     [self presentViewController:alert animated:YES completion:nil];
 }
 - (void)editGlobalRule:(NSString *)original {
@@ -490,11 +481,6 @@
     UINavigationController *navigation = [[UINavigationController alloc] initWithRootViewController:editor];
     navigation.modalPresentationStyle = UIModalPresentationFormSheet;
     [self presentViewController:navigation animated:YES completion:nil];
-}
-- (UIAlertActionStyle)ruleActionStyle:(NSString *)rule {
-    return [rule isEqual:@"block"] || [rule isEqual:@"block-outbound"] || [rule isEqual:@"remove"]
-               ? UIAlertActionStyleDestructive
-               : UIAlertActionStyleDefault;
 }
 - (NSString *)ruleTitle:(NSString *)rule {
     return @{

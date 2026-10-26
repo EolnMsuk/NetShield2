@@ -81,17 +81,16 @@
             @"%@\nFirst requested peer: %@\nCountry: unavailable\n\nUnanswered "
             @"connections are blocked after 30 seconds; retry the app if it has already timed out.",
             NSIdentityDisplayName(request[@"identity"]), NSDestinationSummary(request[@"destination"])];
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Allow network access?"
-                                                                   message:message
-                                                            preferredStyle:UIAlertControllerStyleAlert];
+    NSRuleActionController *alert = [NSRuleActionController controllerWithTitle:@"Allow network access?"
+                                                                        message:message];
     for (NSString *rule in @[ @"allow", @"block-inbound", @"block" ]) {
-        [alert addAction:[UIAlertAction actionWithTitle:[self ruleTitle:rule]
-                                                  style:[self ruleActionStyle:rule]
-                                                handler:^(UIAlertAction *action) {
-                                                    [self answerRequest:request rule:rule];
-                                                }]];
+        [alert addActionWithTitle:[self ruleTitle:rule]
+                             rule:rule
+                          handler:^{
+                              [self answerRequest:request rule:rule];
+                          }];
     }
-    [alert addAction:[UIAlertAction actionWithTitle:@"Not Now" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addActionWithTitle:@"Not Now" rule:nil handler:nil];
     self.permissionAlert = alert;
     self.presentedRequest = request;
     [self presentViewController:alert animated:YES completion:nil];

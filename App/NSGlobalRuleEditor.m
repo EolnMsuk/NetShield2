@@ -1,4 +1,6 @@
 #import "NSGlobalRuleEditor.h"
+#import "NSRuleActionController.h"
+#import "NSRuleAppearance.h"
 #import "../Shared/NSGlobalRule.h"
 #import "../Shared/NSIdentityDisplay.h"
 
@@ -81,7 +83,7 @@ typedef NS_ENUM(NSInteger, NSGlobalEditorSection) {
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Unable to save rule"
                                                                    message:message
                                                             preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Close" style:UIAlertActionStyleDefault handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];
 }
 - (void)save {
@@ -89,6 +91,13 @@ typedef NS_ENUM(NSInteger, NSGlobalEditorSection) {
     NSCharacterSet *whitespace = NSCharacterSet.whitespaceAndNewlineCharacterSet;
     NSString *hostText = [self.hostsField.text stringByTrimmingCharactersInSet:whitespace] ?: @"";
     NSString *portText = [self.portsField.text stringByTrimmingCharactersInSet:whitespace] ?: @"";
+    if (!self.selectedIdentities.count && !hostText.length && !portText.length) {
+        [self showMessage:
+                  @"The rule was not saved. Select at least one app, enter a domain or IP address/range, or "
+                  @"enter a port. Without one of these conditions, the rule would apply to all apps and "
+                  @"destinations. Choosing only an action or protocol is not enough."];
+        return;
+    }
     NSString *hosts = hostText.length ? NSGlobalInputRuleKey(hostText, NO, NO) : @"";
     NSString *ports = portText.length ? NSGlobalInputRuleKey(portText, YES, self.localPort) : @"";
     if (!hosts) {
@@ -149,6 +158,32 @@ typedef NS_ENUM(NSInteger, NSGlobalEditorSection) {
         [actions addObject:action];
     }
     return [UIMenu menuWithChildren:actions];
+}
+- (void)showActionChoices:(UIButton *)sender {
+    [self.view endEditing:YES];
+    NSRuleActionController *picker = [NSRuleActionController controllerWithTitle:@"Action" message:nil];
+    picker.selectedRule = self.ruleAction;
+    NSArray *values = @[ @"allow", @"block-inbound", @"block-outbound", @"block" ];
+    NSArray *titles = @[ @"Allow", @"Block Incoming", @"Block Outgoing", @"Block In & Out" ];
+    __weak typeof(self) weakSelf = self;
+    for (NSUInteger index = 0; index < values.count; index++) {
+        NSString *value = values[index];
+        [picker addActionWithTitle:titles[index]
+                              rule:value
+                           handler:^{
+                               weakSelf.ruleAction = value;
+                               [weakSelf.tableView reloadData];
+                           }];
+    }
+    [picker addActionWithTitle:@"Cancel" rule:nil handler:nil];
+    picker.modalPresentationStyle = UIModalPresentationPopover;
+    picker.preferredContentSize = CGSizeMake(360, 360);
+    picker.popoverPresentationController.sourceView = sender;
+    picker.popoverPresentationController.sourceRect = sender.bounds;
+    picker.popoverPresentationController.permittedArrowDirections =
+        UIPopoverArrowDirectionUp | UIPopoverArrowDirectionDown;
+    picker.popoverPresentationController.delegate = picker;
+    [self presentViewController:picker animated:YES completion:nil];
 }
 - (void)addAppIdentity {
     UIAlertController *alert =
@@ -322,13 +357,11 @@ typedef NS_ENUM(NSInteger, NSGlobalEditorSection) {
                 NSArray *values = @[ @"allow", @"block-inbound", @"block-outbound", @"block" ];
                 NSArray *titles = @[ @"Allow", @"Block Incoming", @"Block Outgoing", @"Block In & Out" ];
                 title = titles[[values indexOfObject:self.ruleAction]];
-                button.menu = [self menuForValues:values
-                                           titles:titles
-                                         selected:self.ruleAction
-                                           change:^(NSString *value) {
-                                               weakSelf.ruleAction = value;
-                                               [weakSelf.tableView reloadData];
-                                           }];
+                button.showsMenuAsPrimaryAction = NO;
+                [button addTarget:self
+                              action:@selector(showActionChoices:)
+                    forControlEvents:UIControlEventTouchUpInside];
+                configuration.baseForegroundColor = NSRuleColor(self.ruleAction);
             }
             configuration.title = title;
             button.configuration = configuration;

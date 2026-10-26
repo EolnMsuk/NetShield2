@@ -145,7 +145,7 @@
         return nil;
     }
     return @[
-        @"Firewall", @"Waiting for your decision", @"Notifications", @"Support", @"Advanced Settings",
+        @"Firewall", @"Waiting for your decision", @"Notifications", @"Advanced Settings", @"",
         @"Global Rules", @"App Rules", @"System Rules", @"Recent activity"
     ][section];
 }
@@ -184,6 +184,9 @@
     return nil;
 }
 - (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section {
+    if (section == NSDashboardSectionSupport) {
+        return 20;
+    }
     return section == NSDashboardSectionSystemRules && ![self showsSystemRules]
                ? CGFLOAT_MIN
                : UITableViewAutomaticDimension;
@@ -335,11 +338,7 @@
         } else {
             NSString *key = self.globalRuleKeys[path.row - 1];
             NSString *rule = self.policy.document[@"globalRules"][key];
-            UIColor *color = [rule isEqual:@"allow"] ? UIColor.systemGreenColor
-                             : [rule isEqual:@"block"] || [rule isEqual:@"block-outbound"]
-                                 ? UIColor.systemRedColor
-                             : [rule isEqual:@"block-inbound"] ? UIColor.systemOrangeColor
-                                                               : nil;
+            UIColor *color = NSRuleColor(rule);
             if (color) {
                 cell.backgroundColor = [color colorWithAlphaComponent:0.14];
             }
@@ -356,11 +355,7 @@
         } else {
             NSString *identity = identities[path.row];
             NSString *rule = self.policy.document[@"rules"][identity];
-            UIColor *color = [rule isEqual:@"allow"] ? UIColor.systemGreenColor
-                             : [rule isEqual:@"block"] || [rule isEqual:@"block-outbound"]
-                                 ? UIColor.systemRedColor
-                             : [rule isEqual:@"block-inbound"] ? UIColor.systemOrangeColor
-                                                               : nil;
+            UIColor *color = NSRuleColor(rule);
             if (color) {
                 cell.backgroundColor = [color colorWithAlphaComponent:0.14];
             }
@@ -396,7 +391,7 @@
             BOOL allowed = [event[@"action"] isEqual:@"allow"];
             BOOL blocked = [event[@"action"] isEqual:@"block"];
             NSString *action = allowed ? @"Allowed" : blocked ? @"Blocked" : @"Connection";
-            UIColor *color = allowed ? UIColor.systemGreenColor : blocked ? UIColor.systemRedColor : nil;
+            UIColor *color = allowed ? NSRuleColor(@"allow") : blocked ? NSRuleColor(@"block") : nil;
             if (color) {
                 cell.backgroundColor = [color colorWithAlphaComponent:0.14];
             }
