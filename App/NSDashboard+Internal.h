@@ -55,6 +55,7 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 @property(nonatomic, strong) NSMutableSet<NSString *> *deferredRequests;
 @property(nonatomic, copy) NSString *notificationStatus;
 - (BOOL)updatePolicy:(BOOL (^)(NSMutableDictionary *, NSError **))mutation;
+- (BOOL)removeAppRuleForIdentity:(NSString *)identity;
 - (void)reloadMonitor;
 - (BOOL)hasFreshMonitor;
 - (void)chooseActionForIdentity:(NSString *)identity defaultKey:(NSString *)key;
@@ -62,7 +63,7 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 - (void)exportRulesAndRecentActivityFromRow:(NSIndexPath *)path;
 - (void)addGlobalRuleByPort:(BOOL)port;
 - (void)chooseGlobalRule:(NSString *)key;
-- (void)chooseGlobalRule:(NSString *)key portCreation:(BOOL)portCreation;
+- (void)chooseGlobalRule:(NSString *)key editingKey:(NSString *)original;
 - (void)enterGlobalRuleByPort:(BOOL)port local:(BOOL)local;
 - (void)enterGlobalRuleByPort:(BOOL)port
                         local:(BOOL)local

@@ -173,9 +173,12 @@
         self.presentedRequest = nil;
     }
     NSMutableSet *identities = [NSMutableSet setWithArray:[self.policy.document[@"rules"] allKeys] ?: @[]];
+    NSSet *hiddenIdentities = [NSSet
+        setWithArray:[NSUserDefaults.standardUserDefaults stringArrayForKey:@"hiddenRuleIdentities"] ?: @[]];
     for (NSDictionary *event in self.monitor[@"events"]) {
         NSString *identity = event[@"identity"];
-        if ([identity isKindOfClass:NSString.class] && identity.length) {
+        if ([identity isKindOfClass:NSString.class] && identity.length &&
+            ![hiddenIdentities containsObject:identity]) {
             [identities addObject:identity];
         }
     }
@@ -277,13 +280,29 @@
     [self reloadMonitor];
     return YES;
 }
+- (BOOL)removeAppRuleForIdentity:(NSString *)identity {
+    BOOL saved = [self updatePolicy:^BOOL(NSMutableDictionary *document, NSError **error) {
+        return NSUseDefaultRule(document, identity, error);
+    }];
+    if (saved) {
+        // History must not recreate a removed row on refresh or after relaunch.
+        // A newly saved explicit rule will still make the identity visible.
+        NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+        NSMutableSet *hidden =
+            [NSMutableSet setWithArray:[defaults stringArrayForKey:@"hiddenRuleIdentities"] ?: @[]];
+        [hidden addObject:identity];
+        [defaults setObject:hidden.allObjects forKey:@"hiddenRuleIdentities"];
+        [self reloadMonitor];
+    }
+    return saved;
+}
 - (void)chooseActionForIdentity:(NSString *)identity defaultKey:(NSString *)key {
     if (!self.policy) {
         return;
     }
     NSString *title = NSIdentityDisplayName(identity);
     NSString *explanation = @"Choose a rule for new connections.";
-    NSArray *actions = @[ @"allow", @"block-inbound", @"block", @"use-default" ];
+    NSArray *actions = @[ @"allow", @"block-inbound", @"block", @"remove" ];
     if ([key isEqual:@"default"]) {
         title = @"Default Rule";
         explanation = @"Choose what happens when an app without a saved rule connects. Ask me lets you "
@@ -302,18 +321,17 @@
         [alert addAction:[UIAlertAction actionWithTitle:[self ruleTitle:action]
                                                   style:[self ruleActionStyle:action]
                                                 handler:^(UIAlertAction *selected) {
+                                                    if (!key && [action isEqual:@"remove"]) {
+                                                        [self removeAppRuleForIdentity:identity];
+                                                        return;
+                                                    }
                                                     [self updatePolicy:^BOOL(NSMutableDictionary *document,
                                                                              NSError **error) {
                                                         if (key) {
                                                             document[key] = action;
                                                         } else {
                                                             NSMutableDictionary *rules = document[@"rules"];
-                                                            if ([action isEqual:@"use-default"]) {
-                                                                return NSUseDefaultRule(document, identity,
-                                                                                        error);
-                                                            } else {
-                                                                rules[identity] = action;
-                                                            }
+                                                            rules[identity] = action;
                                                         }
                                                         return YES;
                                                     }];
@@ -328,7 +346,10 @@
         NSString *kind = [first hasPrefix:@"localPort:"] ? @"Local ports"
                          : [first hasPrefix:@"port:"]    ? @"Remote ports"
                                                          : @"IPs / Domains";
-        return [NSString stringWithFormat:@"%@: %@", kind, NSGlobalRuleInputText(key)];
+        NSArray *members = NSGlobalRuleMembers(key);
+        NSArray *preview = [members subarrayWithRange:NSMakeRange(0, MIN((NSUInteger)5, members.count))];
+        NSString *text = NSGlobalRuleInputText(NSGlobalKeyFromMembers(preview));
+        return [NSString stringWithFormat:@"%@: %@%@", kind, text, members.count > 5 ? @", ..." : @""];
     }
     NSRange colon = [key rangeOfString:@":"];
     NSString *kind = [key hasPrefix:@"localPort:"] ? @"Local port"
@@ -338,9 +359,9 @@
     return [NSString stringWithFormat:@"%@: %@", kind, [key substringFromIndex:colon.location + 1]];
 }
 - (void)chooseGlobalRule:(NSString *)key {
-    [self chooseGlobalRule:key portCreation:NO];
+    [self chooseGlobalRule:key editingKey:nil];
 }
-- (void)chooseGlobalRule:(NSString *)key portCreation:(BOOL)portCreation {
+- (void)chooseGlobalRule:(NSString *)key editingKey:(NSString *)original {
     if (!self.policy) {
         return;
     }
@@ -350,9 +371,49 @@
                                                     @"the iOS system traffic allowance."
                                      preferredStyle:UIAlertControllerStyleAlert];
     alert.view.tintColor = UIColor.systemBlueColor;
-    NSMutableArray *actions =
-        [(portCreation ? @[ @"allow", @"block" ] : @[ @"allow", @"block-inbound", @"block" ]) mutableCopy];
-    if (!portCreation && self.policy.document[@"globalRules"][key]) {
+    NSMutableArray *actions = [@[ @"allow", @"block-inbound", @"block" ] mutableCopy];
+    BOOL existing = !original && self.policy.document[@"globalRules"][key] != nil;
+    if (existing) {
+        [actions addObject:@"remove"];
+    }
+    for (NSString *action in actions) {
+        [alert
+            addAction:[UIAlertAction
+                          actionWithTitle:[self ruleTitle:action]
+                                    style:[self ruleActionStyle:action]
+                                  handler:^(UIAlertAction *selected) {
+                                      [self updatePolicy:^BOOL(NSMutableDictionary *document,
+                                                               NSError **error) {
+                                          NSMutableDictionary *rules = [document[@"globalRules"] mutableCopy]
+                                                                           ?: [NSMutableDictionary new];
+                                          if (original) {
+                                              if (!rules[original] ||
+                                                  (![original isEqual:key] && rules[key])) {
+                                                  if (error) {
+                                                      *error = [NSError
+                                                          errorWithDomain:@"NetShield2.Policy"
+                                                                     code:2
+                                                                 userInfo:@{
+                                                                     NSLocalizedDescriptionKey :
+                                                                         @"The original rule was removed or "
+                                                                         @"an identical rule already exists."
+                                                                 }];
+                                                  }
+                                                  return NO;
+                                              }
+                                              [rules removeObjectForKey:original];
+                                          }
+                                          if ([action isEqual:@"remove"]) {
+                                              [rules removeObjectForKey:key];
+                                          } else {
+                                              rules[key] = action;
+                                          }
+                                          document[@"globalRules"] = rules;
+                                          return YES;
+                                      }];
+                                  }]];
+    }
+    if (existing) {
         [alert addAction:[UIAlertAction actionWithTitle:@"Edit Rule"
                                                   style:UIAlertActionStyleDefault
                                                 handler:^(UIAlertAction *selected) {
@@ -367,30 +428,6 @@
                                                                              text:NSGlobalRuleInputText(key)];
                                                     });
                                                 }]];
-        [actions addObject:@"remove"];
-    }
-    for (NSString *action in actions) {
-        [alert addAction:[UIAlertAction
-                             actionWithTitle:portCreation ? ([action isEqual:@"allow"] ? @"Allow" : @"Block")
-                                             : [action isEqual:@"remove"] ? @"Remove Rule"
-                                                                          : [self ruleTitle:action]
-                                       style:[action isEqual:@"remove"] ? UIAlertActionStyleDestructive
-                                                                        : [self ruleActionStyle:action]
-                                     handler:^(UIAlertAction *selected) {
-                                         [self updatePolicy:^BOOL(NSMutableDictionary *document,
-                                                                  NSError **error) {
-                                             NSMutableDictionary *rules =
-                                                 [document[@"globalRules"] mutableCopy]
-                                                     ?: [NSMutableDictionary new];
-                                             if ([action isEqual:@"remove"]) {
-                                                 [rules removeObjectForKey:key];
-                                             } else {
-                                                 rules[key] = action;
-                                             }
-                                             document[@"globalRules"] = rules;
-                                             return YES;
-                                         }];
-                                     }]];
     }
     [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];
@@ -451,40 +488,14 @@
     [alert
         addAction:
             [UIAlertAction
-                actionWithTitle:original ? @"Save Rule" : @"Choose Rule"
+                actionWithTitle:@"Choose Rule"
                           style:UIAlertActionStyleDefault
                         handler:^(UIAlertAction *action) {
                             NSString *value = alert.textFields.firstObject.text;
                             NSString *key = NSGlobalInputRuleKey(value, port, local);
                             dispatch_async(dispatch_get_main_queue(), ^{
                                 if (key) {
-                                    if (original) {
-                                        [self updatePolicy:^BOOL(NSMutableDictionary *document,
-                                                                 NSError **error) {
-                                            NSMutableDictionary *rules =
-                                                [document[@"globalRules"] mutableCopy];
-                                            if (!rules[original] || (![original isEqual:key] && rules[key])) {
-                                                if (error) {
-                                                    *error = [NSError
-                                                        errorWithDomain:@"NetShield2.Policy"
-                                                                   code:2
-                                                               userInfo:@{
-                                                                   NSLocalizedDescriptionKey :
-                                                                       @"The original rule was removed or an "
-                                                                       @"identical rule already exists."
-                                                               }];
-                                                }
-                                                return NO;
-                                            }
-                                            NSString *savedAction = rules[original];
-                                            [rules removeObjectForKey:original];
-                                            rules[key] = savedAction;
-                                            document[@"globalRules"] = rules;
-                                            return YES;
-                                        }];
-                                    } else {
-                                        [self chooseGlobalRule:key portCreation:port];
-                                    }
+                                    [self chooseGlobalRule:key editingKey:original];
                                     return;
                                 }
                                 UIAlertController *invalid = [UIAlertController
@@ -548,19 +559,20 @@
     [self presentViewController:alert animated:YES completion:nil];
 }
 - (UIAlertActionStyle)ruleActionStyle:(NSString *)rule {
-    return [rule isEqual:@"block"] || [rule isEqual:@"block-outbound"] ? UIAlertActionStyleDestructive
-                                                                       : UIAlertActionStyleDefault;
+    return [rule isEqual:@"block"] || [rule isEqual:@"block-outbound"] || [rule isEqual:@"remove"]
+               ? UIAlertActionStyleDestructive
+               : UIAlertActionStyleDefault;
 }
 - (NSString *)ruleTitle:(NSString *)rule {
     return @{
         @"ask" : @"Ask Me",
-        @"allow" : @"Allow In & Out",
+        @"allow" : @"Allow",
         @"block" : @"Block In & Out",
         @"block-inbound" : @"Block Incoming",
         @"block-outbound" : @"Block Outgoing",
-        @"use-default" : @"Use Default Rule"
+        @"remove" : @"Remove Rule"
     }[rule ?: @""]
-               ?: @"Use Default Rule";
+               ?: @"Default Rule";
 }
 - (void)firewallChanged:(UISwitch *)sender {
     if (self.busy) {
@@ -665,7 +677,7 @@
 - (void)showNotificationHelp {
     UIAlertController *alert = [UIAlertController
         alertControllerWithTitle:@"Answer without leaving your app"
-                         message:@"Touch and hold a NetShield2 notification, then choose Allow In & Out, "
+                         message:@"Touch and hold a NetShield2 notification, then choose Allow, "
                                  @"Block Incoming, or Keep Blocking. Tapping the notification body opens "
                                  @"NetShield2.\n\nUsing "
                                  @"Do Not "

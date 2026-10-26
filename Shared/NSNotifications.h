@@ -41,7 +41,7 @@ static inline void NSRemoveAutomaticallyAllowedNotifications(void) {
 static inline void NSRegisterPermissionActions(void) {
     UNNotificationActionOptions options = UNNotificationActionOptionAuthenticationRequired;
     UNNotificationAction *allow = [UNNotificationAction actionWithIdentifier:NSAllowAction
-                                                                       title:@"Allow In & Out"
+                                                                       title:@"Allow"
                                                                      options:options];
     UNNotificationAction *blockIncoming = [UNNotificationAction actionWithIdentifier:NSBlockIncomingAction
                                                                                title:@"Block Incoming"

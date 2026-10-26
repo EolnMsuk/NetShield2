@@ -165,6 +165,7 @@
     [UNUserNotificationCenter.currentNotificationCenter removeAllDeliveredNotifications];
     self.resetRequiresLegacyStop = NO;
     [self.deferredRequests removeAllObjects];
+    [NSUserDefaults.standardUserDefaults removeObjectForKey:@"hiddenRuleIdentities"];
     self.policy = NSReadPolicy(NULL);
     self.monitor = @{};
     self.identities = @[];

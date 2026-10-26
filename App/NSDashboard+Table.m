@@ -57,7 +57,7 @@
         @(self.busy), @(NEFilterManager.sharedManager.enabled),
         @(NEFilterManager.sharedManager.providerConfiguration.filterSockets), self.message ?: @"",
         self.notificationStatus ?: @"", self.policyReadError ?: @"", self.monitor[@"overflowCount"] ?: @0,
-        self.monitor[@"evictedRequestCount"] ?: @0
+        self.monitor[@"evictedRequestCount"] ?: @0, self.identities ?: @[], self.systemIdentities ?: @[]
     ];
     if ([signature isEqual:self.displaySignature]) {
         return;
@@ -178,7 +178,7 @@
     }
     if (section == NSDashboardSectionSupport) {
         NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
-        return [NSString stringWithFormat:@"NetShield2 v%@ by EolnMsuk (iOS %@ %@)", version,
+        return [NSString stringWithFormat:@"NetShield2 v%@ by EolnMsuk (%@ %@)", version,
                                           UIDevice.currentDevice.systemVersion, @NS_JAILBREAK_TYPE];
     }
     return nil;
@@ -418,17 +418,16 @@
         }
     } else if (path.section == NSDashboardSectionSupport) {
         cell.textLabel.text = @[
-            @"Export Rules and Recent Activity", @"Reset Rules & History", @"Reset ALL Settings",
-            @"Check for Update", @"GitHub Link", @"Support the Developer"
+            @"GitHub Link", @"Check for Update", @"Support the Developer",
+            @"Export Rules and Recent Activity", @"Reset Rules & History", @"Reset Settings & Filter"
         ][path.row];
         cell.detailTextLabel.text = @[
-            @"Share rules and recent activity as a JSON file", @"Reset rules and history only",
-            @"Removes all rules, permissions and filters. Runs automatically during uninstall.",
-            @"Check GitHub for a newer version", @"Source code, releases and issues",
-            @"Choose Venmo or Crypto"
+            @"Source code, releases and issues", @"Check GitHub for a newer version",
+            @"Choose Venmo or Crypto", @"Share rules and recent activity as a JSON file",
+            @"Reset rules and history only", @"Removes all rules, permissions and filters."
         ][path.row];
         cell.textLabel.textColor =
-            (path.row == 1 || path.row == 2) ? UIColor.systemRedColor : UIColor.systemBlueColor;
+            (path.row == 4 || path.row == 5) ? UIColor.systemRedColor : UIColor.systemBlueColor;
     } else {
         cell.textLabel.text =
             @[ @"Add a rule by app identity", @"Add a rule by IP / Domain",
@@ -480,35 +479,34 @@
             [self addGlobalRuleByPort:path.row == 2];
         }
     } else if (path.section == NSDashboardSectionSupport) {
-        if (path.row == 3) {
-            [self checkForUpdateManually:YES];
-        } else if (path.row == 4) {
+        if (path.row == 0) {
             [self openSupportURL:[NSURL URLWithString:@"https://github.com/EolnMsuk/NetShield2/"]];
-        } else if (path.row == 5) {
+        } else if (path.row == 1) {
+            [self checkForUpdateManually:YES];
+        } else if (path.row == 2) {
             [self supportDeveloper];
-        } else if (path.row == 0) {
+        } else if (path.row == 3) {
             [self exportRulesAndRecentActivityFromRow:path];
         } else {
-            BOOL reset = path.row == 1;
+            BOOL reset = path.row == 4;
             UIAlertController *alert = [UIAlertController
-                alertControllerWithTitle:reset ? @"Reset Rules & History?" : @"Reset ALL Settings?"
+                alertControllerWithTitle:reset ? @"Reset Rules & History?" : @"Reset Settings & Filter?"
                                  message:reset ? @"Deletes app and global rules, pending requests and "
                                                  @"history only. "
                                                  @"Keeps your settings and restores the firewall's previous "
                                                  @"on/off state after stopping it to reset."
                                                : @"Removes all NetShield2 rules, permissions and history, "
                                                  @"restores default settings, and removes the system filter. "
-                                                 @"Package-manager uninstall removes the filter "
-                                                 @"automatically. iOS notification authorization "
+                                                 @"iOS notification authorization "
                                                  @"must be managed in Settings."
                           preferredStyle:UIAlertControllerStyleAlert];
-            [alert addAction:[UIAlertAction
-                                 actionWithTitle:reset ? @"Reset rules and history" : @"Reset all settings"
-                                           style:UIAlertActionStyleDestructive
-                                         handler:^(UIAlertAction *action) {
-                                             self.resetAllSettings = !reset;
-                                             [self resetNetShield2];
-                                         }]];
+            [alert addAction:[UIAlertAction actionWithTitle:reset ? @"Reset rules and history"
+                                                                  : @"Reset Settings & Filter"
+                                                      style:UIAlertActionStyleDestructive
+                                                    handler:^(UIAlertAction *action) {
+                                                        self.resetAllSettings = !reset;
+                                                        [self resetNetShield2];
+                                                    }]];
             [alert addAction:[UIAlertAction actionWithTitle:@"Cancel"
                                                       style:UIAlertActionStyleCancel
                                                     handler:nil]];
@@ -532,23 +530,19 @@
         return nil;
     }
     NSString *key = keys[path.row];
-    if (!global && !self.policy.document[@"rules"][key]) {
-        return nil;
-    }
     UIContextualAction *remove = [UIContextualAction
         contextualActionWithStyle:UIContextualActionStyleDestructive
                             title:@"Remove"
                           handler:^(UIContextualAction *action, UIView *source, void (^completion)(BOOL)) {
-                              BOOL saved =
-                                  [self updatePolicy:^BOOL(NSMutableDictionary *document, NSError **error) {
-                                      if (!global) {
-                                          return NSUseDefaultRule(document, key, error);
-                                      }
-                                      NSMutableDictionary *rules = [document[@"globalRules"] mutableCopy];
-                                      [rules removeObjectForKey:key];
-                                      document[@"globalRules"] = rules;
-                                      return YES;
-                                  }];
+                              BOOL saved = !global ? [self removeAppRuleForIdentity:key]
+                                                   : [self updatePolicy:^BOOL(NSMutableDictionary *document,
+                                                                              NSError **error) {
+                                                         NSMutableDictionary *rules =
+                                                             [document[@"globalRules"] mutableCopy];
+                                                         [rules removeObjectForKey:key];
+                                                         document[@"globalRules"] = rules;
+                                                         return YES;
+                                                     }];
                               completion(saved);
                               [tableView setEditing:NO animated:YES];
                               [self reloadMonitor];
