@@ -90,12 +90,12 @@ jobs:
           chmod 755 layout/DEBIAN/postinst layout/DEBIAN/prerm
           gmake clean
           gmake package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME="$THEOS_PACKAGE_SCHEME"
-          test -f "packages/com.eolnmsuk.netshield_2.4.0_${PACKAGE_ARCH}.deb"
+          test -f "packages/com.eolnmsuk.netshield_2.4.1_${PACKAGE_ARCH}.deb"
       - name: Verify release deb contents
         shell: bash
         run: |
           set -euo pipefail
-          dpkg-deb --raw-extract "packages/com.eolnmsuk.netshield_2.4.0_${PACKAGE_ARCH}.deb" "$RUNNER_TEMP/netshield-package"
+          dpkg-deb --raw-extract "packages/com.eolnmsuk.netshield_2.4.1_${PACKAGE_ARCH}.deb" "$RUNNER_TEMP/netshield-package"
           python3 scripts/validate.py --stage "$RUNNER_TEMP/netshield-package" --scheme "$PACKAGE_VARIANT"
       - name: Verify signing identities and entitlements
         shell: bash
@@ -110,6 +110,6 @@ jobs:
       - name: Upload release deb
         uses: actions/upload-artifact@v4
         with:
-          name: NetShield2-2.4.0-iOS15-18-${{ matrix.scheme }}
-          path: packages/com.eolnmsuk.netshield_2.4.0_${{ matrix.package_arch }}.deb
+          name: NetShield2-2.4.1-iOS15-18-${{ matrix.scheme }}
+          path: packages/com.eolnmsuk.netshield_2.4.1_${{ matrix.package_arch }}.deb
           if-no-files-found: error
