@@ -84,7 +84,7 @@
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Allow network access?"
                                                                    message:message
                                                             preferredStyle:UIAlertControllerStyleAlert];
-    for (NSString *rule in @[ @"allow", @"block-inbound", @"block-outbound", @"block" ]) {
+    for (NSString *rule in @[ @"allow", @"block-inbound", @"block" ]) {
         [alert addAction:[UIAlertAction actionWithTitle:[self ruleTitle:rule]
                                                   style:[self ruleActionStyle:rule]
                                                 handler:^(UIAlertAction *action) {

@@ -14,6 +14,7 @@
         @"unattributed" : @"allow",
         @"rules" : @{},
         @"globalRules" : @{},
+        @"exactDomainResolution" : @YES,
         @"allowAppleSystemProcesses" : @YES,
         @"filterSockets" : @YES
     };
@@ -55,8 +56,11 @@
     if (valid && globalRules) {
         valid = [globalRules isKindOfClass:NSDictionary.class] && [globalRules count] <= NSMaximumRules;
         if (valid) {
+            NSUInteger memberCount = 0;
             for (id key in globalRules) {
-                if (!NSValidGlobalRuleKey(key) || ![globalRules[key] isKindOfClass:NSString.class] ||
+                if (!NSValidGlobalRuleKey(key) ||
+                    (memberCount += NSGlobalRuleMembers(key).count) > NSMaximumRules ||
+                    ![globalRules[key] isKindOfClass:NSString.class] ||
                     ![actions containsObject:globalRules[key]]) {
                     valid = NO;
                     break;
@@ -154,6 +158,12 @@
     if (addresses) {
         canonicalDocument[@"globalDomainAddresses"] = canonicalAddresses;
     }
+    // Discard pre-2.3.1 DNS answers, which combined bare and www hosts.
+    if (![d[@"exactDomainResolution"] isEqual:@YES]) {
+        [canonicalDocument removeObjectForKey:@"globalDomainAddresses"];
+        [canonicalDocument removeObjectForKey:@"globalDomainExpirations"];
+    }
+    canonicalDocument[@"exactDomainResolution"] = @YES;
     d = canonicalDocument;
     if (!sockets) {
         NSMutableDictionary *normalized = [d mutableCopy];
@@ -172,13 +182,14 @@
                                                                   options:NSPropertyListImmutable
                                                                    format:NULL
                                                                     error:error];
+    policy->_expandedGlobalRules = [NSExpandedGlobalRules(policy->_document[@"globalRules"]) copy];
     return policy->_document ? policy : nil;
 }
 - (BOOL)automaticallyAllowsIdentity:(NSString *)identity {
     return [self.document[@"allowAppleSystemProcesses"] boolValue] && NSIsAppleSystemIdentity(identity);
 }
 - (NSString *)globalActionForDestination:(NSDictionary *)destination {
-    NSDictionary *rules = self.document[@"globalRules"];
+    NSDictionary *rules = self.expandedGlobalRules;
     NSString *addressKey = NSGlobalHostKey(destination[@"address"]);
     NSString *action = addressKey ? rules[addressKey] : nil;
     if (action) {
@@ -218,11 +229,11 @@
     return ![self globalActionForDestination:destination] && [self requiresPermissionForIdentity:identity];
 }
 - (BOOL)needsSocketDestination:(NSDictionary *)destination {
-    for (NSString *key in self.document[@"globalRules"]) {
+    for (NSString *key in self.expandedGlobalRules) {
         BOOL needsAddress =
             [key hasPrefix:@"ip:"] ||
             ([key hasPrefix:@"domain:"] && ![NSGlobalHostKey(destination[@"domain"]) hasPrefix:@"domain:"] &&
-             ![self.document[@"globalRules"][key] isEqual:@"allow"]);
+             ![self.expandedGlobalRules[key] isEqual:@"allow"]);
         if (needsAddress && ![destination[@"address"] length]) {
             return YES;
         }

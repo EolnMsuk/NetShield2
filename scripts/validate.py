@@ -1,16 +1,17 @@
 import argparse
 import json
+import os
 import pathlib
 import plistlib
 import re
 import struct
 from urllib.parse import urlsplit
-from prepare_package import maintainer_script
+from prepare_package import PACKAGE_ARCHITECTURES, maintainer_script
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
 parser.add_argument('--stage', type=pathlib.Path)
-parser.add_argument('--scheme', choices=('rootless', 'roothide'), default='rootless')
+parser.add_argument('--scheme', choices=PACKAGE_ARCHITECTURES, default='rootless')
 args = parser.parse_args()
 
 def require(condition, message):
@@ -23,9 +24,9 @@ def plist(path):
 control = (ROOT / 'control').read_bytes()
 require(b'\r' not in control, 'control must have LF line endings')
 metadata = dict(line.split(': ', 1) for line in control.decode().splitlines() if ': ' in line)
-require(metadata['Version'] == '2.3.0', 'Wrong package version')
+require(metadata['Version'] == '2.3.1', 'Wrong package version')
 require(metadata['Name'] == 'NetShield2', 'Wrong product name')
-require(metadata['Architecture'] == 'iphoneos-arm64', 'Wrong rootless architecture')
+require(metadata['Architecture'] == 'iphoneos-arm', 'Expected base rootful architecture; Theos overrides it for rootless and RootHide')
 require(metadata['Depends'] == 'firmware (>= 15.0), firmware (<< 19.0), uikittools', 'Expected iOS 15-18 package range')
 require(re.search(r'^export TARGET = iphone:clang:[^:]+:15\.0$', (ROOT / 'Makefile').read_text(), re.M), 'Expected iOS 15.0 deployment target')
 require(metadata.get('Icon') == 'https://raw.githubusercontent.com/EolnMsuk/NetShield2/HEAD/App/Resources/Icon.png', 'Expected hosted package icon URL')
@@ -95,18 +96,24 @@ if args.stage:
     app = args.stage / app_path
     staged_metadata = dict(line.split(': ', 1) for line in
                            (args.stage / 'DEBIAN/control').read_text().splitlines() if ': ' in line)
-    architecture = 'iphoneos-arm64' if args.scheme == 'rootless' else 'iphoneos-arm64e'
+    architecture = PACKAGE_ARCHITECTURES[args.scheme]
     require(staged_metadata['Architecture'] == architecture, 'Wrong staged package architecture')
     require(staged_metadata['Version'] == metadata['Version'], 'Wrong staged package version')
     for name in ('postinst', 'prerm'):
         expected = maintainer_script((ROOT / 'layout/DEBIAN' / name).read_bytes(), args.scheme)
         require((args.stage / 'DEBIAN' / name).read_bytes() == expected,
                 f'Wrong {args.scheme} maintainer script: {name}')
+        if os.name == 'posix':
+            require((args.stage / 'DEBIAN' / name).stat().st_mode & 0o777 == 0o755,
+                    f'Maintainer script must be executable (0755): {name}')
     for directory, binary, suffix, point, principal in bundles:
         bundle = app if directory == 'App' else app / f'PlugIns/{binary}.appex'
         require(plist(bundle / 'Info.plist') == plist(ROOT / directory / 'Resources/Info.plist'), f'Bad staged metadata: {binary}')
         executable = bundle / binary
         require(executable.is_file(), f'Missing executable {executable}')
+        if os.name == 'posix':
+            require(executable.stat().st_mode & 0o111 == 0o111,
+                    f'Missing executable permissions: {binary}')
         raw = executable.read_bytes()
         require(len(raw) >= 12, f'Truncated executable {binary}')
         magic, cputype = struct.unpack_from('<II', raw)

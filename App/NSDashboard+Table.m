@@ -46,6 +46,10 @@
     self.rowHeights[[self heightKey:path]] = @(cell.bounds.size.height);
 }
 - (void)refreshTableKeepingPosition {
+    // Monitor refreshes must not interrupt the native swipe reveal animation.
+    if (self.tableView.editing) {
+        return;
+    }
     NSArray *signature = @[
         self.policy.document ?: @{}, self.monitor[@"requests"] ?: @[], self.monitor[@"events"] ?: @[],
         self.monitor[@"policyError"] ?: @"", self.monitor[@"dnsIssue"] ?: @"",
@@ -129,10 +133,10 @@
         return MAX((NSUInteger)1, self.globalRuleKeys.count);
     }
     if (section == NSDashboardSectionAdvanced) {
-        return 6;
+        return 3;
     }
     if (section == NSDashboardSectionSupport) {
-        return 2;
+        return 5;
     }
     return MAX((NSUInteger)1, self.activityGroups.count);
 }
@@ -141,7 +145,7 @@
         return nil;
     }
     return @[
-        @"Firewall", @"Waiting for your decision", @"Notifications", @"Advanced Settings", @"Support",
+        @"Firewall", @"Waiting for your decision", @"Notifications", @"Support", @"Advanced Settings",
         @"Global rules", @"App Rules", @"System Rules", @"Recent activity"
     ][section];
 }
@@ -173,9 +177,11 @@
         return @"Up to 300 recorded events";
     }
     if (section == NSDashboardSectionSupport) {
-        return @"Developed by EolnMsuk.";
+        NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
+        return [NSString stringWithFormat:@"NetShield2 v%@ by EolnMsuk (iOS %@ %@)", version,
+                                          UIDevice.currentDevice.systemVersion, @NS_JAILBREAK_TYPE];
     }
-    return @"NetShield2 2.3.0 / iOS 15-18.";
+    return nil;
 }
 - (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section {
     return section == NSDashboardSectionSystemRules && ![self showsSystemRules]
@@ -412,26 +418,25 @@
                 stringByAppendingFormat:@"\n%@", NSDestinationSummary(event[@"destination"])];
         }
     } else if (path.section == NSDashboardSectionSupport) {
-        cell.textLabel.text = path.row == 0 ? @"GitHub Link" : @"Support Developer";
-        cell.detailTextLabel.text =
-            path.row == 0 ? @"Source code, releases and issues" : @"Choose Venmo or Bitcoin";
-        cell.textLabel.textColor = UIColor.systemBlueColor;
-    } else {
         cell.textLabel.text = @[
-            @"Add a rule by app identity", @"Add a rule by IP / Domain", @"Add a rule by port number",
-            @"Export Rules and Recent Activity", @"Reset Rules & History", @"Reset ALL Settings"
+            @"Reset Rules & History", @"Reset ALL Settings", @"Export Rules and Recent Activity",
+            @"GitHub Link", @"Support Developer"
         ][path.row];
         cell.detailTextLabel.text = @[
-            @"For an exact identity supplied by iOS", @"For an IP or domain across all processes",
-            @"For a port across all processes", @"Share rules and recent activity as a JSON file",
             @"Reset rules and history only",
-            @"Removes all rules, permissions and filters. Runs automatically during uninstall."
+            @"Removes all rules, permissions and filters. Runs automatically during uninstall.",
+            @"Share rules and recent activity as a JSON file", @"Source code, releases and issues",
+            @"Choose Venmo or Crypto"
         ][path.row];
-        if (path.row == 3) {
-            cell.textLabel.textColor = UIColor.systemBlueColor;
-        } else if (path.row > 3) {
-            cell.textLabel.textColor = UIColor.systemRedColor;
-        }
+        cell.textLabel.textColor = path.row < 2 ? UIColor.systemRedColor : UIColor.systemBlueColor;
+    } else {
+        cell.textLabel.text =
+            @[ @"Add a rule by app identity", @"Add a rule by IP / Domain",
+               @"Add a rule by port number" ][path.row];
+        cell.detailTextLabel.text = @[
+            @"For an exact identity supplied by iOS", @"For IPs or domains across all processes",
+            @"For ports across all processes"
+        ][path.row];
     }
     if (path.section == NSDashboardSectionFirewall && path.row == 0) {
         self.firewallCell = cell;
@@ -468,21 +473,21 @@
         }
     } else if (path.section == NSDashboardSectionFirewall && path.row == 4) {
         [self chooseActionForIdentity:nil defaultKey:@"unattributed"];
-    } else if (path.section == NSDashboardSectionSupport) {
-        if (path.row == 0) {
-            [self openSupportURL:[NSURL URLWithString:@"https://github.com/EolnMsuk/NetShield2/"]];
-        } else {
-            [self supportDeveloper];
-        }
     } else if (path.section == NSDashboardSectionAdvanced) {
         if (path.row == 0) {
             [self addIdentity];
-        } else if (path.row == 1 || path.row == 2) {
+        } else {
             [self addGlobalRuleByPort:path.row == 2];
-        } else if (path.row == 3) {
+        }
+    } else if (path.section == NSDashboardSectionSupport) {
+        if (path.row == 3) {
+            [self openSupportURL:[NSURL URLWithString:@"https://github.com/EolnMsuk/NetShield2/"]];
+        } else if (path.row == 4) {
+            [self supportDeveloper];
+        } else if (path.row == 2) {
             [self exportRulesAndRecentActivityFromRow:path];
-        } else if (path.row < 6) {
-            BOOL reset = path.row == 4;
+        } else {
+            BOOL reset = path.row == 0;
             UIAlertController *alert = [UIAlertController
                 alertControllerWithTitle:reset ? @"Reset Rules & History?" : @"Reset ALL Settings?"
                                  message:reset ? @"Deletes app and global rules, pending requests and "
@@ -510,4 +515,46 @@
     }
 }
 
+- (void)tableView:(UITableView *)tableView didEndEditingRowAtIndexPath:(NSIndexPath *)path {
+    [self reloadMonitor];
+}
+- (UISwipeActionsConfiguration *)tableView:(UITableView *)tableView
+    trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)path {
+    if (self.busy || !self.policy) {
+        return nil;
+    }
+    BOOL global = path.section == NSDashboardSectionGlobalRules;
+    BOOL app = path.section == NSDashboardSectionRules || path.section == NSDashboardSectionSystemRules;
+    NSArray *keys = global ? self.globalRuleKeys : app ? [self identitiesForSection:path.section] : @[];
+    if ((NSUInteger)path.row >= keys.count) {
+        return nil;
+    }
+    NSString *key = keys[path.row];
+    if (!global && !self.policy.document[@"rules"][key]) {
+        return nil;
+    }
+    UIContextualAction *remove = [UIContextualAction
+        contextualActionWithStyle:UIContextualActionStyleDestructive
+                            title:@"Remove"
+                          handler:^(UIContextualAction *action, UIView *source, void (^completion)(BOOL)) {
+                              BOOL saved =
+                                  [self updatePolicy:^BOOL(NSMutableDictionary *document, NSError **error) {
+                                      if (!global) {
+                                          return NSUseDefaultRule(document, key, error);
+                                      }
+                                      NSMutableDictionary *rules = [document[@"globalRules"] mutableCopy];
+                                      [rules removeObjectForKey:key];
+                                      document[@"globalRules"] = rules;
+                                      return YES;
+                                  }];
+                              completion(saved);
+                              [tableView setEditing:NO animated:YES];
+                              [self reloadMonitor];
+                          }];
+    remove.backgroundColor = UIColor.systemRedColor;
+    UISwipeActionsConfiguration *configuration =
+        [UISwipeActionsConfiguration configurationWithActions:@[ remove ]];
+    configuration.performsFirstActionWithFullSwipe = NO;
+    return configuration;
+}
 @end

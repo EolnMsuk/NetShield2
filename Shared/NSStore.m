@@ -1,5 +1,6 @@
 #import "NSStore.h"
 #import "NSDestination.h"
+#import "NSGlobalRule.h"
 #import "NSPolicyCache.h"
 #include <errno.h>
 
@@ -164,9 +165,10 @@ BOOL NSUpdatePolicy(BOOL (^mutation)(NSMutableDictionary *, NSError **), NSError
         if (destinations) {
             document[@"ruleDestinations"] = destinations;
         }
+        NSDictionary *globalRules = NSExpandedGlobalRules(document[@"globalRules"]);
         NSMutableDictionary *addresses = [document[@"globalDomainAddresses"] mutableCopy];
         for (NSString *key in addresses.allKeys) {
-            if (!document[@"globalRules"][key] || [document[@"globalRules"][key] isEqual:@"allow"]) {
+            if (!globalRules[key] || [globalRules[key] isEqual:@"allow"]) {
                 [addresses removeObjectForKey:key];
             }
         }

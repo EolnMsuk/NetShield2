@@ -14,8 +14,8 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
     NSDashboardSectionFirewall,
     NSDashboardSectionRequests,
     NSDashboardSectionNotifications,
-    NSDashboardSectionAdvanced,
     NSDashboardSectionSupport,
+    NSDashboardSectionAdvanced,
     NSDashboardSectionGlobalRules,
     NSDashboardSectionRules,
     NSDashboardSectionSystemRules,
@@ -49,6 +49,7 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 @property(nonatomic) BOOL restoreFirewallAfterReset;
 @property(nonatomic, strong) NSMutableSet<NSString *> *deferredRequests;
 @property(nonatomic, copy) NSString *notificationStatus;
+- (BOOL)updatePolicy:(BOOL (^)(NSMutableDictionary *, NSError **))mutation;
 - (void)reloadMonitor;
 - (BOOL)hasFreshMonitor;
 - (void)chooseActionForIdentity:(NSString *)identity defaultKey:(NSString *)key;
@@ -58,6 +59,10 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 - (void)chooseGlobalRule:(NSString *)key;
 - (void)chooseGlobalRule:(NSString *)key portCreation:(BOOL)portCreation;
 - (void)enterGlobalRuleByPort:(BOOL)port local:(BOOL)local;
+- (void)enterGlobalRuleByPort:(BOOL)port
+                        local:(BOOL)local
+                   editingKey:(NSString *)original
+                         text:(NSString *)text;
 - (NSString *)globalRuleTitle:(NSString *)key;
 - (NSString *)ruleTitle:(NSString *)rule;
 - (UIAlertActionStyle)ruleActionStyle:(NSString *)rule;

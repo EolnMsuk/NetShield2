@@ -3,6 +3,76 @@
 #import "../Shared/NSExport.h"
 #import "../Shared/NSProviderHealth.h"
 
+@interface NSCryptoWalletsController : UITableViewController
+@property(nonatomic, copy) NSArray<NSArray<NSString *> *> *wallets;
+@end
+
+@implementation NSCryptoWalletsController
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.title = @"Crypto wallets";
+    self.tableView.rowHeight = UITableViewAutomaticDimension;
+    self.tableView.estimatedRowHeight = 90;
+    self.wallets = @[
+        @[ @"BTC (Bitcoin Network)", @"31uHLpioo1TbxAmo9kM7rrKcLz3wvcoZaL" ],
+        @[ @"ETH (Ethereum Network)", @"0x6060BEA4305BC4259bcF1db5eDbe756b7b74a895" ],
+        @[ @"USDT (Ethereum Network)", @"0x17f0c9d7229E9A1Ad1cAccbfEe7979CF39F2301F" ],
+        @[ @"USDC (Ethereum Network)", @"0xD69Dc2a18e64E071d096435dD6f9DdD52B10785c" ],
+        @[ @"RNDR / ERC-20 (Ethereum Network)", @"0x9cc3fCc3b41a31cDC07E33930F1d622c3ed690E9" ],
+        @[ @"LTC (Litecoin Network)", @"MNWMWwueZBoQSd7Ms9meQ1cMfeY16BA7E1" ],
+        @[ @"SOL (Solana Network)", @"H2ydj95396KRErC4nMtK5B2BAjobPTyUh7LpYBFSmFnP" ],
+        @[ @"BNB (BNB Smart Chain Network)", @"0x314148b89744663ad9F1Fb8EA6862a62abf2fC93" ]
+    ];
+}
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
+    return 2;
+}
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
+    return section == 0 ? self.wallets.count : 1;
+}
+- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
+    return section == 0 ? @"Tap a wallet address to copy" : nil;
+}
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)path {
+    UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle
+                                                   reuseIdentifier:nil];
+    cell.textLabel.numberOfLines = 0;
+    cell.detailTextLabel.numberOfLines = 0;
+    cell.detailTextLabel.lineBreakMode = NSLineBreakByCharWrapping;
+    cell.textLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
+    cell.detailTextLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+    cell.textLabel.adjustsFontForContentSizeCategory = YES;
+    cell.detailTextLabel.adjustsFontForContentSizeCategory = YES;
+    cell.accessibilityTraits |= UIAccessibilityTraitButton;
+    if (path.section == 0) {
+        cell.textLabel.text = self.wallets[path.row][0];
+        cell.detailTextLabel.text = self.wallets[path.row][1];
+        cell.detailTextLabel.textColor = UIColor.systemBlueColor;
+        cell.accessibilityHint = @"Copies the wallet address";
+    } else {
+        cell.textLabel.text = @"Cancel";
+        cell.textLabel.textColor = UIColor.systemBlueColor;
+        cell.textLabel.textAlignment = NSTextAlignmentCenter;
+    }
+    return cell;
+}
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)path {
+    [tableView deselectRowAtIndexPath:path animated:YES];
+    if (path.section == 1) {
+        [self dismissViewControllerAnimated:YES completion:nil];
+        return;
+    }
+    NSArray *wallet = self.wallets[path.row];
+    UIPasteboard.generalPasteboard.string = wallet[1];
+    UIAlertController *notice = [UIAlertController
+        alertControllerWithTitle:@"Wallet address copied"
+                         message:[NSString stringWithFormat:@"%@\n%@", wallet[0], wallet[1]]
+                  preferredStyle:UIAlertControllerStyleAlert];
+    [notice addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+    [self presentViewController:notice animated:YES completion:nil];
+}
+@end
+
 @implementation NSDashboard
 - (void)presentViewController:(UIViewController *)viewControllerToPresent
                      animated:(BOOL)animated
@@ -70,6 +140,9 @@
     self.timer = nil;
 }
 - (void)reloadMonitor {
+    if (self.tableView.editing) {
+        return;
+    }
     NSError *policyError = nil;
     self.policy = NSReadPolicy(&policyError);
     self.policyReadError = self.policy ? @"" : policyError.localizedDescription;
@@ -182,17 +255,18 @@
                                               error.domain, (long)error.code];
     [self refreshTableKeepingPosition];
 }
-- (void)updatePolicy:(BOOL (^)(NSMutableDictionary *, NSError **))mutation {
+- (BOOL)updatePolicy:(BOOL (^)(NSMutableDictionary *, NSError **))mutation {
     NSError *error = nil;
     if (!NSUpdatePolicy(mutation, &error)) {
         [self showError:error];
         [self reloadMonitor];
-        return;
+        return NO;
     }
     NSRemoveAutomaticallyAllowedNotifications();
     self.message = @"Policy saved for new flows. Close existing connections and retry; admitted flows keep "
                    @"their previous verdict.";
     [self reloadMonitor];
+    return YES;
 }
 - (void)chooseActionForIdentity:(NSString *)identity defaultKey:(NSString *)key {
     if (!self.policy) {
@@ -200,7 +274,7 @@
     }
     NSString *title = identity;
     NSString *explanation = @"Choose a rule for new connections.";
-    NSArray *actions = @[ @"allow", @"block-inbound", @"block-outbound", @"block", @"use-default" ];
+    NSArray *actions = @[ @"allow", @"block-inbound", @"block", @"use-default" ];
     if ([key isEqual:@"default"]) {
         title = @"Default Rule";
         explanation = @"Choose what happens when an app without a saved rule connects. Ask me lets you "
@@ -240,6 +314,13 @@
     [self presentViewController:alert animated:YES completion:nil];
 }
 - (NSString *)globalRuleTitle:(NSString *)key {
+    if ([key hasPrefix:@"group:"]) {
+        NSString *first = NSGlobalRuleMembers(key).firstObject;
+        NSString *kind = [first hasPrefix:@"localPort:"] ? @"Local ports"
+                         : [first hasPrefix:@"port:"]    ? @"Remote ports"
+                                                         : @"IPs / Domains";
+        return [NSString stringWithFormat:@"%@: %@", kind, NSGlobalRuleInputText(key)];
+    }
     NSRange colon = [key rangeOfString:@":"];
     NSString *kind = [key hasPrefix:@"localPort:"] ? @"Local port"
                      : [key hasPrefix:@"port:"]    ? @"Remote port"
@@ -261,9 +342,22 @@
                                      preferredStyle:UIAlertControllerStyleAlert];
     alert.view.tintColor = UIColor.systemBlueColor;
     NSMutableArray *actions =
-        [(portCreation ? @[ @"allow", @"block" ]
-                       : @[ @"allow", @"block-inbound", @"block-outbound", @"block" ]) mutableCopy];
+        [(portCreation ? @[ @"allow", @"block" ] : @[ @"allow", @"block-inbound", @"block" ]) mutableCopy];
     if (!portCreation && self.policy.document[@"globalRules"][key]) {
+        [alert addAction:[UIAlertAction actionWithTitle:@"Edit Rule"
+                                                  style:UIAlertActionStyleDefault
+                                                handler:^(UIAlertAction *selected) {
+                                                    NSString *first = NSGlobalRuleMembers(key).firstObject;
+                                                    BOOL local = [first hasPrefix:@"localPort:"];
+                                                    BOOL port = local || [first hasPrefix:@"port:"];
+                                                    dispatch_async(dispatch_get_main_queue(), ^{
+                                                        [self
+                                                            enterGlobalRuleByPort:port
+                                                                            local:local
+                                                                       editingKey:key
+                                                                             text:NSGlobalRuleInputText(key)];
+                                                    });
+                                                }]];
         [actions addObject:@"remove"];
     }
     for (NSString *action in actions) {
@@ -319,63 +413,100 @@
     [self presentViewController:alert animated:YES completion:nil];
 }
 - (void)enterGlobalRuleByPort:(BOOL)port local:(BOOL)local {
+    [self enterGlobalRuleByPort:port local:local editingKey:nil text:nil];
+}
+- (void)enterGlobalRuleByPort:(BOOL)port
+                        local:(BOOL)local
+                   editingKey:(NSString *)original
+                         text:(NSString *)text {
     if (!self.policy) {
         return;
     }
     UIAlertController *alert = [UIAlertController
         alertControllerWithTitle:port ? @"Add a rule by port number" : @"Add a rule by IP / Domain"
                          message:
-                             port
-                                 ? (local
-                                        ? @"Enter a local port from 1 to 65535. Applies across all processes."
-                                        : @"Enter a remote port from 1 to 65535. Applies across all "
-                                          @"processes.")
-                                 : @"Enter an exact IPv4/IPv6 address or domain (without a URL or "
-                                   @"path). Domains get a www. prefix and match both bare and www names."
+                             port ? (local ? @"Enter local ports from 1 to 65535, separated by commas."
+                                           : @"Enter remote ports from 1 to 65535, separated by commas.")
+                                  : @"Separate IPs or exact domains with commas. IP ranges are inclusive, "
+                                    @"for example 192.168.1.10-192.168.1.12. Do not include URLs or paths. "
+                                    @"Bare and www domains are separate. Maximum 4096 entries across all "
+                                    @"rules."
                   preferredStyle:UIAlertControllerStyleAlert];
     [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
-        field.placeholder = port ? (local ? @"Local port number" : @"Remote port number") : @"IP or domain";
-        field.keyboardType = port ? UIKeyboardTypeNumberPad : UIKeyboardTypeASCIICapable;
+        field.placeholder = port ? @"443, 8443" : @"example.com, 192.168.1.10-192.168.1.12";
+        field.text = text;
+        field.keyboardType = UIKeyboardTypeASCIICapable;
         field.autocapitalizationType = UITextAutocapitalizationTypeNone;
         field.autocorrectionType = UITextAutocorrectionTypeNo;
     }];
     [alert
         addAction:
             [UIAlertAction
-                actionWithTitle:@"Choose Rule"
+                actionWithTitle:original ? @"Save Rule" : @"Choose Rule"
                           style:UIAlertActionStyleDefault
                         handler:^(UIAlertAction *action) {
                             NSString *value = alert.textFields.firstObject.text;
-                            NSString *key =
-                                port ? (local ? NSGlobalLocalPortKey(value) : NSGlobalPortKey(value))
-                                     : NSGlobalInputHostKey(value);
+                            NSString *key = NSGlobalInputRuleKey(value, port, local);
                             dispatch_async(dispatch_get_main_queue(), ^{
                                 if (key) {
-                                    [self chooseGlobalRule:key portCreation:port];
-                                } else {
-                                    UIAlertController *invalid = [UIAlertController
-                                        alertControllerWithTitle:port ? @"Invalid port number"
-                                                                      : @"Invalid IP or domain"
-                                                         message:
-                                                             port ? @"Enter a whole number from 1 to 65535."
-                                                                  : @"Enter an IPv4/IPv6 address or an exact "
-                                                                    @"domain, such as example.com."
-                                                  preferredStyle:UIAlertControllerStyleAlert];
-                                    [invalid
-                                        addAction:[UIAlertAction
-                                                      actionWithTitle:@"Try Again"
-                                                                style:UIAlertActionStyleDefault
-                                                              handler:^(UIAlertAction *selected) {
-                                                                  dispatch_async(dispatch_get_main_queue(), ^{
-                                                                      [self enterGlobalRuleByPort:port
-                                                                                            local:local];
-                                                                  });
-                                                              }]];
-                                    [invalid addAction:[UIAlertAction actionWithTitle:@"Cancel"
-                                                                                style:UIAlertActionStyleCancel
-                                                                              handler:nil]];
-                                    [self presentViewController:invalid animated:YES completion:nil];
+                                    if (original) {
+                                        [self updatePolicy:^BOOL(NSMutableDictionary *document,
+                                                                 NSError **error) {
+                                            NSMutableDictionary *rules =
+                                                [document[@"globalRules"] mutableCopy];
+                                            if (!rules[original] || (![original isEqual:key] && rules[key])) {
+                                                if (error) {
+                                                    *error = [NSError
+                                                        errorWithDomain:@"NetShield2.Policy"
+                                                                   code:2
+                                                               userInfo:@{
+                                                                   NSLocalizedDescriptionKey :
+                                                                       @"The original rule was removed or an "
+                                                                       @"identical rule already exists."
+                                                               }];
+                                                }
+                                                return NO;
+                                            }
+                                            NSString *savedAction = rules[original];
+                                            [rules removeObjectForKey:original];
+                                            rules[key] = savedAction;
+                                            document[@"globalRules"] = rules;
+                                            return YES;
+                                        }];
+                                    } else {
+                                        [self chooseGlobalRule:key portCreation:port];
+                                    }
+                                    return;
                                 }
+                                UIAlertController *invalid = [UIAlertController
+                                    alertControllerWithTitle:port ? @"Invalid port number"
+                                                                  : @"Invalid IP or domain"
+                                                     message:port
+                                                                 ? @"Separate whole numbers from 1 to 65535 "
+                                                                   @"with commas."
+                                                                 : @"Use complete IPv4/IPv6 addresses, exact "
+                                                                   @"domains, or ascending IP ranges. "
+                                                                   @"Separate entries with commas; do not "
+                                                                   @"leave empty entries. "
+                                                                   @"A rule can contain up to 4096 addresses "
+                                                                   @"and domains."
+                                              preferredStyle:UIAlertControllerStyleAlert];
+                                [invalid
+                                    addAction:[UIAlertAction
+                                                  actionWithTitle:@"Try Again"
+                                                            style:UIAlertActionStyleDefault
+                                                          handler:^(UIAlertAction *selected) {
+                                                              dispatch_async(dispatch_get_main_queue(), ^{
+                                                                  [self enterGlobalRuleByPort:port
+                                                                                        local:local
+                                                                                   editingKey:original
+                                                                                         text:value];
+                                                              });
+                                                          }]];
+                                [invalid addAction:[UIAlertAction actionWithTitle:@"Cancel"
+                                                                            style:UIAlertActionStyleCancel
+                                                                          handler:nil]];
+                                [self presentViewController:invalid animated:YES completion:nil];
                             });
                         }]];
     [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
@@ -504,24 +635,17 @@
                                                            URLWithString:@"https://venmo.com/u/rustonrails"]];
                               }]];
     [alert addAction:[UIAlertAction
-                         actionWithTitle:@"Bitcoin"
+                         actionWithTitle:@"Crypto"
                                    style:UIAlertActionStyleDefault
                                  handler:^(UIAlertAction *action) {
-                                     UIPasteboard.generalPasteboard.string =
-                                         @"31uHLpioo1TbxAmo9kM7rrKcLz3wvcoZaL";
                                      dispatch_async(dispatch_get_main_queue(), ^{
-                                         UIAlertController *confirmation = [UIAlertController
-                                             alertControllerWithTitle:@"Bitcoin address copied"
-                                                              message:@"The Bitcoin wallet address has been "
-                                                                      @"copied to your clipboard."
-                                                       preferredStyle:UIAlertControllerStyleAlert];
-                                         [confirmation addAction:[UIAlertAction
-                                                                     actionWithTitle:@"OK"
-                                                                               style:UIAlertActionStyleDefault
-                                                                             handler:nil]];
-                                         [self presentViewController:confirmation
-                                                            animated:YES
-                                                          completion:nil];
+                                         NSCryptoWalletsController *wallets =
+                                             [[NSCryptoWalletsController alloc]
+                                                 initWithStyle:UITableViewStyleInsetGrouped];
+                                         UINavigationController *popup = [[UINavigationController alloc]
+                                             initWithRootViewController:wallets];
+                                         popup.modalPresentationStyle = UIModalPresentationFormSheet;
+                                         [self presentViewController:popup animated:YES completion:nil];
                                      });
                                  }]];
     [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];

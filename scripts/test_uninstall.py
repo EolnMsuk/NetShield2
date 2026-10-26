@@ -6,10 +6,10 @@ import shlex
 import shutil
 import subprocess
 import tempfile
-from prepare_package import maintainer_script
+from prepare_package import PACKAGE_ARCHITECTURES, maintainer_script
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--scheme', choices=('rootless', 'roothide'), default='rootless')
+parser.add_argument('--scheme', choices=PACKAGE_ARCHITECTURES, default='rootless')
 args = parser.parse_args()
 prefix = '/var/jb' if args.scheme == 'rootless' else ''
 

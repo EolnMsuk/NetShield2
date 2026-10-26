@@ -3,6 +3,7 @@
 #import "../Shared/NSActivity.h"
 #import "../Shared/NSExport.h"
 #import "../Shared/NSGlobalRule.h"
+#import "../Shared/NSDNSCache.h"
 #import "../App/NSFilterRemoval.h"
 #import "../Shared/NSDestination.h"
 #import "../Shared/NSPermissionQueue.h"
@@ -443,8 +444,131 @@ static void TestActivityGrouping(void) {
     CHECK([NSGroupedActivity(@[ ActivityEvent(@"", @{}, @"unknown", @"other", 0, 0, 0) ])[0][@"action"]
         isEqual:@"other"]);
 }
+static void TestGroupedGlobalRules(void) {
+    NSString *group =
+        NSGlobalInputRuleKey(@" Example.com, 192.168.1.10-192.168.1.12, [2001:db8::1], example.com ", NO, NO);
+    CHECK(NSValidGlobalRuleKey(group));
+    CHECK([NSGlobalRuleMembers(NSGlobalInputRuleKey(@"2001:db8::ff-2001:db8::101", NO, NO))
+        isEqual:@[ @"ip:2001:db8::100", @"ip:2001:db8::101", @"ip:2001:db8::ff" ]]);
+    CHECK(!NSGlobalInputRuleKey(@"2001:db8::2-2001:db8::1", NO, NO));
+    CHECK(!NSGlobalInputRuleKey(@"::-ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", NO, NO));
+    CHECK(NSGlobalRuleMembers(
+              NSGlobalInputRuleKey(
+                  @"ffff:ffff:ffff:ffff:ffff:ffff:ffff:fffe-ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", NO, NO))
+              .count == 2);
+    CHECK([NSGlobalRuleMembers(group) isEqual:@[
+        @"domain:example.com", @"ip:192.168.1.10", @"ip:192.168.1.11", @"ip:192.168.1.12", @"ip:2001:db8::1"
+    ]]);
+    CHECK([group isEqual:NSGlobalInputRuleKey(NSGlobalRuleInputText(group), NO, NO)]);
+    CHECK([group isEqual:NSGlobalInputRuleKey(
+                             @"example.com,192.168.1.10,192.168.1.11,192.168.1.12,2001:db8::1", NO, NO)]);
+    CHECK([NSGlobalInputRuleKey(@"my-site.example", NO, NO) isEqual:@"domain:my-site.example"]);
+    CHECK([NSGlobalInputRuleKey(@"192.168.1.10-192.168.1.10", NO, NO) isEqual:@"ip:192.168.1.10"]);
+    CHECK(NSGlobalRuleMembers(NSGlobalInputRuleKey(@"192.168.0.255-192.168.1.1", NO, NO)).count == 3);
+    CHECK(NSGlobalRuleMembers(NSGlobalInputRuleKey(@"255.255.255.254-255.255.255.255", NO, NO)).count == 2);
+    for (NSString *bad in @[
+             @"", @",example.com", @"example.com,", @"example.com,,1.2.3.4", @"192.168.11",
+             @"192.168.1.12-192.168.1.10", @"192.168.1.1-192.168.1.999", @"10.0.0.0-10.0.16.0",
+             @"example.com,https://bad.com"
+         ]) {
+        CHECK(!NSGlobalInputRuleKey(bad, NO, NO));
+    }
+    CHECK([NSGlobalInputRuleKey(@"443, 8443,443", YES, NO) isEqual:@"group:port:443,port:8443"]);
+    CHECK([NSGlobalInputRuleKey(@"443, 8443", YES, YES) isEqual:@"group:localPort:443,localPort:8443"]);
+    CHECK(!NSGlobalInputRuleKey(@"443,65536", YES, NO));
+    for (NSString *bad in @[
+             @"group:", @"group:ip:1.2.3.4", @"group:ip:1.2.3.4,ip:1.2.3.4",
+             @"group:domain:example.com,port:443", @"group:localPort:443,port:443",
+             @"group:group:ip:1.2.3.4,ip:1.2.3.5"
+         ]) {
+        CHECK(!NSValidGlobalRuleKey(bad));
+    }
+    NSMutableDictionary *document = [[NSPolicy defaultDocument] mutableCopy];
+    document[@"globalRules"] = @{group : @"block"};
+    NSPolicy *policy = [NSPolicy policyWithDocument:document error:NULL];
+    CHECK(policy && [policy.document[@"globalRules"] count] == 1);
+    CHECK(policy.expandedGlobalRules.count == 5);
+    CHECK([policy needsSocketDestination:@{}]);
+    for (NSString *host in
+         @[ @"example.com", @"192.168.1.10", @"192.168.1.11", @"192.168.1.12", @"2001:db8::1" ]) {
+        BOOL domain = [NSGlobalHostKey(host) hasPrefix:@"domain:"];
+        CHECK(![policy allowsIdentity:@"com.apple.test"
+                            direction:NSFlowDirectionOutbound
+                          destination:@{domain ? @"domain" : @"address" : host}]);
+    }
+    CHECK([policy allowsIdentity:@"com.apple.test"
+                       direction:NSFlowDirectionOutbound
+                     destination:@{@"domain" : @"www.example.com"}]);
+    CHECK([policy allowsIdentity:@"com.apple.test"
+                       direction:NSFlowDirectionOutbound
+                     destination:@{@"address" : @"192.168.1.13"}]);
+    NSDictionary *export =
+        [NSJSONSerialization JSONObjectWithData:NSRulesAndActivityJSON(policy, @[], @"2.3.1", NULL)
+                                        options:0
+                                          error:NULL];
+    CHECK([export[@"globalRules"] isEqual:@{group : @"block"}]);
+    // Conflicting overlapping groups merge deterministically; removing one keeps the other.
+    document[@"globalRules"] = @{group : @"allow", @"domain:example.com" : @"block-inbound"};
+    policy = [NSPolicy policyWithDocument:document error:NULL];
+    CHECK([policy.expandedGlobalRules[@"domain:example.com"] isEqual:@"block-inbound"]);
+    document[@"globalRules"] = @{group : @"block"};
+    NSDate *now = NSDate.date;
+    NSDictionary *pending = @{
+        @"domain:example.com" : @{
+            @"rule" : @"block",
+            @"addresses" : @[ @"ip:192.0.2.25" ],
+            @"expires" : [now dateByAddingTimeInterval:120]
+        }
+    };
+    CHECK(NSApplyDNSResults(document, pending, now));
+    CHECK(NSWriteDocument(document, NSPolicyFile, NULL));
+    policy = NSReadPolicy(NULL);
+    CHECK([policy.document[@"globalRules"] count] == 1);
+    CHECK(![policy allowsIdentity:@"com.apple.test"
+                        direction:NSFlowDirectionOutbound
+                      destination:@{@"address" : @"192.0.2.25"}]);
+    // Old cached alias addresses are never reused after upgrading.
+    NSMutableDictionary *legacy = [document mutableCopy];
+    [legacy removeObjectForKey:@"exactDomainResolution"];
+    CHECK([[NSPolicy policyWithDocument:legacy error:NULL].document[@"globalDomainAddresses"] count] == 0);
+    // Replacing the saved group removes its old members and DNS cache atomically.
+    CHECK(NSUpdatePolicy(
+        ^BOOL(NSMutableDictionary *current, NSError **error) {
+            current[@"globalRules"] = @{NSGlobalInputRuleKey(@"443,8443", YES, YES) : @"block"};
+            return YES;
+        },
+        NULL));
+    policy = NSReadPolicy(NULL);
+    CHECK([policy.document[@"globalRules"] count] == 1);
+    CHECK([policy.document[@"globalDomainAddresses"] count] == 0);
+    CHECK(![policy allowsIdentity:@"com.apple.test"
+                        direction:NSFlowDirectionOutbound
+                      destination:@{
+                          @"localPort" : @8443
+                      }]);
+    CHECK([policy allowsIdentity:@"com.apple.test"
+                       direction:NSFlowDirectionOutbound
+                     destination:@{
+                         @"port" : @8443
+                     }]);
+    CHECK([policy allowsIdentity:@"com.apple.test"
+                       direction:NSFlowDirectionOutbound
+                     destination:@{@"address" : @"192.168.1.10"}]);
+    CHECK(NSUpdatePolicy(
+        ^BOOL(NSMutableDictionary *current, NSError **error) {
+            current[@"globalRules"] = @{};
+            return YES;
+        },
+        NULL));
+    CHECK(NSReadPolicy(NULL).expandedGlobalRules.count == 0);
+    // Expansion limits include every member, so grouping cannot bypass the policy bound.
+    NSString *full = NSGlobalInputRuleKey(@"10.0.0.0-10.0.15.255", NO, NO);
+    CHECK(NSGlobalRuleMembers(full).count == NSMaximumRules);
+    document[@"globalRules"] = @{full : @"block", @"domain:extra.example" : @"block"};
+    CHECK(![NSPolicy policyWithDocument:document error:NULL]);
+}
 static void TestGlobalRules(void) {
-    CHECK([NSGlobalInputHostKey(@" Google.COM. ") isEqual:@"domain:www.google.com"]);
+    CHECK([NSGlobalInputHostKey(@" Google.COM. ") isEqual:@"domain:google.com"]);
     CHECK([NSGlobalInputHostKey(@"www.google.com") isEqual:@"domain:www.google.com"]);
     CHECK([NSGlobalInputHostKey(@"192.0.2.1") isEqual:@"ip:192.0.2.1"]);
     CHECK([NSGlobalInputHostKey(@"[2001:db8::1]") isEqual:@"ip:2001:db8::1"]);
@@ -534,7 +658,7 @@ static void TestGlobalRules(void) {
     document[@"globalDomainExpirations"] =
         @{@"domain:www.example.com" : [NSDate dateWithTimeIntervalSinceNow:120]};
     policy = [NSPolicy policyWithDocument:document error:NULL];
-    for (NSString *host in @[ @"example.com", @"WWW.EXAMPLE.COM." ]) {
+    for (NSString *host in @[ @"www.example.com", @"WWW.EXAMPLE.COM." ]) {
         CHECK(![policy allowsIdentity:@"com.apple.test"
                             direction:NSFlowDirectionOutbound
                           destination:@{@"domain" : host}]);
@@ -553,7 +677,7 @@ static void TestGlobalRules(void) {
     CHECK([policy allowsIdentity:@"com.apple.test"
                        direction:NSFlowDirectionOutbound
                      destination:@{@"domain" : @"other.test", @"address" : @"192.0.2.1"}]);
-    for (NSString *url in @[ @"https://example.com/search?q=test", @"https://www.example.com/a/b" ]) {
+    for (NSString *url in @[ @"https://www.example.com/search?q=test", @"https://www.example.com/a/b" ]) {
         CHECK(![policy allowsIdentity:@"app"
                             direction:NSFlowDirectionOutbound
                           destination:@{@"domain" : [NSURL URLWithString:url].host}]);
@@ -571,7 +695,10 @@ static void TestGlobalRules(void) {
     document[@"rules"] = @{@"app" : @"block"};
     document[@"globalRules"] = @{@"domain:www.example.com" : @"allow"};
     policy = [NSPolicy policyWithDocument:document error:NULL];
-    CHECK([policy allowsIdentity:@"app" direction:NSFlowDirectionOutbound destination:peer]);
+    CHECK(![policy allowsIdentity:@"app" direction:NSFlowDirectionOutbound destination:peer]);
+    CHECK([policy allowsIdentity:@"app"
+                       direction:NSFlowDirectionOutbound
+                     destination:@{@"domain" : @"www.example.com"}]);
     CHECK(![policy allowsIdentity:@"app"
                         direction:NSFlowDirectionOutbound
                       destination:@{@"address" : @"192.0.2.1"}]);
@@ -995,6 +1122,7 @@ int main(void) {
         TestLargePolicyCache();
         TestActivityGrouping();
         TestGlobalRules();
+        TestGroupedGlobalRules();
         TestDirectionalPermissionAnswers();
         TestAnswersAndReset();
         TestSocketSettingsAndDestinations();

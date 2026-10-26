@@ -88,7 +88,7 @@ static void NSDNSAnswer(DNSServiceRef reference, DNSServiceFlags flags, uint32_t
             }
             void (^finished)(NSDictionary *, NSError *) = owner.completion;
             BOOL answered =
-                owner.addresses.count || (owner.references.count == 2 && owner.answers.count == 4);
+                owner.addresses.count || (owner.references.count == 1 && owner.answers.count == 2);
             BOOL live = owner.expires.timeIntervalSinceNow > 0;
             NSDictionary *result = answered ? @{
                 @"addresses" : live ? owner.addresses.array : @[],

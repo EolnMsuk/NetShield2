@@ -29,9 +29,9 @@
 
 @implementation NSFilterControlProvider
 - (void)refreshDomainAddresses:(NSPolicy *)policy {
-    [self.resolver refreshRules:policy.document[@"globalRules"] ?: @{}];
+    [self.resolver refreshRules:policy.expandedGlobalRules ?: @{}];
     for (NSString *key in self.dnsIssues.allKeys) {
-        NSString *rule = policy.document[@"globalRules"][key];
+        NSString *rule = policy.expandedGlobalRules[key];
         if (!rule || [rule isEqual:@"allow"]) {
             [self.dnsIssues removeObjectForKey:key];
         }

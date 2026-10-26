@@ -1,4 +1,5 @@
 #import "NSConstants.h"
+#import "NSGlobalRule.h"
 
 static inline BOOL NSDNSExpiryIsLive(id expiry, NSDate *now) {
     if (![expiry isKindOfClass:NSDate.class]) {
@@ -9,21 +10,20 @@ static inline BOOL NSDNSExpiryIsLive(id expiry, NSDate *now) {
 }
 
 static inline BOOL NSApplyDNSResults(NSMutableDictionary *document, NSDictionary *pending, NSDate *now) {
+    NSDictionary *rules = NSExpandedGlobalRules(document[@"globalRules"]);
     NSMutableDictionary *addresses =
         [document[@"globalDomainAddresses"] mutableCopy] ?: [NSMutableDictionary new];
     NSMutableDictionary *expirations =
         [document[@"globalDomainExpirations"] mutableCopy] ?: [NSMutableDictionary new];
     for (NSString *key in addresses.allKeys) {
-        if (!NSDNSExpiryIsLive(expirations[key], now) || !document[@"globalRules"][key] ||
-            [document[@"globalRules"][key] isEqual:@"allow"]) {
+        if (!NSDNSExpiryIsLive(expirations[key], now) || !rules[key] || [rules[key] isEqual:@"allow"]) {
             [addresses removeObjectForKey:key];
             [expirations removeObjectForKey:key];
         }
     }
     for (NSString *key in pending) {
         NSDictionary *entry = pending[key];
-        if (![entry[@"rule"] isEqual:document[@"globalRules"][key]] ||
-            !NSDNSExpiryIsLive(entry[@"expires"], now)) {
+        if (![entry[@"rule"] isEqual:rules[key]] || !NSDNSExpiryIsLive(entry[@"expires"], now)) {
             continue;
         }
         addresses[key] = entry[@"addresses"];
