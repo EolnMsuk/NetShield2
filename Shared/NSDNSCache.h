@@ -10,7 +10,7 @@ static inline BOOL NSDNSExpiryIsLive(id expiry, NSDate *now) {
 }
 
 static inline BOOL NSApplyDNSResults(NSMutableDictionary *document, NSDictionary *pending, NSDate *now) {
-    NSDictionary *rules = NSExpandedGlobalRules(document[@"globalRules"]);
+    NSDictionary *rules = NSGlobalRuleConditions(document[@"globalRules"]);
     NSMutableDictionary *addresses =
         [document[@"globalDomainAddresses"] mutableCopy] ?: [NSMutableDictionary new];
     NSMutableDictionary *expirations =

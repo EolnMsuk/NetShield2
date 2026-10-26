@@ -1,4 +1,5 @@
 #import "NSDashboard+Internal.h"
+#import "NSGlobalRuleEditor.h"
 #import "../Shared/NSGlobalRule.h"
 #import "../Shared/NSExport.h"
 #import "../Shared/NSProviderHealth.h"
@@ -341,6 +342,15 @@
     [self presentViewController:alert animated:YES completion:nil];
 }
 - (NSString *)globalRuleTitle:(NSString *)key {
+    NSArray<NSString *> *parts = NSCustomGlobalRuleComponents(key);
+    if (parts) {
+        return [NSString
+            stringWithFormat:@"%@\n%@\n%@ / %@",
+                             parts[0].length ? NSIdentityDisplayName(parts[0]) : @"All apps",
+                             parts[1].length ? [self globalRuleTitle:parts[1]] : @"All domains / IPs",
+                             parts[2].length ? [self globalRuleTitle:parts[2]] : @"All ports",
+                             [parts[3] isEqual:@"any"] ? @"UDP & TCP" : parts[3].uppercaseString];
+    }
     if ([key hasPrefix:@"group:"]) {
         NSString *first = NSGlobalRuleMembers(key).firstObject;
         NSString *kind = [first hasPrefix:@"localPort:"] ? @"Local ports"
@@ -365,11 +375,11 @@
     if (!self.policy) {
         return;
     }
-    UIAlertController *alert =
-        [UIAlertController alertControllerWithTitle:[self globalRuleTitle:key]
-                                            message:@"Applies across all processes. Overrides app rules and "
-                                                    @"the iOS system traffic allowance."
-                                     preferredStyle:UIAlertControllerStyleAlert];
+    UIAlertController *alert = [UIAlertController
+        alertControllerWithTitle:[self globalRuleTitle:key]
+                         message:@"Applies when all rule conditions match. Overrides app rules and "
+                                 @"the iOS system traffic allowance."
+                  preferredStyle:UIAlertControllerStyleAlert];
     alert.view.tintColor = UIColor.systemBlueColor;
     NSMutableArray *actions = [@[ @"allow", @"block-inbound", @"block" ] mutableCopy];
     BOOL existing = !original && self.policy.document[@"globalRules"][key] != nil;
@@ -417,146 +427,68 @@
         [alert addAction:[UIAlertAction actionWithTitle:@"Edit Rule"
                                                   style:UIAlertActionStyleDefault
                                                 handler:^(UIAlertAction *selected) {
-                                                    NSString *first = NSGlobalRuleMembers(key).firstObject;
-                                                    BOOL local = [first hasPrefix:@"localPort:"];
-                                                    BOOL port = local || [first hasPrefix:@"port:"];
                                                     dispatch_async(dispatch_get_main_queue(), ^{
-                                                        [self
-                                                            enterGlobalRuleByPort:port
-                                                                            local:local
-                                                                       editingKey:key
-                                                                             text:NSGlobalRuleInputText(key)];
+                                                        [self editGlobalRule:key];
                                                     });
                                                 }]];
     }
     [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];
 }
-- (void)addGlobalRuleByPort:(BOOL)port {
-    if (!self.policy) {
+- (void)editGlobalRule:(NSString *)original {
+    if (!self.policy || self.busy) {
         return;
     }
-    if (!port) {
-        [self enterGlobalRuleByPort:NO local:NO];
-        return;
+    NSGlobalRuleEditor *editor = [[NSGlobalRuleEditor alloc] initWithStyle:UITableViewStyleInsetGrouped];
+    NSMutableSet *identities = [NSMutableSet setWithArray:self.identities ?: @[]];
+    [identities addObjectsFromArray:self.systemIdentities ?: @[]];
+    for (NSString *key in self.globalRuleKeys) {
+        NSString *identity = NSCustomGlobalRuleComponents(key).firstObject;
+        if (identity.length) {
+            [identities addObject:identity];
+        }
     }
-    UIAlertController *alert =
-        [UIAlertController alertControllerWithTitle:@"Add a rule by port number"
-                                            message:@"Choose which port to filter across all processes."
-                                     preferredStyle:UIAlertControllerStyleAlert];
-    alert.view.tintColor = UIColor.systemBlueColor;
-    for (NSNumber *local in @[ @YES, @NO ]) {
-        [alert addAction:[UIAlertAction actionWithTitle:local.boolValue ? @"Local Port" : @"Remote Port"
-                                                  style:UIAlertActionStyleDefault
-                                                handler:^(UIAlertAction *action) {
-                                                    dispatch_async(dispatch_get_main_queue(), ^{
-                                                        [self enterGlobalRuleByPort:YES
-                                                                              local:local.boolValue];
-                                                    });
-                                                }]];
-    }
-    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
-    [self presentViewController:alert animated:YES completion:nil];
-}
-- (void)enterGlobalRuleByPort:(BOOL)port local:(BOOL)local {
-    [self enterGlobalRuleByPort:port local:local editingKey:nil text:nil];
-}
-- (void)enterGlobalRuleByPort:(BOOL)port
-                        local:(BOOL)local
-                   editingKey:(NSString *)original
-                         text:(NSString *)text {
-    if (!self.policy) {
-        return;
-    }
-    UIAlertController *alert = [UIAlertController
-        alertControllerWithTitle:port ? @"Add a rule by port number" : @"Add a rule by IP / Domain"
-                         message:
-                             port ? (local ? @"Enter local ports from 1 to 65535, separated by commas."
-                                           : @"Enter remote ports from 1 to 65535, separated by commas.")
-                                  : @"Separate IPs or exact domains with commas. IP ranges are inclusive, "
-                                    @"for example 192.168.1.10-192.168.1.12. Do not include URLs or paths. "
-                                    @"Bare and www domains are separate. Maximum 4096 entries across all "
-                                    @"rules."
-                  preferredStyle:UIAlertControllerStyleAlert];
-    [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
-        field.placeholder = port ? @"443, 8443" : @"example.com, 192.168.1.10-192.168.1.12";
-        field.text = text;
-        field.keyboardType = UIKeyboardTypeASCIICapable;
-        field.autocapitalizationType = UITextAutocapitalizationTypeNone;
-        field.autocorrectionType = UITextAutocorrectionTypeNo;
-    }];
-    [alert
-        addAction:
-            [UIAlertAction
-                actionWithTitle:@"Choose Rule"
-                          style:UIAlertActionStyleDefault
-                        handler:^(UIAlertAction *action) {
-                            NSString *value = alert.textFields.firstObject.text;
-                            NSString *key = NSGlobalInputRuleKey(value, port, local);
-                            dispatch_async(dispatch_get_main_queue(), ^{
-                                if (key) {
-                                    [self chooseGlobalRule:key editingKey:original];
-                                    return;
-                                }
-                                UIAlertController *invalid = [UIAlertController
-                                    alertControllerWithTitle:port ? @"Invalid port number"
-                                                                  : @"Invalid IP or domain"
-                                                     message:port
-                                                                 ? @"Separate whole numbers from 1 to 65535 "
-                                                                   @"with commas."
-                                                                 : @"Use complete IPv4/IPv6 addresses, exact "
-                                                                   @"domains, or ascending IP ranges. "
-                                                                   @"Separate entries with commas; do not "
-                                                                   @"leave empty entries. "
-                                                                   @"A rule can contain up to 4096 addresses "
-                                                                   @"and domains."
-                                              preferredStyle:UIAlertControllerStyleAlert];
-                                [invalid
-                                    addAction:[UIAlertAction
-                                                  actionWithTitle:@"Try Again"
-                                                            style:UIAlertActionStyleDefault
-                                                          handler:^(UIAlertAction *selected) {
-                                                              dispatch_async(dispatch_get_main_queue(), ^{
-                                                                  [self enterGlobalRuleByPort:port
-                                                                                        local:local
-                                                                                   editingKey:original
-                                                                                         text:value];
-                                                              });
-                                                          }]];
-                                [invalid addAction:[UIAlertAction actionWithTitle:@"Cancel"
-                                                                            style:UIAlertActionStyleCancel
-                                                                          handler:nil]];
-                                [self presentViewController:invalid animated:YES completion:nil];
-                            });
-                        }]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
-    [self presentViewController:alert animated:YES completion:nil];
-}
-- (void)addIdentity {
-    UIAlertController *alert =
-        [UIAlertController alertControllerWithTitle:@"Exact OS identity"
-                                            message:@"Prefer selecting an identity observed below. This "
-                                                    @"value is sourceAppIdentifier from Network Extension; "
-                                                    @"it may differ from the app's bundle identifier."
-                                     preferredStyle:UIAlertControllerStyleAlert];
-    [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
-        field.placeholder = @"Exact sourceAppIdentifier";
-        field.autocapitalizationType = UITextAutocapitalizationTypeNone;
-        field.autocorrectionType = UITextAutocorrectionTypeNo;
-    }];
-    [alert addAction:[UIAlertAction actionWithTitle:@"Choose rule"
-                                              style:UIAlertActionStyleDefault
-                                            handler:^(UIAlertAction *action) {
-                                                NSString *identity = alert.textFields.firstObject.text;
-                                                if (identity.length) {
-                                                    dispatch_async(dispatch_get_main_queue(), ^{
-                                                        [self chooseActionForIdentity:identity
-                                                                           defaultKey:nil];
-                                                    });
-                                                }
-                                            }]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
-    [self presentViewController:alert animated:YES completion:nil];
+    editor.identities =
+        [identities.allObjects sortedArrayUsingSelector:@selector(localizedCaseInsensitiveCompare:)];
+    editor.originalKey = original;
+    editor.originalAction = original ? self.policy.document[@"globalRules"][original] : nil;
+    __weak typeof(self) weakSelf = self;
+    editor.saveRule = ^BOOL(NSString *key, NSString *action, NSError **error) {
+        BOOL saved = NSUpdatePolicy(
+            ^BOOL(NSMutableDictionary *document, NSError **mutationError) {
+                NSMutableDictionary *rules =
+                    [document[@"globalRules"] mutableCopy] ?: [NSMutableDictionary new];
+                if ((original && !rules[original]) || (![original isEqual:key] && rules[key])) {
+                    if (mutationError) {
+                        *mutationError = [NSError
+                            errorWithDomain:@"NetShield2.Policy"
+                                       code:2
+                                   userInfo:@{
+                                       NSLocalizedDescriptionKey : @"The original rule was removed or an "
+                                                                   @"identical rule already exists."
+                                   }];
+                    }
+                    return NO;
+                }
+                if (original) {
+                    [rules removeObjectForKey:original];
+                }
+                rules[key] = action;
+                document[@"globalRules"] = rules;
+                return YES;
+            },
+            error);
+        if (saved) {
+            NSRemoveAutomaticallyAllowedNotifications();
+            weakSelf.message = @"Policy saved for new flows. Close existing connections and retry; admitted "
+                               @"flows keep their previous verdict.";
+            [weakSelf reloadMonitor];
+        }
+        return saved;
+    };
+    UINavigationController *navigation = [[UINavigationController alloc] initWithRootViewController:editor];
+    navigation.modalPresentationStyle = UIModalPresentationFormSheet;
+    [self presentViewController:navigation animated:YES completion:nil];
 }
 - (UIAlertActionStyle)ruleActionStyle:(NSString *)rule {
     return [rule isEqual:@"block"] || [rule isEqual:@"block-outbound"] || [rule isEqual:@"remove"]

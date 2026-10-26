@@ -59,16 +59,10 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 - (void)reloadMonitor;
 - (BOOL)hasFreshMonitor;
 - (void)chooseActionForIdentity:(NSString *)identity defaultKey:(NSString *)key;
-- (void)addIdentity;
 - (void)exportRulesAndRecentActivityFromRow:(NSIndexPath *)path;
-- (void)addGlobalRuleByPort:(BOOL)port;
+- (void)editGlobalRule:(NSString *)original;
 - (void)chooseGlobalRule:(NSString *)key;
 - (void)chooseGlobalRule:(NSString *)key editingKey:(NSString *)original;
-- (void)enterGlobalRuleByPort:(BOOL)port local:(BOOL)local;
-- (void)enterGlobalRuleByPort:(BOOL)port
-                        local:(BOOL)local
-                   editingKey:(NSString *)original
-                         text:(NSString *)text;
 - (NSString *)globalRuleTitle:(NSString *)key;
 - (NSString *)ruleTitle:(NSString *)rule;
 - (UIAlertActionStyle)ruleActionStyle:(NSString *)rule;

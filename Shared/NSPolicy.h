@@ -16,6 +16,7 @@ typedef NS_ENUM(NSInteger, NSFlowDirection) {
 @interface NSPolicy : NSObject
 @property(nonatomic, readonly, copy) NSDictionary *document;
 @property(nonatomic, readonly, copy) NSDictionary *expandedGlobalRules;
+@property(nonatomic, readonly, copy) NSDictionary *globalRuleConditions;
 + (NSDictionary *)defaultDocument;
 + (nullable instancetype)policyWithDocument:(id)document error:(NSError *_Nullable *_Nullable)error;
 - (BOOL)automaticallyAllowsIdentity:(nullable NSString *)identity;
@@ -23,6 +24,7 @@ typedef NS_ENUM(NSInteger, NSFlowDirection) {
 - (BOOL)requiresPermissionForIdentity:(nullable NSString *)identity;
 - (BOOL)requiresPermissionForIdentity:(nullable NSString *)identity destination:(NSDictionary *)destination;
 - (BOOL)needsSocketDestination:(NSDictionary *)destination;
+- (BOOL)needsSocketDestination:(NSDictionary *)destination identity:(nullable NSString *)identity;
 - (BOOL)allowsIdentity:(nullable NSString *)identity
              direction:(NSFlowDirection)direction
            destination:(NSDictionary *)destination;

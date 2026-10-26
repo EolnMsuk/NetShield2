@@ -122,8 +122,48 @@ static inline BOOL NSValidGlobalMemberKey(id key) {
     return [key isEqual:canonical] || ([key hasPrefix:@"ip:"] && [key isEqual:NSGlobalRawHostKey(value)]);
 }
 
+// Custom rules store independent AND conditions; entries within a host/port group are OR conditions.
+static inline NSArray<NSString *> *NSCustomGlobalRuleComponents(NSString *key) {
+    if (![key hasPrefix:@"custom:"]) {
+        return nil;
+    }
+    id parts = [NSJSONSerialization
+        JSONObjectWithData:[[key substringFromIndex:7] dataUsingEncoding:NSUTF8StringEncoding]
+                   options:0
+                     error:NULL];
+    if (![parts isKindOfClass:NSArray.class] || [parts count] != 4) {
+        return nil;
+    }
+    for (id part in parts) {
+        if (![part isKindOfClass:NSString.class]) {
+            return nil;
+        }
+    }
+    return parts;
+}
+static inline NSString *NSCustomGlobalRuleKey(NSString *identity, NSString *hosts, NSString *ports,
+                                              NSString *protocol) {
+    NSData *data = [NSJSONSerialization
+        dataWithJSONObject:@[ identity ?: @"", hosts ?: @"", ports ?: @"", protocol ?: @"any" ]
+                   options:0
+                     error:NULL];
+    return data ? [@"custom:" stringByAppendingString:[[NSString alloc] initWithData:data
+                                                                            encoding:NSUTF8StringEncoding]]
+                : nil;
+}
 // A group remains one saved rule; only the filtering view expands its members.
 static inline NSArray<NSString *> *NSGlobalRuleMembers(NSString *key) {
+    NSArray *parts = NSCustomGlobalRuleComponents(key);
+    if (parts) {
+        NSMutableArray *members = [NSMutableArray new];
+        for (NSUInteger index = 1; index <= 2; index++) {
+            NSString *condition = parts[index];
+            if (condition.length && ![condition hasPrefix:@"custom:"]) {
+                [members addObjectsFromArray:NSGlobalRuleMembers(condition)];
+            }
+        }
+        return members;
+    }
     return [key hasPrefix:@"group:"] ? [[key substringFromIndex:6] componentsSeparatedByString:@","]
                                      : @[ key ];
 }
@@ -135,6 +175,30 @@ static inline NSString *NSGlobalKeyFromMembers(NSArray<NSString *> *members) {
 static inline BOOL NSValidGlobalRuleKey(id key) {
     if (![key isKindOfClass:NSString.class] || [key length] > NSMaximumDocumentBytes) {
         return NO;
+    }
+    if ([key hasPrefix:@"custom:"]) {
+        NSArray<NSString *> *parts = NSCustomGlobalRuleComponents(key);
+        if (!parts || parts[0].length > NSMaximumIdentityLength ||
+            ![@[ @"any", @"tcp", @"udp" ] containsObject:parts[3]]) {
+            return NO;
+        }
+        for (NSUInteger index = 1; index <= 2; index++) {
+            NSString *condition = parts[index];
+            if (!condition.length) {
+                continue;
+            }
+            if ([condition hasPrefix:@"custom:"] || !NSValidGlobalRuleKey(condition)) {
+                return NO;
+            }
+            for (NSString *member in NSGlobalRuleMembers(condition)) {
+                BOOL host = [member hasPrefix:@"ip:"] || [member hasPrefix:@"domain:"];
+                if (host != (index == 1)) {
+                    return NO;
+                }
+            }
+        }
+        return NSGlobalRuleMembers(key).count <= NSMaximumRules &&
+               [key isEqual:NSCustomGlobalRuleKey(parts[0], parts[1], parts[2], parts[3])];
     }
     if (![key hasPrefix:@"group:"]) {
         return NSValidGlobalMemberKey(key);
@@ -166,7 +230,8 @@ static inline NSDictionary *NSExpandedGlobalRules(NSDictionary *rules) {
     for (NSString *key in rules) {
         // Mutations are validated before publication; do not crash while pruning
         // their DNS cache if a candidate document contains a malformed rule.
-        if (!NSValidGlobalRuleKey(key) || ![rules[key] isKindOfClass:NSString.class]) {
+        if (!NSValidGlobalRuleKey(key) || [key hasPrefix:@"custom:"] ||
+            ![rules[key] isKindOfClass:NSString.class]) {
             continue;
         }
         for (NSString *member in NSGlobalRuleMembers(key)) {
@@ -176,6 +241,23 @@ static inline NSDictionary *NSExpandedGlobalRules(NSDictionary *rules) {
         }
     }
     return expanded;
+}
+// Used only for DNS resolution and missing endpoint checks, never for rule decisions.
+static inline NSDictionary *NSGlobalRuleConditions(NSDictionary *rules) {
+    NSMutableDictionary *conditions = [NSExpandedGlobalRules(rules) mutableCopy];
+    if (![rules isKindOfClass:NSDictionary.class]) {
+        return conditions;
+    }
+    for (NSString *key in rules) {
+        if (!NSValidGlobalRuleKey(key) || ![key hasPrefix:@"custom:"] ||
+            ![rules[key] isKindOfClass:NSString.class]) {
+            continue;
+        }
+        for (NSString *member in NSGlobalRuleMembers(key)) {
+            conditions[member] = NSMergeGlobalActions(conditions[member], rules[key]);
+        }
+    }
+    return conditions;
 }
 static inline NSString *NSGlobalRuleInputText(NSString *key) {
     NSMutableArray *values = [NSMutableArray new];

@@ -462,6 +462,102 @@ static void TestIdentityDisplay(void) {
     CHECK([policy allowsIdentity:first direction:NSFlowDirectionOutbound]);
     CHECK(![policy allowsIdentity:second direction:NSFlowDirectionOutbound]);
 }
+static void TestCustomGlobalRules(void) {
+    NSString *hosts = NSGlobalInputRuleKey(@"example.com, 192.0.2.1-192.0.2.2", NO, NO);
+    NSString *key = NSCustomGlobalRuleKey(@"test.app", hosts, @"port:443", @"tcp");
+    CHECK(NSValidGlobalRuleKey(key));
+    CHECK(!NSValidGlobalRuleKey(NSCustomGlobalRuleKey(@"", @"port:443", @"", @"any")));
+    CHECK(!NSValidGlobalRuleKey(NSCustomGlobalRuleKey(@"", @"", @"domain:example.com", @"any")));
+    CHECK(!NSValidGlobalRuleKey(NSCustomGlobalRuleKey(@"", @"", @"", @"icmp")));
+    CHECK(!NSValidGlobalRuleKey(NSCustomGlobalRuleKey(@"", key, @"", @"any")));
+    NSMutableDictionary *document = [[NSPolicy defaultDocument] mutableCopy];
+    document[@"default"] = @"allow";
+    document[@"globalRules"] = @{key : @"block"};
+    NSPolicy *policy = [NSPolicy policyWithDocument:document error:NULL];
+    CHECK(policy && policy.expandedGlobalRules.count == 0);
+    CHECK([policy.globalRuleConditions[@"domain:example.com"] isEqual:@"block"]);
+    NSDictionary *match = @{@"domain" : @"example.com", @"port" : @443, @"protocol" : @"tcp"};
+    CHECK(![policy allowsIdentity:@"test.app" direction:NSFlowDirectionOutbound destination:match]);
+    CHECK([policy allowsIdentity:@"other.app" direction:NSFlowDirectionOutbound destination:match]);
+    for (NSDictionary *miss in @[
+             @{@"domain" : @"other.com",
+               @"port" : @443,
+               @"protocol" : @"tcp"},
+             @{@"domain" : @"example.com",
+               @"port" : @80,
+               @"protocol" : @"tcp"},
+             @{@"domain" : @"example.com",
+               @"port" : @443,
+               @"protocol" : @"udp"},
+             @{@"domain" : @"example.com",
+               @"port" : @443}
+         ]) {
+        CHECK([policy allowsIdentity:@"test.app" direction:NSFlowDirectionOutbound destination:miss]);
+    }
+    CHECK([policy needsSocketDestination:@{@"protocol" : @"tcp"} identity:@"test.app"]);
+    CHECK(![policy needsSocketDestination:@{@"protocol" : @"tcp"} identity:@"other.app"]);
+    CHECK(![policy needsSocketDestination:@{@"protocol" : @"udp"} identity:@"test.app"]);
+    CHECK(![policy allowsIdentity:@"test.app"
+                        direction:NSFlowDirectionOutbound
+                      destination:@{
+                          @"address" : @"192.0.2.2",
+                          @"port" : @443,
+                          @"protocol" : @"tcp"
+                      }]);
+    CHECK(![policy needsSocketDestination:@{@"protocol" : @"tcp", @"port" : @80} identity:@"test.app"]);
+    CHECK(![policy needsSocketDestination:match identity:@"test.app"]);
+    NSDate *now = NSDate.date;
+    CHECK(NSApplyDNSResults(
+        document, @{
+            @"domain:example.com" : @{
+                @"rule" : @"block",
+                @"addresses" : @[ @"ip:192.0.2.50" ],
+                @"expires" : [now dateByAddingTimeInterval:120]
+            }
+        },
+        now));
+    policy = [NSPolicy policyWithDocument:document error:NULL];
+    NSDictionary *resolved = @{@"address" : @"192.0.2.50", @"port" : @443, @"protocol" : @"tcp"};
+    CHECK(![policy allowsIdentity:@"test.app" direction:NSFlowDirectionOutbound destination:resolved]);
+    CHECK([policy allowsIdentity:@"other.app" direction:NSFlowDirectionOutbound destination:resolved]);
+    document[@"default"] = @"ask";
+    document[@"globalRules"] = @{NSCustomGlobalRuleKey(@"test.app", @"", @"", @"any") : @"allow"};
+    policy = [NSPolicy policyWithDocument:document error:NULL];
+    CHECK(![policy requiresPermissionForIdentity:@"test.app" destination:match]);
+    CHECK([policy requiresPermissionForIdentity:@"other.app" destination:match]);
+    document[@"default"] = @"allow";
+    document[@"globalRules"] = @{NSCustomGlobalRuleKey(@"", @"", @"localPort:5353", @"udp") : @"block"};
+    policy = [NSPolicy policyWithDocument:document error:NULL];
+    CHECK(![policy allowsIdentity:@"com.apple.test"
+                        direction:NSFlowDirectionOutbound
+                      destination:@{
+                          @"localPort" : @5353,
+                          @"protocol" : @"udp"
+                      }]);
+    CHECK([policy allowsIdentity:@"test.app"
+                       direction:NSFlowDirectionOutbound
+                     destination:@{
+                         @"port" : @5353,
+                         @"protocol" : @"udp"
+                     }]);
+    NSString *all = NSCustomGlobalRuleKey(@"", @"", @"", @"any");
+    document[@"globalRules"] = @{all : @"block", key : @"allow"};
+    policy = [NSPolicy policyWithDocument:document error:NULL];
+    CHECK(![policy allowsIdentity:@"test.app" direction:NSFlowDirectionOutbound destination:match]);
+    CHECK(![policy allowsIdentity:nil direction:NSFlowDirectionOutbound destination:@{}]);
+    CHECK([policy allowsIdentity:@"test.app"
+                       direction:NSFlowDirectionOutbound
+                     destination:@{@"protocol" : @"other"}]);
+    CHECK(NSValidDestination(@{
+        @"protocol" : @"tcp",
+        @"port" : @443,
+        @"localPort" : @12345,
+        @"address" : @"192.0.2.1",
+        @"domain" : @"example.com"
+    }));
+    CHECK(!NSValidDestination(@{@"protocol" : @"invalid"}));
+}
+
 static void TestReleaseVersions(void) {
     CHECK([NSCompareReleaseVersions(@"v2.3.3", @"2.3.2") isEqual:@(NSOrderedDescending)]);
     CHECK([NSCompareReleaseVersions(@"2.10.0", @"2.9.9") isEqual:@(NSOrderedDescending)]);
@@ -1174,6 +1270,7 @@ int main(void) {
         TestActivityGrouping();
         TestGlobalRules();
         TestGroupedGlobalRules();
+        TestCustomGlobalRules();
         TestReleaseVersions();
         TestIdentityDisplay();
         TestDirectionalPermissionAnswers();

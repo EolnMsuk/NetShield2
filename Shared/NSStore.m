@@ -165,7 +165,7 @@ BOOL NSUpdatePolicy(BOOL (^mutation)(NSMutableDictionary *, NSError **), NSError
         if (destinations) {
             document[@"ruleDestinations"] = destinations;
         }
-        NSDictionary *globalRules = NSExpandedGlobalRules(document[@"globalRules"]);
+        NSDictionary *globalRules = NSGlobalRuleConditions(document[@"globalRules"]);
         NSMutableDictionary *addresses = [document[@"globalDomainAddresses"] mutableCopy];
         for (NSString *key in addresses.allKeys) {
             if (!globalRules[key] || [globalRules[key] isEqual:@"allow"]) {

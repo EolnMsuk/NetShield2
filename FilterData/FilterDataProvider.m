@@ -19,7 +19,8 @@
 - (NEFilterNewFlowVerdict *)handleNewFlow:(NEFilterFlow *)flow {
     NSPolicy *policy = NSReadPolicy(NULL);
     NSDictionary *destination = NSDestinationForFlow(flow);
-    if ([flow isKindOfClass:NEFilterSocketFlow.class] && [policy needsSocketDestination:destination]) {
+    if ([flow isKindOfClass:NEFilterSocketFlow.class] &&
+        [policy needsSocketDestination:destination identity:flow.sourceAppIdentifier]) {
         return [NEFilterNewFlowVerdict filterDataVerdictWithFilterInbound:YES
                                                          peekInboundBytes:1
                                                            filterOutbound:YES
@@ -49,7 +50,7 @@
 - (NEFilterDataVerdict *)verdictForDeferredFlow:(NEFilterFlow *)flow {
     NSPolicy *policy = NSReadPolicy(NULL);
     NSDictionary *destination = NSDestinationForFlow(flow);
-    if (!policy || [policy needsSocketDestination:destination]) {
+    if (!policy || [policy needsSocketDestination:destination identity:flow.sourceAppIdentifier]) {
         NEFilterDataVerdict *verdict = [NEFilterDataVerdict dropVerdict];
         verdict.shouldReport = YES;
         return verdict;

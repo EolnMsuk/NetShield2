@@ -2,10 +2,16 @@
 #import <CoreFoundation/CoreFoundation.h>
 
 static inline BOOL NSValidDestination(id value) {
-    if (![value isKindOfClass:NSDictionary.class] || [value count] > 4) {
+    if (![value isKindOfClass:NSDictionary.class] || [value count] > 5) {
         return NO;
     }
     for (id key in value) {
+        if ([key isEqual:@"protocol"]) {
+            if (![@[ @"tcp", @"udp", @"other" ] containsObject:value[key]]) {
+                return NO;
+            }
+            continue;
+        }
         if ([key isEqual:@"port"] || [key isEqual:@"localPort"]) {
             id port = value[key];
             if (![port isKindOfClass:NSNumber.class] ||
@@ -37,6 +43,9 @@ static inline NSString *NSDestinationSummary(NSDictionary *destination) {
     NSString *domain = NSCleanDestinationHost(destination[@"domain"]);
     NSString *address = NSCleanDestinationHost(destination[@"address"]);
     NSMutableArray *parts = [NSMutableArray new];
+    if ([@[ @"tcp", @"udp" ] containsObject:destination[@"protocol"]]) {
+        [parts addObject:[destination[@"protocol"] uppercaseString]];
+    }
     if (domain.length) {
         [parts addObject:[@"Domain: " stringByAppendingString:domain]];
     }

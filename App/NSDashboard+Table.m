@@ -9,8 +9,8 @@
     return section == NSDashboardSectionSystemRules ? self.systemIdentities : self.identities;
 }
 - (id)rowKey:(NSIndexPath *)path {
-    if (path.section == NSDashboardSectionGlobalRules && self.globalRuleKeys.count) {
-        return self.globalRuleKeys[path.row];
+    if (path.section == NSDashboardSectionGlobalRules && path.row > 0) {
+        return self.globalRuleKeys[path.row - 1];
     }
     if (path.section == NSDashboardSectionRequests && [self.monitor[@"requests"] count]) {
         return self.monitor[@"requests"][path.row][@"token"];
@@ -130,13 +130,13 @@
         return 2;
     }
     if (section == NSDashboardSectionGlobalRules) {
-        return MAX((NSUInteger)1, self.globalRuleKeys.count);
+        return 1 + self.globalRuleKeys.count;
     }
     if (section == NSDashboardSectionAdvanced) {
         return 3;
     }
     if (section == NSDashboardSectionSupport) {
-        return 6;
+        return 3;
     }
     return MAX((NSUInteger)1, self.activityGroups.count);
 }
@@ -146,7 +146,7 @@
     }
     return @[
         @"Firewall", @"Waiting for your decision", @"Notifications", @"Support", @"Advanced Settings",
-        @"Global rules", @"App Rules", @"System Rules", @"Recent activity"
+        @"Global Rules", @"App Rules", @"System Rules", @"Recent activity"
     ][section];
 }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
@@ -328,11 +328,12 @@
                                         NSDestinationSummary(request[@"destination"])];
         }
     } else if (path.section == NSDashboardSectionGlobalRules) {
-        if (!self.globalRuleKeys.count) {
-            cell.textLabel.text = @"No global rules";
-            cell.accessoryType = UITableViewCellAccessoryNone;
+        if (path.row == 0) {
+            cell.textLabel.text = @"Add a Global Rule";
+            cell.textLabel.textColor = UIColor.systemBlueColor;
+            cell.detailTextLabel.text = @"Choose apps, destinations, ports and protocols";
         } else {
-            NSString *key = self.globalRuleKeys[path.row];
+            NSString *key = self.globalRuleKeys[path.row - 1];
             NSString *rule = self.policy.document[@"globalRules"][key];
             UIColor *color = [rule isEqual:@"allow"] ? UIColor.systemGreenColor
                              : [rule isEqual:@"block"] || [rule isEqual:@"block-outbound"]
@@ -417,25 +418,21 @@
                 stringByAppendingFormat:@"\n%@", NSDestinationSummary(event[@"destination"])];
         }
     } else if (path.section == NSDashboardSectionSupport) {
-        cell.textLabel.text = @[
-            @"GitHub Link", @"Check for Update", @"Support the Developer",
-            @"Export Rules and Recent Activity", @"Reset Rules & History", @"Reset Settings & Filter"
-        ][path.row];
+        cell.textLabel.text = @[ @"GitHub Link", @"Check for Update", @"Support the Developer" ][path.row];
         cell.detailTextLabel.text = @[
             @"Source code, releases and issues", @"Check GitHub for a newer version",
-            @"Choose Venmo or Crypto", @"Share rules and recent activity as a JSON file",
-            @"Reset rules and history only", @"Removes all rules, permissions and filters."
+            @"Choose Venmo or Crypto"
         ][path.row];
-        cell.textLabel.textColor =
-            (path.row == 4 || path.row == 5) ? UIColor.systemRedColor : UIColor.systemBlueColor;
+        cell.textLabel.textColor = UIColor.systemBlueColor;
     } else {
         cell.textLabel.text =
-            @[ @"Add a rule by app identity", @"Add a rule by IP / Domain",
-               @"Add a rule by port number" ][path.row];
+            @[ @"Export Rules and Recent Activity", @"Reset Rules & History",
+               @"Reset Settings & Filter" ][path.row];
         cell.detailTextLabel.text = @[
-            @"For an exact identity supplied by iOS", @"For IPs or domains across all processes",
-            @"For ports across all processes"
+            @"Share rules and recent activity as a JSON file", @"Reset rules and history only",
+            @"Removes all rules, permissions and filters."
         ][path.row];
+        cell.textLabel.textColor = path.row == 0 ? UIColor.systemBlueColor : UIColor.systemRedColor;
     }
     if (path.section == NSDashboardSectionFirewall && path.row == 0) {
         self.firewallCell = cell;
@@ -454,8 +451,12 @@
         [self chooseActionForIdentity:nil defaultKey:@"default"];
     } else if (path.section == NSDashboardSectionRequests && [self.monitor[@"requests"] count]) {
         [self presentRequest:self.monitor[@"requests"][path.row]];
-    } else if (path.section == NSDashboardSectionGlobalRules && self.globalRuleKeys.count) {
-        [self chooseGlobalRule:self.globalRuleKeys[path.row]];
+    } else if (path.section == NSDashboardSectionGlobalRules) {
+        if (path.row == 0) {
+            [self editGlobalRule:nil];
+        } else {
+            [self chooseGlobalRule:self.globalRuleKeys[path.row - 1]];
+        }
     } else if ((path.section == NSDashboardSectionRules || path.section == NSDashboardSectionSystemRules) &&
                [self identitiesForSection:path.section].count) {
         [self chooseActionForIdentity:[self identitiesForSection:path.section][path.row] defaultKey:nil];
@@ -472,12 +473,6 @@
         }
     } else if (path.section == NSDashboardSectionFirewall && path.row == 4) {
         [self chooseActionForIdentity:nil defaultKey:@"unattributed"];
-    } else if (path.section == NSDashboardSectionAdvanced) {
-        if (path.row == 0) {
-            [self addIdentity];
-        } else {
-            [self addGlobalRuleByPort:path.row == 2];
-        }
     } else if (path.section == NSDashboardSectionSupport) {
         if (path.row == 0) {
             [self openSupportURL:[NSURL URLWithString:@"https://github.com/EolnMsuk/NetShield2/"]];
@@ -485,10 +480,12 @@
             [self checkForUpdateManually:YES];
         } else if (path.row == 2) {
             [self supportDeveloper];
-        } else if (path.row == 3) {
+        }
+    } else if (path.section == NSDashboardSectionAdvanced) {
+        if (path.row == 0) {
             [self exportRulesAndRecentActivityFromRow:path];
         } else {
-            BOOL reset = path.row == 4;
+            BOOL reset = path.row == 1;
             UIAlertController *alert = [UIAlertController
                 alertControllerWithTitle:reset ? @"Reset Rules & History?" : @"Reset Settings & Filter?"
                                  message:reset ? @"Deletes app and global rules, pending requests and "
@@ -524,12 +521,16 @@
         return nil;
     }
     BOOL global = path.section == NSDashboardSectionGlobalRules;
-    BOOL app = path.section == NSDashboardSectionRules || path.section == NSDashboardSectionSystemRules;
-    NSArray *keys = global ? self.globalRuleKeys : app ? [self identitiesForSection:path.section] : @[];
-    if ((NSUInteger)path.row >= keys.count) {
+    if (global && path.row == 0) {
         return nil;
     }
-    NSString *key = keys[path.row];
+    BOOL app = path.section == NSDashboardSectionRules || path.section == NSDashboardSectionSystemRules;
+    NSArray *keys = global ? self.globalRuleKeys : app ? [self identitiesForSection:path.section] : @[];
+    NSUInteger index = global ? path.row - 1 : path.row;
+    if (index >= keys.count) {
+        return nil;
+    }
+    NSString *key = keys[index];
     UIContextualAction *remove = [UIContextualAction
         contextualActionWithStyle:UIContextualActionStyleDestructive
                             title:@"Remove"
