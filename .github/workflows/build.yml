@@ -70,6 +70,7 @@ jobs:
           set -euo pipefail
           python3 scripts/validate.py --scheme "$PACKAGE_VARIANT"
           python3 scripts/test_packaging.py
+          python3 scripts/test_signing_identity.py
           sh -n layout/DEBIAN/postinst
           sh -n layout/DEBIAN/prerm
           python3 scripts/test_uninstall.py --scheme "$PACKAGE_VARIANT"
@@ -89,25 +90,26 @@ jobs:
           chmod 755 layout/DEBIAN/postinst layout/DEBIAN/prerm
           gmake clean
           gmake package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME="$THEOS_PACKAGE_SCHEME"
-          test -f "packages/com.eolnmsuk.netshield_2.3.2_${PACKAGE_ARCH}.deb"
+          test -f "packages/com.eolnmsuk.netshield_2.3.3_${PACKAGE_ARCH}.deb"
       - name: Verify release deb contents
         shell: bash
         run: |
           set -euo pipefail
-          dpkg-deb --raw-extract "packages/com.eolnmsuk.netshield_2.3.2_${PACKAGE_ARCH}.deb" "$RUNNER_TEMP/netshield-package"
+          dpkg-deb --raw-extract "packages/com.eolnmsuk.netshield_2.3.3_${PACKAGE_ARCH}.deb" "$RUNNER_TEMP/netshield-package"
           python3 scripts/validate.py --stage "$RUNNER_TEMP/netshield-package" --scheme "$PACKAGE_VARIANT"
-      - name: Verify signed entitlements
+      - name: Verify signing identities and entitlements
         shell: bash
         run: |
           set -euo pipefail
           app="$RUNNER_TEMP/netshield-package/${APP_PATH#.theos/_/}"
           for component in NetShield2 PlugIns/NetShield2Data.appex/NetShield2Data PlugIns/NetShield2Control.appex/NetShield2Control; do
+            python3 scripts/check_signing_identity.py "$app/$component"
             ldid -e "$app/$component" > "$RUNNER_TEMP/entitlements.plist"
             python3 scripts/check_entitlements.py "$RUNNER_TEMP/entitlements.plist" "$component"
           done
       - name: Upload release deb
         uses: actions/upload-artifact@v4
         with:
-          name: NetShield2-2.3.2-iOS15-18-${{ matrix.scheme }}
-          path: packages/com.eolnmsuk.netshield_2.3.2_${{ matrix.package_arch }}.deb
+          name: NetShield2-2.3.3-iOS15-18-${{ matrix.scheme }}
+          path: packages/com.eolnmsuk.netshield_2.3.3_${{ matrix.package_arch }}.deb
           if-no-files-found: error
