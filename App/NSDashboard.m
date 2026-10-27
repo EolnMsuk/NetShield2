@@ -301,7 +301,7 @@
     if (!self.policy) {
         return;
     }
-    NSString *title = NSIdentityDisplayName(identity);
+    NSString *title = identity.length ? identity : @"Unidentified app";
     NSString *explanation = @"Choose a rule for new connections.";
     NSArray *actions = @[ @"allow", @"block-inbound", @"block", @"remove" ];
     if ([key isEqual:@"default"]) {
@@ -341,11 +341,14 @@
     [self presentViewController:alert animated:YES completion:nil];
 }
 - (NSString *)globalRuleTitle:(NSString *)key {
+    return [self globalRuleTitle:key fullAppNames:NO];
+}
+- (NSString *)globalRuleTitle:(NSString *)key fullAppNames:(BOOL)fullAppNames {
     NSArray *parts = NSCustomGlobalRuleComponents(key);
     if (parts) {
         NSMutableArray *names = [NSMutableArray new];
         for (NSString *identity in NSCustomGlobalRuleIdentities(parts)) {
-            [names addObject:NSIdentityDisplayName(identity)];
+            [names addObject:fullAppNames ? identity : NSIdentityDisplayName(identity)];
         }
         return [NSString
             stringWithFormat:@"%@\n%@\n%@ / %@",
@@ -379,7 +382,7 @@
         return;
     }
     NSRuleActionController *alert =
-        [NSRuleActionController controllerWithTitle:[self globalRuleTitle:key]
+        [NSRuleActionController controllerWithTitle:[self globalRuleTitle:key fullAppNames:YES]
                                             message:@"Applies when all rule conditions match. Overrides app "
                                                     @"rules and the iOS system traffic allowance."];
     alert.opensExpanded = YES;

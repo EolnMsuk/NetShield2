@@ -67,6 +67,7 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 - (void)chooseGlobalRule:(NSString *)key;
 - (void)chooseGlobalRule:(NSString *)key editingKey:(NSString *)original;
 - (NSString *)globalRuleTitle:(NSString *)key;
+- (NSString *)globalRuleTitle:(NSString *)key fullAppNames:(BOOL)fullAppNames;
 - (NSString *)ruleTitle:(NSString *)rule;
 - (void)firewallChanged:(UISwitch *)sender;
 - (void)appleSystemProcessesChanged:(UISwitch *)sender;

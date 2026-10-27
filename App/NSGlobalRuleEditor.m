@@ -2,7 +2,6 @@
 #import "NSRuleActionController.h"
 #import "NSRuleAppearance.h"
 #import "../Shared/NSGlobalRule.h"
-#import "../Shared/NSIdentityDisplay.h"
 
 typedef NS_ENUM(NSInteger, NSGlobalEditorSection) {
     NSGlobalEditorAction,
@@ -91,13 +90,6 @@ typedef NS_ENUM(NSInteger, NSGlobalEditorSection) {
     NSCharacterSet *whitespace = NSCharacterSet.whitespaceAndNewlineCharacterSet;
     NSString *hostText = [self.hostsField.text stringByTrimmingCharactersInSet:whitespace] ?: @"";
     NSString *portText = [self.portsField.text stringByTrimmingCharactersInSet:whitespace] ?: @"";
-    if (!self.selectedIdentities.count && !hostText.length && !portText.length) {
-        [self showMessage:
-                  @"The rule was not saved. Select at least one app, enter a domain or IP address/range, or "
-                  @"enter a port. Without one of these conditions, the rule would apply to all apps and "
-                  @"destinations. Choosing only an action or protocol is not enough."];
-        return;
-    }
     NSString *hosts = hostText.length ? NSGlobalInputRuleKey(hostText, NO, NO) : @"";
     NSString *ports = portText.length ? NSGlobalInputRuleKey(portText, YES, self.localPort) : @"";
     if (!hosts) {
@@ -134,7 +126,7 @@ typedef NS_ENUM(NSInteger, NSGlobalEditorSection) {
 }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     return @[
-        @"Every selected condition must match. Saved in Global Rules, overriding app rules and the iOS system traffic allowance. If global rules overlap, blocking takes priority.",
+        @"Every selected condition must match. Leave apps, destinations and ports unrestricted to apply the action to all traffic for the selected protocol. Saved in Global Rules, overriding app rules and the iOS system traffic allowance. If global rules overlap, blocking takes priority.",
         @"Select one or more apps. Tap a checked app to remove it, or choose All apps to clear the selection.",
         @"Separate entries with commas, e.g. example.com, 192.168.1.10-192.168.1.20. Blank means all destinations. Bare and www domains are separate.",
         @"Choose remote or local, then enter port numbers separated by commas. Blank means all ports.",
@@ -188,7 +180,7 @@ typedef NS_ENUM(NSInteger, NSGlobalEditorSection) {
 - (void)addAppIdentity {
     UIAlertController *alert =
         [UIAlertController alertControllerWithTitle:@"Add app by identity"
-                                            message:@"Enter the exact iOS app identity. Its shortened name "
+                                            message:@"Enter the exact iOS app identity. Its full name "
                                                     @"will appear in the selection."
                                      preferredStyle:UIAlertControllerStyleAlert];
     [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
@@ -236,8 +228,7 @@ typedef NS_ENUM(NSInteger, NSGlobalEditorSection) {
     [available unionSet:self.selectedIdentities];
     NSArray *identities = [available.allObjects
         sortedArrayUsingComparator:^NSComparisonResult(NSString *left, NSString *right) {
-            NSComparisonResult order =
-                [NSIdentityDisplayName(left) localizedCaseInsensitiveCompare:NSIdentityDisplayName(right)];
+            NSComparisonResult order = [left localizedCaseInsensitiveCompare:right];
             return order == NSOrderedSame ? [left compare:right] : order;
         }];
     NSMutableArray *names = [NSMutableArray new];
@@ -256,7 +247,7 @@ typedef NS_ENUM(NSInteger, NSGlobalEditorSection) {
     }
     [apps addObject:all];
     for (NSString *identity in identities) {
-        NSString *name = NSIdentityDisplayName(identity);
+        NSString *name = identity;
         BOOL selected = [self.selectedIdentities containsObject:identity];
         if (selected) {
             [names addObject:name];

@@ -112,7 +112,7 @@
             cell.textLabel.textColor = textColor;
             cell.textLabel.font = actionFont;
         }
-        cell.tintColor = color ?: UIColor.systemBlueColor;
+        cell.tintColor = selected ? UIColor.labelColor : (color ?: UIColor.systemBlueColor);
         if (selected && color) {
             cell.backgroundColor = [color colorWithAlphaComponent:0.14];
         }

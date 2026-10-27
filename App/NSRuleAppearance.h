@@ -1,7 +1,7 @@
 #import <UIKit/UIKit.h>
 
 // Shared by rule rows, activity rows, and action pickers. Dark-mode colors are
-// deeper versions of the light palette; row backgrounds use the same tint.
+// brighter than the light palette; row backgrounds use the same tint.
 static inline UIColor *NSRuleColor(NSString *rule) {
     BOOL allow = [rule isEqual:@"allow"];
     BOOL incoming = [rule isEqual:@"block-inbound"];
@@ -12,14 +12,14 @@ static inline UIColor *NSRuleColor(NSString *rule) {
     return [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *traits) {
         BOOL dark = traits.userInterfaceStyle == UIUserInterfaceStyleDark;
         if (allow) {
-            return dark ? [UIColor colorWithRed:0.20 green:0.65 blue:0.32 alpha:1]
-                        : [UIColor colorWithRed:0.20 green:0.78 blue:0.35 alpha:1];
+            return dark ? [UIColor colorWithRed:0.30 green:0.85 blue:0.42 alpha:1]
+                        : [UIColor colorWithRed:0.17 green:0.68 blue:0.30 alpha:1];
         }
         if (incoming) {
-            return dark ? [UIColor colorWithRed:0.85 green:0.48 blue:0.12 alpha:1]
-                        : [UIColor colorWithRed:1 green:0.58 blue:0 alpha:1];
+            return dark ? [UIColor colorWithRed:1 green:0.65 blue:0.22 alpha:1]
+                        : [UIColor colorWithRed:0.88 green:0.49 blue:0 alpha:1];
         }
-        return dark ? [UIColor colorWithRed:0.85 green:0.25 blue:0.23 alpha:1]
-                    : [UIColor colorWithRed:1 green:0.23 blue:0.19 alpha:1];
+        return dark ? [UIColor colorWithRed:1 green:0.36 blue:0.33 alpha:1]
+                    : [UIColor colorWithRed:0.88 green:0.20 blue:0.17 alpha:1];
     }];
 }
