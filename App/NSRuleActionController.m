@@ -80,7 +80,7 @@
         UIColor *textColor = selected ? UIColor.labelColor : (color ?: UIColor.systemBlueColor);
         UIFont *bodyFont = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
         UIFont *actionFont = [[UIFontMetrics metricsForTextStyle:UIFontTextStyleBody]
-            scaledFontForFont:[UIFont systemFontOfSize:17 * 1.5]];
+            scaledFontForFont:[UIFont systemFontOfSize:17 * 1.5 * 0.75]];
         if (self.centersActions) {
             // Subtitle cells size their built-in label to its text. Keep equal
             // margins around this label, even when a selection checkmark is shown.
@@ -92,8 +92,8 @@
             label.font = actionFont;
             label.adjustsFontForContentSizeCategory = YES;
             label.numberOfLines = 0;
-            // Keep the enlarged row height, centering the larger text with equal
-            // padding instead of increasing the row height a second time.
+            // Keep the enlarged row height independent of the action font size,
+            // centering the text with equal padding above and below.
             CGFloat rowHeight = MAX(44, bodyFont.lineHeight + 24) * 1.5;
             CGFloat verticalPadding = (rowHeight - label.font.lineHeight) / 2;
             [cell.contentView addSubview:label];
