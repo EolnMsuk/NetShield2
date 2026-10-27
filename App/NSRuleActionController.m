@@ -77,6 +77,10 @@
         NSDictionary *choice = self.choices[path.row];
         UIColor *color = NSRuleColor(choice[@"rule"]);
         BOOL selected = [choice[@"rule"] length] && [choice[@"rule"] isEqual:self.selectedRule];
+        UIColor *textColor = selected ? UIColor.labelColor : (color ?: UIColor.systemBlueColor);
+        UIFont *bodyFont = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
+        UIFont *actionFont = [[UIFontMetrics metricsForTextStyle:UIFontTextStyleBody]
+            scaledFontForFont:[UIFont systemFontOfSize:17 * 1.5]];
         if (self.centersActions) {
             // Subtitle cells size their built-in label to its text. Keep equal
             // margins around this label, even when a selection checkmark is shown.
@@ -84,13 +88,13 @@
             label.translatesAutoresizingMaskIntoConstraints = NO;
             label.text = choice[@"title"];
             label.textAlignment = NSTextAlignmentCenter;
-            label.textColor = color ?: UIColor.systemBlueColor;
-            label.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
+            label.textColor = textColor;
+            label.font = actionFont;
             label.adjustsFontForContentSizeCategory = YES;
             label.numberOfLines = 0;
-            // Enlarge the previous line-height-plus-24-point row by 50%, keeping
-            // the same font and equal space above and below the text.
-            CGFloat rowHeight = MAX(44, label.font.lineHeight + 24) * 1.5;
+            // Keep the enlarged row height, centering the larger text with equal
+            // padding instead of increasing the row height a second time.
+            CGFloat rowHeight = MAX(44, bodyFont.lineHeight + 24) * 1.5;
             CGFloat verticalPadding = (rowHeight - label.font.lineHeight) / 2;
             [cell.contentView addSubview:label];
             [NSLayoutConstraint activateConstraints:@[
@@ -105,7 +109,8 @@
             cell.accessibilityLabel = choice[@"title"];
         } else {
             cell.textLabel.text = choice[@"title"];
-            cell.textLabel.textColor = color ?: UIColor.systemBlueColor;
+            cell.textLabel.textColor = textColor;
+            cell.textLabel.font = actionFont;
         }
         cell.tintColor = color ?: UIColor.systemBlueColor;
         if (selected && color) {
