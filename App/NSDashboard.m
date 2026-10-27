@@ -316,6 +316,7 @@
         actions = @[ @"allow", @"block" ];
     }
     NSRuleActionController *alert = [NSRuleActionController controllerWithTitle:title message:explanation];
+    alert.opensExpanded = YES;
     alert.selectedRule = key ? self.policy.document[key] : self.policy.document[@"rules"][identity];
     for (NSString *action in actions) {
         [alert addActionWithTitle:[self ruleTitle:action]

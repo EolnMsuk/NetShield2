@@ -23,7 +23,7 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.tableView.rowHeight = UITableViewAutomaticDimension;
-    self.tableView.estimatedRowHeight = 56;
+    self.tableView.estimatedRowHeight = 84;
     self.tableView.sectionHeaderHeight = 12;
     self.tableView.sectionFooterHeight = 12;
     if (self.modalPresentationStyle == UIModalPresentationPageSheet) {
@@ -76,6 +76,7 @@
     } else {
         NSDictionary *choice = self.choices[path.row];
         UIColor *color = NSRuleColor(choice[@"rule"]);
+        BOOL selected = [choice[@"rule"] length] && [choice[@"rule"] isEqual:self.selectedRule];
         if (self.centersActions) {
             // Subtitle cells size their built-in label to its text. Keep equal
             // margins around this label, even when a selection checkmark is shown.
@@ -87,13 +88,18 @@
             label.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
             label.adjustsFontForContentSizeCategory = YES;
             label.numberOfLines = 0;
+            // Enlarge the previous line-height-plus-24-point row by 50%, keeping
+            // the same font and equal space above and below the text.
+            CGFloat rowHeight = MAX(44, label.font.lineHeight + 24) * 1.5;
+            CGFloat verticalPadding = (rowHeight - label.font.lineHeight) / 2;
             [cell.contentView addSubview:label];
             [NSLayoutConstraint activateConstraints:@[
                 [label.centerXAnchor constraintEqualToAnchor:cell.centerXAnchor],
                 [label.leadingAnchor constraintEqualToAnchor:cell.leadingAnchor constant:48],
-                [label.topAnchor constraintEqualToAnchor:cell.contentView.topAnchor constant:12],
-                [label.bottomAnchor constraintEqualToAnchor:cell.contentView.bottomAnchor constant:-12],
-                [cell.contentView.heightAnchor constraintGreaterThanOrEqualToConstant:44]
+                [label.topAnchor constraintEqualToAnchor:cell.contentView.topAnchor constant:verticalPadding],
+                [label.bottomAnchor constraintEqualToAnchor:cell.contentView.bottomAnchor
+                                                   constant:-verticalPadding],
+                [cell.contentView.heightAnchor constraintGreaterThanOrEqualToConstant:rowHeight]
             ]];
             cell.isAccessibilityElement = YES;
             cell.accessibilityLabel = choice[@"title"];
@@ -102,11 +108,11 @@
             cell.textLabel.textColor = color ?: UIColor.systemBlueColor;
         }
         cell.tintColor = color ?: UIColor.systemBlueColor;
-        if (color) {
+        if (selected && color) {
             cell.backgroundColor = [color colorWithAlphaComponent:0.14];
         }
         cell.accessibilityTraits |= UIAccessibilityTraitButton;
-        if ([choice[@"rule"] length] && [choice[@"rule"] isEqual:self.selectedRule]) {
+        if (selected) {
             cell.accessoryType = UITableViewCellAccessoryCheckmark;
             cell.accessibilityTraits |= UIAccessibilityTraitSelected;
         }
