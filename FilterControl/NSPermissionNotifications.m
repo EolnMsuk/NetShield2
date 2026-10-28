@@ -85,7 +85,7 @@ static void NSWithdrawNotifications(id<NSPermissionNotificationCenter> center, N
                  policy:(NSPolicy *)policy
           retryRevision:(NSString *)revision
                   error:(NSError **)error {
-    BOOL published = NSWriteDocument(snapshot, NSMonitorFile, error);
+    BOOL published = NSWriteMonitorSnapshot(snapshot, error);
     [self updateRequests:published ? snapshot[@"requests"] : @[] policy:policy retryRevision:revision];
     return published;
 }

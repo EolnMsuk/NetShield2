@@ -137,7 +137,7 @@ static inline NSArray *NSCustomGlobalRuleComponents(NSString *key) {
         JSONObjectWithData:[[key substringFromIndex:7] dataUsingEncoding:NSUTF8StringEncoding]
                    options:0
                      error:NULL];
-    if (![parts isKindOfClass:NSArray.class] || [parts count] != 4) {
+    if (![parts isKindOfClass:NSArray.class] || ([parts count] != 4 && [parts count] != 5)) {
         return nil;
     }
     id apps = parts[0];
@@ -155,6 +155,9 @@ static inline NSArray *NSCustomGlobalRuleComponents(NSString *key) {
         if (![parts[index] isKindOfClass:NSString.class]) {
             return nil;
         }
+    }
+    if ([parts count] == 5 && ![@[ @"incoming", @"outgoing", @"both" ] containsObject:parts[4]]) {
+        return nil;
     }
     return parts;
 }
@@ -178,6 +181,25 @@ static inline NSString *NSCustomGlobalRuleKey(id identity, NSString *hosts, NSSt
         dataWithJSONObject:@[ identity ?: @"", hosts ?: @"", ports ?: @"", protocol ?: @"any" ]
                    options:0
                      error:NULL];
+    return data ? [@"custom:" stringByAppendingString:[[NSString alloc] initWithData:data
+                                                                            encoding:NSUTF8StringEncoding]]
+                : nil;
+}
+// Four-component keys remain readable. New keys include coverage independently of allow/block.
+static inline NSString *NSGlobalCoverage(NSString *action) {
+    return [action hasSuffix:@"-inbound"]    ? @"incoming"
+           : [action hasSuffix:@"-outbound"] ? @"outgoing"
+                                             : @"both";
+}
+static inline NSString *NSDirectionalGlobalRuleKey(id identity, NSString *hosts, NSString *ports,
+                                                   NSString *protocol, NSString *action) {
+    NSString *legacy = NSCustomGlobalRuleKey(identity, hosts, ports, protocol);
+    NSMutableArray *parts = [NSCustomGlobalRuleComponents(legacy) mutableCopy];
+    if (!parts) {
+        return nil;
+    }
+    [parts addObject:NSGlobalCoverage(action)];
+    NSData *data = [NSJSONSerialization dataWithJSONObject:parts options:0 error:NULL];
     return data ? [@"custom:" stringByAppendingString:[[NSString alloc] initWithData:data
                                                                             encoding:NSUTF8StringEncoding]]
                 : nil;
@@ -235,7 +257,12 @@ static inline BOOL NSValidGlobalRuleKey(id key) {
             }
         }
         return NSGlobalRuleMembers(key).count <= NSMaximumRules &&
-               [key isEqual:NSCustomGlobalRuleKey(parts[0], parts[1], parts[2], parts[3])];
+               [key isEqual:parts.count == 5 ? NSDirectionalGlobalRuleKey(
+                                                   parts[0], parts[1], parts[2], parts[3],
+                                                   [parts[4] isEqual:@"incoming"]   ? @"allow-inbound"
+                                                   : [parts[4] isEqual:@"outgoing"] ? @"allow-outbound"
+                                                                                    : @"allow")
+                                             : NSCustomGlobalRuleKey(parts[0], parts[1], parts[2], parts[3])];
     }
     if (![key hasPrefix:@"group:"]) {
         return NSValidGlobalMemberKey(key);
@@ -362,4 +389,57 @@ static inline NSString *NSGlobalInputRuleKey(id value, BOOL port, BOOL local) {
         }
     }
     return members.count ? NSGlobalKeyFromMembers(members.array) : nil;
+}
+
+// Compare normalized non-direction conditions across custom and legacy representations.
+static inline NSString *NSGlobalConditionIdentity(NSString *key) {
+    NSArray *parts = NSCustomGlobalRuleComponents(key);
+    NSMutableArray *hosts = [NSMutableArray new], *ports = [NSMutableArray new];
+    for (NSString *member in NSGlobalRuleMembers(key)) {
+        if ([member hasPrefix:@"ip:"] || [member hasPrefix:@"domain:"]) {
+            [hosts addObject:NSGlobalHostKey(
+                                 [member substringFromIndex:[member rangeOfString:@":"].location + 1])];
+        } else {
+            [ports addObject:member];
+        }
+    }
+    return NSCustomGlobalRuleKey(
+        parts ? NSCustomGlobalRuleIdentities(parts) : @[], hosts.count ? NSGlobalKeyFromMembers(hosts) : @"",
+        ports.count ? NSGlobalKeyFromMembers(ports) : @"", parts ? parts[3] : @"any");
+}
+static inline BOOL NSGlobalCoverageAgrees(NSString *key, NSString *action) {
+    NSArray *parts = NSCustomGlobalRuleComponents(key);
+    return parts.count != 5 || [parts[4] isEqual:NSGlobalCoverage(action)];
+}
+static inline BOOL NSValidateGlobalRuleChange(NSDictionary *rules, NSString *key, NSString *action,
+                                              NSString *original, NSError **error) {
+    NSString *message = nil;
+    if (!NSValidGlobalRuleKey(key) || ![action isKindOfClass:NSString.class] ||
+        !NSGlobalCoverageAgrees(key, action)) {
+        message = @"The rule's direction does not agree with its action.";
+    } else if (original && !rules[original]) {
+        message = @"The original rule was removed. Reopen the editor and try again.";
+    } else {
+        NSString *conditions = NSGlobalConditionIdentity(key), *coverage = NSGlobalCoverage(action);
+        for (NSString *other in rules) {
+            if (!NSValidGlobalRuleKey(other) || ![rules[other] isKindOfClass:NSString.class]) {
+                continue;
+            }
+            if ([other isEqual:original] || ![conditions isEqual:NSGlobalConditionIdentity(other)]) {
+                continue;
+            }
+            NSString *existing = NSGlobalCoverage(rules[other]);
+            if ([coverage isEqual:@"both"] || [existing isEqual:@"both"] || [coverage isEqual:existing]) {
+                message = @"An identical rule already covers this direction. Use opposing directions, or "
+                          @"edit the existing rule.";
+                break;
+            }
+        }
+    }
+    if (message && error) {
+        *error = [NSError errorWithDomain:@"NetShield2.Policy"
+                                     code:2
+                                 userInfo:@{NSLocalizedDescriptionKey : message}];
+    }
+    return message == nil;
 }

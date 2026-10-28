@@ -1,5 +1,7 @@
 #import <Foundation/Foundation.h>
 #import "NSGlobalRule.h"
+#import "NSDestination.h"
+#import "NSIdentityDisplay.h"
 
 static inline NSUInteger NSActivityRoot(NSMutableArray<NSNumber *> *parents, NSUInteger index) {
     while (parents[index].unsignedIntegerValue != index) {
@@ -101,4 +103,68 @@ static inline NSArray<NSDictionary *> *NSGroupedActivity(NSArray<NSDictionary *>
         [result addObject:[group copy]];
     }
     return [result copy];
+}
+
+// One ordered source for connection sheets, search values, and clipboard output.
+static inline NSArray<NSArray<NSString *> *> *NSActivityDetailRows(NSDictionary *connection) {
+    NSString *identity = connection[@"identity"];
+    NSMutableArray *details = [NSMutableArray arrayWithArray:@[
+        @[ @"Process identity", identity.length ? identity : @"Unavailable from iOS" ],
+        @[ @"Process name", NSIdentityDisplayName(identity) ]
+    ]];
+    [details
+        addObjectsFromArray:NSConnectionDetailRows(connection[@"destination"], connection[@"direction"])];
+    if (connection[@"connections"]) {
+        [details addObject:@[ @"Connections", [connection[@"connections"] stringValue] ]];
+    }
+    NSString *outcome =
+        @{@"allow" : @"Allowed", @"block" : @"Blocked"}[connection[@"action"] ?: @""] ?: @"Connection";
+    [details addObject:@[ @"Result", outcome ]];
+    if (connection[@"bytesIn"] || connection[@"bytesOut"]) {
+        [details addObject:@[
+            @"Received", [NSByteCountFormatter stringFromByteCount:[connection[@"bytesIn"] longLongValue]
+                                                        countStyle:NSByteCountFormatterCountStyleFile]
+        ]];
+        [details addObject:@[
+            @"Sent", [NSByteCountFormatter stringFromByteCount:[connection[@"bytesOut"] longLongValue]
+                                                    countStyle:NSByteCountFormatterCountStyleFile]
+        ]];
+    }
+    if (connection[@"time"]) {
+        [details addObject:@[
+            @"Last activity", [NSDateFormatter localizedStringFromDate:connection[@"time"]
+                                                             dateStyle:NSDateFormatterShortStyle
+                                                             timeStyle:NSDateFormatterShortStyle]
+        ]];
+    }
+    return details;
+}
+static inline NSString *NSActivityClipboardLine(NSDictionary *connection) {
+    NSMutableArray *parts = [NSMutableArray new];
+    for (NSArray *row in NSActivityDetailRows(connection)) {
+        NSString *part = [NSString stringWithFormat:@"%@: %@", row[0], row[1]];
+        [parts addObject:[[part componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]
+                             componentsJoinedByString:@" "]];
+    }
+    return [parts componentsJoinedByString:@" / "];
+}
+static inline BOOL NSActivityMatchesQuery(NSDictionary *connection, NSString *query) {
+    if (!query.length) {
+        return YES;
+    }
+    NSMutableArray *values = [NSMutableArray new];
+    for (NSArray *row in NSActivityDetailRows(connection)) {
+        [values addObject:row[1]];
+    }
+    for (NSString *key in @[ @"bytesIn", @"bytesOut", @"direction", @"action" ]) {
+        if (connection[key]) {
+            [values addObject:[connection[key] description]];
+        }
+    }
+    for (NSString *value in values) {
+        if ([value rangeOfString:query options:NSCaseInsensitiveSearch].location != NSNotFound) {
+            return YES;
+        }
+    }
+    return NO;
 }

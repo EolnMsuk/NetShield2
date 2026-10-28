@@ -106,7 +106,8 @@ typedef NS_ENUM(NSInteger, NSGlobalEditorSection) {
                   @"Enter port numbers from 1 to 65535 separated by commas, or leave blank for all ports."];
         return;
     }
-    NSString *key = NSCustomGlobalRuleKey(self.selectedIdentities.allObjects, hosts, ports, self.protocol);
+    NSString *key = NSDirectionalGlobalRuleKey(self.selectedIdentities.allObjects, hosts, ports,
+                                               self.protocol, self.ruleAction);
     if (!NSValidGlobalRuleKey(key)) {
         [self showMessage:@"The app identity is too long or this rule contains too many entries."];
         return;
@@ -129,7 +130,7 @@ typedef NS_ENUM(NSInteger, NSGlobalEditorSection) {
 }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     return @[
-        @"Every selected condition must match. Leave apps, destinations and ports unrestricted to apply the action to all traffic for the selected protocol. Saved in Global Rules, overriding app rules and the iOS system traffic allowance. Directional Allow leaves the opposite direction to other rules. If global rules overlap, blocking takes priority.",
+        @"Every selected condition must match. Leave apps, destinations and ports unrestricted to apply the action to all traffic for the selected protocol. Saved in Global Rules, overriding app rules and the iOS system traffic allowance. Directional rules leave the opposite direction to other rules or the default policy, including Ask Me. If global rules overlap, blocking takes priority.",
         @"Select one or more apps. Tap a checked app to remove it, or choose All apps to clear the selection.",
         @"Separate entries with commas, e.g. example.com, 192.168.1.10-192.168.1.20. Blank means all destinations. Bare and www domains are separate.",
         @"Choose remote or local, then enter port numbers separated by commas. Blank means all ports.",

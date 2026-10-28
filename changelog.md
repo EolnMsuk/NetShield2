@@ -1,3 +1,11 @@
+# 2.4.8
+
+- Search Recent Activity by connection details, including full process identities.
+- Add confirmed Clear buttons for Recent Activity, App Rules, System Rules, and Global Rules.
+- Add Copy to Clipboard below connection details, copying all details and the full process identity on one line.
+- Leave traffic outside a global rule's direction to other rules or the default policy, including Ask Me, while preserving app-rule behavior.
+- Allow identical global-rule conditions in opposing directions and reject overlapping directions regardless of allow/block action.
+
 # 2.4.7
 
 - Open Edit Custom Rule directly when tapping an existing Global Rule.

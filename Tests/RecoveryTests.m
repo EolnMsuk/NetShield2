@@ -26,7 +26,7 @@ static void TestDestinationSafety(void) {
     NSMutableDictionary *document = [[NSPolicy defaultDocument] mutableCopy];
     document[@"globalRules"] = @{@"ip:::ffff:192.0.2.1" : @"block", @"ip:192.0.2.1" : @"allow"};
     NSPolicy *policy = [NSPolicy policyWithDocument:document error:NULL];
-    VERIFY(policy && [policy.document[@"globalRules"] count] == 1);
+    VERIFY(policy && [policy.document[@"globalRules"] count] == 2);
     for (NSString *address in @[ @"192.0.2.1", @"::ffff:192.0.2.1" ]) {
         VERIFY(![policy allowsIdentity:@"com.apple.test"
                              direction:NSFlowDirectionOutbound
@@ -490,6 +490,268 @@ static void TestDistinctFlowActivity(void) {
     VERIFY([groups[0][@"action"] isEqual:@"block"]);
 }
 
+static void TestGlobalDirectionStorage(void) {
+    NSArray *actions =
+        @[ @"allow-inbound", @"allow-outbound", @"allow", @"block-inbound", @"block-outbound", @"block" ];
+    NSDictionary *peer = @{@"domain" : @"example.com", @"port" : @443, @"protocol" : @"tcp"};
+    for (NSString *existing in actions) {
+        NSString *first = NSDirectionalGlobalRuleKey(@[ @"app", @"other" ], @"domain:example.com",
+                                                     @"port:443", @"tcp", existing);
+        VERIFY(NSValidGlobalRuleKey(first));
+        for (NSString *candidate in actions) {
+            NSString *second = NSDirectionalGlobalRuleKey(@[ @"other", @"app" ], @"domain:example.com",
+                                                          @"port:443", @"tcp", candidate);
+            BOOL opposing = ![NSGlobalCoverage(existing) isEqual:@"both"] &&
+                            ![NSGlobalCoverage(candidate) isEqual:@"both"] &&
+                            ![NSGlobalCoverage(existing) isEqual:NSGlobalCoverage(candidate)];
+            NSDictionary *rules = @{first : existing};
+            NSError *error = nil;
+            VERIFY(NSValidateGlobalRuleChange(rules, second, candidate, nil, &error) == opposing);
+            VERIFY((error == nil) == opposing);
+            VERIFY(NSValidateGlobalRuleChange(rules, first, existing, first, NULL));
+            if (!opposing) {
+                continue;
+            }
+            VERIFY(NSWriteDocument([NSPolicy defaultDocument], NSPolicyFile, NULL));
+            VERIFY(NSUpdatePolicy(
+                ^BOOL(NSMutableDictionary *document, NSError **unused) {
+                    document[@"globalRules"] = @{first : existing, second : candidate};
+                    return YES;
+                },
+                NULL));
+            NSInvalidatePolicyCache();
+            NSPolicy *policy = NSReadPolicy(NULL);
+            VERIFY([policy.document[@"globalRules"] count] == 2);
+            for (NSFlowDirection direction = NSFlowDirectionInbound; direction <= NSFlowDirectionOutbound;
+                 direction++) {
+                NSString *action = ([NSGlobalCoverage(existing) isEqual:@"incoming"] ==
+                                    (direction == NSFlowDirectionInbound))
+                                       ? existing
+                                       : candidate;
+                VERIFY([policy allowsIdentity:@"app" direction:direction
+                                  destination:peer] == NSGlobalActionIsAllow(action));
+                VERIFY(![policy requiresPermissionForIdentity:@"app" direction:direction destination:peer]);
+            }
+            VERIFY([policy requiresPermissionForIdentity:@"app"
+                                               direction:NSFlowDirectionUnknown
+                                             destination:peer]);
+            NSDictionary *saved = policy.document[@"globalRules"];
+            VERIFY(!NSValidateGlobalRuleChange(saved,
+                                               NSDirectionalGlobalRuleKey(@[ @"app", @"other" ],
+                                                                          @"domain:example.com", @"port:443",
+                                                                          @"tcp", @"block"),
+                                               @"block", first, NULL));
+            VERIFY(!NSUpdatePolicy(
+                ^BOOL(NSMutableDictionary *document, NSError **unused) {
+                    NSMutableDictionary *rules = [document[@"globalRules"] mutableCopy];
+                    rules[NSDirectionalGlobalRuleKey(@[ @"app", @"other" ], @"domain:example.com",
+                                                     @"port:443", @"tcp", @"block")] = @"block";
+                    document[@"globalRules"] = rules;
+                    return YES;
+                },
+                NULL));
+            VERIFY([NSReadPolicy(NULL).document[@"globalRules"] isEqual:saved]);
+            VERIFY(NSUpdatePolicy(
+                ^BOOL(NSMutableDictionary *document, NSError **unused) {
+                    document[@"globalRules"] = @{second : candidate};
+                    return YES;
+                },
+                NULL));
+            VERIFY([NSReadPolicy(NULL).document[@"globalRules"] isEqual:@{second : candidate}]);
+        }
+    }
+    NSString *legacy = NSCustomGlobalRuleKey(@"", @"ip:::ffff:192.0.2.1", @"", @"any");
+    NSString *incoming = NSDirectionalGlobalRuleKey(@"", @"ip:192.0.2.1", @"", @"any", @"block-inbound");
+    NSString *outgoing = NSDirectionalGlobalRuleKey(@"", @"ip:192.0.2.1", @"", @"any", @"allow-outbound");
+    VERIFY(!NSValidateGlobalRuleChange(@{legacy : @"allow-inbound"}, incoming, @"block-inbound", nil, NULL));
+    VERIFY(NSValidateGlobalRuleChange(@{@"ip:::ffff:192.0.2.1" : @"block-inbound"}, outgoing,
+                                      @"allow-outbound", nil, NULL));
+    NSMutableDictionary *document = [[NSPolicy defaultDocument] mutableCopy];
+    document[@"globalRules"] = @{incoming : @"block-outbound"};
+    VERIFY(![NSPolicy policyWithDocument:document error:NULL]);
+    // Legacy single/group/custom blocks and DNS fallbacks all leave uncovered directions to Ask Me.
+    for (NSString *key in @[
+             @"domain:example.com", @"group:domain:example.com,domain:other.test",
+             NSCustomGlobalRuleKey(@"app", @"domain:example.com", @"port:443", @"tcp")
+         ]) {
+        for (NSString *action in @[ @"block-inbound", @"block-outbound" ]) {
+            NSFlowDirection matching =
+                [action hasSuffix:@"-inbound"] ? NSFlowDirectionInbound : NSFlowDirectionOutbound;
+            NSFlowDirection opposite =
+                matching == NSFlowDirectionInbound ? NSFlowDirectionOutbound : NSFlowDirectionInbound;
+            document[@"globalRules"] = @{key : action};
+            document[@"globalDomainAddresses"] = @{@"domain:example.com" : @[ @"ip:192.0.2.1" ]};
+            document[@"globalDomainExpirations"] =
+                @{@"domain:example.com" : [NSDate dateWithTimeIntervalSinceNow:120]};
+            NSPolicy *policy = [NSPolicy policyWithDocument:document error:NULL];
+            VERIFY(policy);
+            VERIFY(![policy allowsIdentity:@"app" direction:matching destination:peer]);
+            VERIFY(![policy requiresPermissionForIdentity:@"app" direction:matching destination:peer]);
+            VERIFY([policy requiresPermissionForIdentity:@"app" direction:opposite destination:peer]);
+            VERIFY([policy requiresPermissionForRequest:@{
+                @"identity" : @"app",
+                @"direction" : opposite == NSFlowDirectionInbound ? @"inbound" : @"outbound",
+                @"destination" : peer
+            }]);
+            VERIFY([policy requiresPermissionForIdentity:@"app"
+                                               direction:opposite
+                                             destination:@{
+                                                 @"address" : @"192.0.2.1",
+                                                 @"port" : @443,
+                                                 @"protocol" : @"tcp"
+                                             }]);
+            VERIFY(![policy needsSocketDestination:@{} identity:@"app" direction:opposite]);
+            NSPermissionQueue *queue = [NSPermissionQueue new];
+            __block NSUInteger completions = 0;
+            for (NSNumber *direction in @[ @(matching), @(opposite) ]) {
+                [queue enqueueIdentity:@"app"
+                             direction:direction.integerValue
+                           destination:peer
+                                   now:1
+                                  date:NSDate.date
+                            completion:^(BOOL allow) {
+                                VERIFY(!allow);
+                                completions++;
+                            }];
+            }
+            [queue resolveWithPolicy:policy now:2];
+            VERIFY(completions == 1 && queue.waitingCount == 1);
+            [queue cancelAll];
+            // Existing app directional blocks still allow their opposite direction.
+            document[@"rules"] = @{@"app" : action};
+            policy = [NSPolicy policyWithDocument:document error:NULL];
+            VERIFY([policy allowsIdentity:@"app" direction:opposite destination:peer]);
+            document[@"rules"] = @{};
+        }
+    }
+    // Expansion must not combine a directional block with an opposing allow before matching.
+    document[@"globalRules"] = @{
+        @"group:domain:example.com,domain:other.test" : @"block-inbound",
+        @"domain:example.com" : @"allow-outbound"
+    };
+    NSPolicy *policy = [NSPolicy policyWithDocument:document error:NULL];
+    VERIFY([policy allowsIdentity:@"app" direction:NSFlowDirectionOutbound destination:peer]);
+    VERIFY(![policy allowsIdentity:@"app" direction:NSFlowDirectionInbound destination:peer]);
+}
+
+static void TestActivityClearBoundary(void) {
+    NSDate *now = NSDate.date;
+    NSDictionary * (^event)(NSDate *) = ^NSDictionary *(NSDate *time) {
+        return @{
+            @"identity" : @"TEAM.com.example.app",
+            @"flow" : @"flow",
+            @"action" : @"allow",
+            @"direction" : @"outbound",
+            @"event" : @0,
+            @"bytesIn" : @123456,
+            @"bytesOut" : @17,
+            @"time" : time,
+            @"destination" : @{@"port" : @443}
+        };
+    };
+    NSArray *requests = @[ @{
+        @"token" : @"pending",
+        @"identity" : @"pending.app",
+        @"created" : now,
+        @"expires" : [now dateByAddingTimeInterval:30],
+        @"waiting" : @YES,
+        @"expired" : @NO
+    } ];
+    NSMutableDictionary *snapshot = [@{
+        @"schema" : @2,
+        @"updated" : now,
+        @"lastReport" : now,
+        @"controlRunning" : @YES,
+        @"policyError" : @"health",
+        @"events" : @[ event([now dateByAddingTimeInterval:-2]) ],
+        @"requests" : requests,
+        @"session" : @"session"
+    } mutableCopy];
+    VERIFY(NSWriteMonitorSnapshot(snapshot, NULL));
+    VERIFY(NSClearActivity(NULL));
+    VERIFY([NSReadMonitor()[@"events"] count] == 0);
+    VERIFY([NSReadMonitor()[@"policyError"] isEqual:@"health"]);
+    VERIFY([NSReadMonitor()[@"session"] isEqual:@"session"]);
+    VERIFY([NSReadMonitor()[@"requests"] isEqual:requests]);
+    VERIFY([NSReadDocument(NSMonitorFile, NULL)[@"events"] count] == 0);
+    // A provider snapshot assembled before Clear cannot restore deleted events.
+    VERIFY(NSWriteMonitorSnapshot(snapshot, NULL));
+    VERIFY([NSReadMonitor()[@"events"] count] == 0);
+    NSDate *cutoff = NSReadDocument(NSActivityClearFile, NULL)[@"cutoff"];
+    snapshot[@"events"] = @[ event(cutoff), event([cutoff dateByAddingTimeInterval:1]) ];
+    VERIFY(NSWriteMonitorSnapshot(snapshot, NULL));
+    VERIFY([NSReadMonitor()[@"events"] count] == 1);
+    VERIFY([NSActivityAfterClear(snapshot[@"events"]) count] == 1);
+    VERIFY([NSReadDocument(NSMonitorFile, NULL)[@"activityClearRevision"]
+        isEqual:NSReadDocument(NSActivityClearFile, NULL)[@"revision"]]);
+    // Readers also protect exports from a stale/old publisher using the raw writer.
+    snapshot[@"events"] = @[ event([cutoff dateByAddingTimeInterval:-1]) ];
+    VERIFY(NSWriteDocument(snapshot, NSMonitorFile, NULL));
+    VERIFY([NSReadMonitor()[@"events"] count] == 0);
+    NSStoreLock *lock = [NSStoreLock tryLockURL:NSSharedURL(@"activity.lock") error:NULL];
+    VERIFY(lock);
+    VERIFY(!NSClearActivity(NULL));
+    VERIFY(!NSWriteMonitorSnapshot(snapshot, NULL));
+    [lock unlock];
+    VERIFY([NSFileManager.defaultManager removeItemAtURL:NSSharedURL(NSMonitorFile) error:NULL]);
+    VERIFY(NSClearActivity(NULL)); // Provider offline, no saved monitor.
+    VERIFY(NSWriteMonitorSnapshot(snapshot, NULL));
+    VERIFY([NSReadMonitor()[@"events"] count] == 0);
+    VERIFY(NSWriteDocument(@{}, NSActivityClearFile, NULL));
+    VERIFY(!NSWriteMonitorSnapshot(snapshot, NULL)); // Unreadable boundary must never resurrect history.
+    VERIFY([NSReadMonitor()[@"events"] count] == 0);
+    VERIFY(NSClearActivity(NULL));
+    VERIFY([NSFileManager.defaultManager removeItemAtURL:NSSharedURL(NSActivityClearFile) error:NULL]);
+}
+
+static void TestScopedRuleClear(void) {
+    NSMutableDictionary *document = [[NSPolicy defaultDocument] mutableCopy];
+    document[@"rules"] = @{@"app" : @"block-inbound", @"com.apple.test" : @"block-outbound"};
+    document[@"ruleDestinations"] = @{@"app" : @{@"port" : @443}, @"com.apple.test" : @{@"port" : @53}};
+    document[@"globalRules"] = @{@"domain:example.com" : @"block"};
+    document[@"globalDomainAddresses"] = @{@"domain:example.com" : @[ @"ip:192.0.2.1" ]};
+    document[@"globalDomainExpirations"] =
+        @{@"domain:example.com" : [NSDate dateWithTimeIntervalSinceNow:120]};
+    VERIFY(NSWriteDocument(document, NSPolicyFile, NULL));
+    VERIFY(NSUpdatePolicy(
+        ^BOOL(NSMutableDictionary *current, NSError **unused) {
+            current[@"globalRules"] = @{};
+            return YES;
+        },
+        NULL));
+    NSDictionary *cleared = NSReadPolicy(NULL).document;
+    VERIFY([cleared[@"rules"] isEqual:document[@"rules"]]);
+    VERIFY([cleared[@"ruleDestinations"] isEqual:document[@"ruleDestinations"]]);
+    VERIFY([cleared[@"default"] isEqual:@"ask"] && [cleared[@"allowAppleSystemProcesses"] isEqual:@YES]);
+    VERIFY([cleared[@"globalRules"] count] == 0 && [cleared[@"globalDomainAddresses"] count] == 0 &&
+           [cleared[@"globalDomainExpirations"] count] == 0);
+    VERIFY(NSWriteDocument(document, NSPolicyFile, NULL));
+    for (NSNumber *system in @[ @NO, @YES ]) {
+        VERIFY(NSUpdatePolicy(
+            ^BOOL(NSMutableDictionary *current, NSError **error) {
+                NSArray *removed = NSClearIdentityRules(
+                    current, system.boolValue,
+                    @[ @{@"identity" : @"history.app"}, @{@"identity" : @"com.apple.history"} ], error);
+                VERIFY(removed.count == 2);
+                return removed != nil;
+            },
+            NULL));
+        NSDictionary *saved = NSReadPolicy(NULL).document;
+        VERIFY([saved[@"globalRules"] isEqual:document[@"globalRules"]]);
+        VERIFY([saved[@"default"] isEqual:@"ask"]);
+        VERIFY([saved[@"allowAppleSystemProcesses"] isEqual:@YES]);
+        if (!system.boolValue) {
+            VERIFY([saved[@"rules"] isEqual:@{@"com.apple.test" : @"block-outbound"}]);
+            VERIFY([saved[@"ruleDestinations"] isEqual:@{@"com.apple.test" : @{@"port" : @53}}]);
+            VERIFY(saved[@"askGenerations"][@"app"] && saved[@"askGenerations"][@"history.app"]);
+        } else {
+            VERIFY([saved[@"rules"] count] == 0 && [saved[@"ruleDestinations"] count] == 0);
+            VERIFY(saved[@"askGenerations"][@"com.apple.test"] &&
+                   saved[@"askGenerations"][@"com.apple.history"]);
+        }
+    }
+}
+
 void NSRunRecoveryTests(void) {
     TestDestinationSafety();
     TestDNSReplacementAndPublication();
@@ -498,6 +760,9 @@ void NSRunRecoveryTests(void) {
     TestNotificationPublicationAndOrphans();
     TestRestartRecovery();
     TestDistinctFlowActivity();
+    TestGlobalDirectionStorage();
+    TestScopedRuleClear();
+    TestActivityClearBoundary();
     NSLog(
         @"Passed recovery, destination, DNS lifetime, notification publication, and flow aggregation checks");
 }

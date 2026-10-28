@@ -27,11 +27,17 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
     NSDashboardSectionCount,
 };
 
-@interface NSDashboard ()
+@interface NSDashboard () <UISearchBarDelegate>
 @property(nonatomic, strong) NSPolicy *policy;
 @property(nonatomic, copy) NSString *policyReadError;
 @property(nonatomic, copy) NSDictionary *monitor;
 @property(nonatomic, copy) NSArray<NSDictionary *> *activityGroups;
+@property(nonatomic, copy) NSArray<NSDictionary *> *filteredActivityGroups;
+@property(nonatomic, copy) NSString *activityQuery;
+@property(nonatomic, strong) UISearchBar *activitySearchBar;
+@property(nonatomic, strong) UIView *activityHeader;
+@property(nonatomic, weak) UIButton *activityClearButton;
+@property(nonatomic) BOOL clearingSection;
 @property(nonatomic, copy) NSArray<NSString *> *identities;
 @property(nonatomic, copy) NSArray<NSString *> *systemIdentities;
 @property(nonatomic, copy) NSArray<NSString *> *globalRuleKeys;
@@ -60,6 +66,7 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 - (BOOL)updatePolicy:(BOOL (^)(NSMutableDictionary *, NSError **))mutation;
 - (BOOL)removeAppRuleForIdentity:(NSString *)identity;
 - (void)reloadMonitor;
+- (void)clearSectionTapped:(UIButton *)sender;
 - (BOOL)hasFreshMonitor;
 - (void)chooseActionForIdentity:(NSString *)identity defaultKey:(NSString *)key;
 - (void)chooseActionForIdentity:(NSString *)identity

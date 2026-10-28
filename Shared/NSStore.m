@@ -121,6 +121,91 @@ static NSStoreLock *NSAcquireLock(NSString *name, NSError **error) {
 NSStoreLock *NSAcquireProviderLock(NSError **error) {
     return NSAcquireLock(@"provider.lock", error);
 }
+static NSDictionary *NSReadActivityBoundary(NSError **error) {
+    NSError *readError = nil;
+    NSDictionary *boundary = NSReadDocument(NSActivityClearFile, &readError);
+    if (!boundary &&
+        (([readError.domain isEqual:NSPOSIXErrorDomain] && readError.code == ENOENT) ||
+         ([readError.domain isEqual:NSCocoaErrorDomain] &&
+          (readError.code == NSFileReadNoSuchFileError || readError.code == NSFileNoSuchFileError)))) {
+        return @{};
+    }
+    if (![boundary[@"cutoff"] isKindOfClass:NSDate.class] ||
+        ![boundary[@"revision"] isKindOfClass:NSString.class] || ![boundary[@"revision"] length]) {
+        if (error) {
+            *error = readError ?: NSStorageError(@"The saved activity clear boundary is unreadable.");
+        }
+        return nil;
+    }
+    return boundary;
+}
+static NSArray *NSActivityAfterBoundary(NSArray *events, NSDictionary *boundary) {
+    if (![events isKindOfClass:NSArray.class]) {
+        return @[];
+    }
+    NSDate *cutoff = boundary[@"cutoff"];
+    if (![cutoff isKindOfClass:NSDate.class]) {
+        return events ?: @[];
+    }
+    return [events filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *event,
+                                                                                     NSDictionary *bindings) {
+                       return [event isKindOfClass:NSDictionary.class] &&
+                              [event[@"time"] isKindOfClass:NSDate.class] &&
+                              [event[@"time"] compare:cutoff] == NSOrderedDescending;
+                   }]]
+               ?: @[];
+}
+NSArray<NSDictionary *> *NSActivityAfterClear(NSArray<NSDictionary *> *events) {
+    // Retain the live buffer on read failure; publication will fail until the boundary is readable.
+    return NSActivityAfterBoundary(events, NSReadActivityBoundary(NULL));
+}
+static NSDictionary *NSMonitorAfterBoundary(NSDictionary *snapshot, NSDictionary *boundary) {
+    NSMutableDictionary *filtered = [snapshot mutableCopy];
+    filtered[@"events"] = NSActivityAfterBoundary(snapshot[@"events"], boundary);
+    if ([boundary[@"revision"] isKindOfClass:NSString.class]) {
+        filtered[@"activityClearRevision"] = boundary[@"revision"];
+    }
+    return filtered;
+}
+BOOL NSWriteMonitorSnapshot(NSDictionary *snapshot, NSError **error) {
+    __attribute__((objc_precise_lifetime)) NSStoreLock *lock = NSAcquireLock(@"activity.lock", error);
+    if (!lock) {
+        return NO;
+    }
+    @try {
+        NSDictionary *boundary = NSReadActivityBoundary(error);
+        return boundary && NSWriteDocument(NSMonitorAfterBoundary(snapshot, boundary), NSMonitorFile, error);
+    } @finally {
+        [lock unlock];
+    }
+}
+BOOL NSClearActivity(NSError **error) {
+    __attribute__((objc_precise_lifetime)) NSStoreLock *lock = NSAcquireLock(@"activity.lock", error);
+    if (!lock) {
+        return NO;
+    }
+    @try {
+        NSDictionary *boundary = @{@"cutoff" : NSDate.date, @"revision" : NSUUID.UUID.UUIDString};
+        // Persist first. Readers filter old snapshots even if publication or the provider is interrupted.
+        if (!NSWriteDocument(boundary, NSActivityClearFile, error)) {
+            return NO;
+        }
+        NSError *readError = nil;
+        NSDictionary *snapshot = NSReadDocument(NSMonitorFile, &readError);
+        if (!snapshot &&
+            !(([readError.domain isEqual:NSPOSIXErrorDomain] && readError.code == ENOENT) ||
+              ([readError.domain isEqual:NSCocoaErrorDomain] &&
+               (readError.code == NSFileReadNoSuchFileError || readError.code == NSFileNoSuchFileError)))) {
+            if (error) {
+                *error = readError;
+            }
+            return NO;
+        }
+        return !snapshot || NSWriteDocument(NSMonitorAfterBoundary(snapshot, boundary), NSMonitorFile, error);
+    } @finally {
+        [lock unlock];
+    }
+}
 BOOL NSEnsurePolicy(NSError **error) {
     __attribute__((objc_precise_lifetime)) NSStoreLock *lock = NSAcquireLock(@"policy.lock", error);
     if (!lock) {
@@ -156,6 +241,27 @@ BOOL NSUpdatePolicy(BOOL (^mutation)(NSMutableDictionary *, NSError **), NSError
         document[@"rules"] = [document[@"rules"] mutableCopy];
         if (!mutation(document, error)) {
             return NO;
+        }
+        // Existing legacy overlaps remain readable; every added/changed rule is checked atomically.
+        NSDictionary *before = current.document[@"globalRules"] ?: @{};
+        NSDictionary *after = document[@"globalRules"] ?: @{};
+        if (![after isKindOfClass:NSDictionary.class]) {
+            if (error) {
+                *error = NSStorageError(@"Invalid global rules.");
+            }
+            return NO;
+        }
+        for (NSString *key in after) {
+            if (!NSValidGlobalRuleKey(key) || ![after[key] isKindOfClass:NSString.class]) {
+                if (error) {
+                    *error = NSStorageError(@"Invalid global rule.");
+                }
+                return NO;
+            }
+            if (![after[key] isEqual:before[key]] &&
+                !NSValidateGlobalRuleChange(after, key, after[key], key, error)) {
+                return NO;
+            }
         }
         NSMutableDictionary *destinations = [document[@"ruleDestinations"] mutableCopy];
         for (NSString *identity in destinations.allKeys) {
@@ -205,6 +311,26 @@ BOOL NSUseDefaultRule(NSMutableDictionary *document, NSString *identity, NSError
     [document[@"rules"] removeObjectForKey:identity];
     return YES;
 }
+NSArray<NSString *> *NSClearIdentityRules(NSMutableDictionary *document, BOOL system, NSArray *events,
+                                          NSError **error) {
+    NSMutableSet *identities = [NSMutableSet setWithArray:[document[@"rules"] allKeys]];
+    for (NSDictionary *event in events) {
+        if ([event[@"identity"] length]) {
+            [identities addObject:event[@"identity"]];
+        }
+    }
+    NSMutableArray *removed = [NSMutableArray new];
+    for (NSString *identity in identities) {
+        if (NSIsAppleSystemIdentity(identity) != system) {
+            continue;
+        }
+        if (!NSUseDefaultRule(document, identity, error)) {
+            return nil;
+        }
+        [removed addObject:identity];
+    }
+    return removed;
+}
 BOOL NSResetSharedState(BOOL legacyProviderMayBeRunning, NSError **error) {
     return NSResetSharedStateWithOptions(legacyProviderMayBeRunning, NO, error);
 }
@@ -251,7 +377,7 @@ BOOL NSResetSharedStateWithOptions(BOOL legacyProviderMayBeRunning, BOOL preserv
             if (!NSWriteDocument(replacement, NSPolicyFile, error)) {
                 return NO;
             }
-            for (NSString *name in @[ NSMonitorFile, NSNotificationRetryFile ]) {
+            for (NSString *name in @[ NSMonitorFile, NSNotificationRetryFile, NSActivityClearFile ]) {
                 NSError *removeError = nil;
                 if (![NSFileManager.defaultManager removeItemAtURL:NSSharedURL(name) error:&removeError] &&
                     !([removeError.domain isEqual:NSCocoaErrorDomain] &&
@@ -333,7 +459,13 @@ NSDictionary *NSReadMonitor(void) {
             return @{};
         }
     }
-    return d;
+    NSDictionary *boundary = NSReadActivityBoundary(NULL);
+    NSMutableDictionary *filtered = [NSMonitorAfterBoundary(d, boundary) mutableCopy];
+    // Never expose pre-clear history while the persisted boundary cannot be read.
+    if (!boundary) {
+        filtered[@"events"] = @[];
+    }
+    return filtered;
 }
 
 BOOL NSAnswerPermissionRequest(NSDictionary *request, BOOL allow, NSError **error) {

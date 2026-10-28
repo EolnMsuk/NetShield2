@@ -86,6 +86,7 @@
                                             message:message];
     alert.detailRows = NSConnectionDetailRows(request[@"destination"], request[@"direction"]);
     alert.opensExpanded = YES;
+    alert.centersTitle = YES;
     alert.centersActions = YES;
     for (NSString *rule in NSDirectionRuleValues()) {
         [alert addActionWithTitle:[self ruleTitle:rule]

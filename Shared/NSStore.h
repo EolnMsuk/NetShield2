@@ -11,11 +11,18 @@ FOUNDATION_EXPORT BOOL NSWriteDocument(NSDictionary *document, NSString *name,
                                        NSError *_Nullable *_Nullable error);
 FOUNDATION_EXPORT NSPolicy *_Nullable NSReadPolicy(NSError *_Nullable *_Nullable error);
 FOUNDATION_EXPORT NSDictionary *NSReadMonitor(void);
+// The cutoff survives offline clears and stale provider snapshots. Monitor fields and requests survive.
+FOUNDATION_EXPORT BOOL NSClearActivity(NSError **error);
+FOUNDATION_EXPORT NSArray<NSDictionary *> *NSActivityAfterClear(NSArray<NSDictionary *> *events);
+FOUNDATION_EXPORT BOOL NSWriteMonitorSnapshot(NSDictionary *snapshot, NSError **error);
 FOUNDATION_EXPORT void NSInvalidatePolicyCache(void);
 FOUNDATION_EXPORT BOOL NSEnsurePolicy(NSError **error);
 FOUNDATION_EXPORT BOOL NSUpdatePolicy(BOOL (^mutation)(NSMutableDictionary *document, NSError **error),
                                       NSError **error);
 FOUNDATION_EXPORT BOOL NSUseDefaultRule(NSMutableDictionary *document, NSString *identity, NSError **error);
+FOUNDATION_EXPORT NSArray<NSString *> *_Nullable NSClearIdentityRules(NSMutableDictionary *document,
+                                                                      BOOL system, NSArray *events,
+                                                                      NSError **error);
 FOUNDATION_EXPORT NSStoreLock *_Nullable NSAcquireProviderLock(NSError **error);
 FOUNDATION_EXPORT BOOL NSResetSharedState(BOOL legacyProviderMayBeRunning, NSError **error);
 FOUNDATION_EXPORT BOOL NSResetSharedStateWithOptions(BOOL legacyProviderMayBeRunning, BOOL preserveSettings,

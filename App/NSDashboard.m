@@ -1,5 +1,6 @@
 #import "NSDashboard+Internal.h"
 #import "NSGlobalRuleEditor.h"
+#import "../Shared/NSActivity.h"
 #import "../Shared/NSGlobalRule.h"
 #import "../Shared/NSExport.h"
 #import "../Shared/NSProviderHealth.h"
@@ -175,8 +176,11 @@
         self.presentedRequest = nil;
     }
     NSMutableSet *identities = [NSMutableSet setWithArray:[self.policy.document[@"rules"] allKeys] ?: @[]];
-    NSSet *hiddenIdentities = [NSSet
+    NSMutableSet *hiddenIdentities = [NSMutableSet
         setWithArray:[NSUserDefaults.standardUserDefaults stringArrayForKey:@"hiddenRuleIdentities"] ?: @[]];
+    [hiddenIdentities minusSet:identities];
+    [NSUserDefaults.standardUserDefaults setObject:hiddenIdentities.allObjects
+                                            forKey:@"hiddenRuleIdentities"];
     for (NSDictionary *event in self.monitor[@"events"]) {
         NSString *identity = event[@"identity"];
         if ([identity isKindOfClass:NSString.class] && identity.length &&
@@ -298,6 +302,84 @@
     }
     return saved;
 }
+- (void)clearSectionTapped:(UIButton *)sender {
+    if (self.busy || self.clearingSection) {
+        return;
+    }
+    NSInteger section = sender.tag;
+    BOOL activity = section == NSDashboardSectionActivity;
+    BOOL global = section == NSDashboardSectionAddGlobalRule;
+    BOOL system = section == NSDashboardSectionSystemRules;
+    NSString *name = activity ? @"Recent Activity"
+                     : global ? @"Global Rules"
+                     : system ? @"System Rules"
+                              : @"App Rules";
+    self.clearingSection = YES;
+    UIAlertController *alert = [UIAlertController
+        alertControllerWithTitle:[NSString stringWithFormat:@"Clear %@?", name]
+                         message:[NSString stringWithFormat:
+                                               @"All saved items in %@ will be removed.%@", name,
+                                               activity ? @" The search does not limit what is cleared. New "
+                                                          @"activity can appear as connections continue."
+                                                        : @""]
+                  preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel"
+                                              style:UIAlertActionStyleCancel
+                                            handler:^(UIAlertAction *action) {
+                                                self.clearingSection = NO;
+                                                [self refreshTableKeepingPosition];
+                                            }]];
+    [alert addAction:[UIAlertAction
+                         actionWithTitle:@"Clear"
+                                   style:UIAlertActionStyleDestructive
+                                 handler:^(UIAlertAction *action) {
+                                     NSError *error = nil;
+                                     NSMutableSet *removed = [NSMutableSet new];
+                                     BOOL saved =
+                                         activity
+                                             ? NSClearActivity(&error)
+                                             : NSUpdatePolicy(
+                                                   ^BOOL(NSMutableDictionary *document,
+                                                         NSError **mutationError) {
+                                                       if (global) {
+                                                           document[@"globalRules"] = @{};
+                                                           return YES;
+                                                       }
+                                                       NSArray *identities = NSClearIdentityRules(
+                                                           document, system,
+                                                           NSReadMonitor()[@"events"] ?: @[], mutationError);
+                                                       if (!identities) {
+                                                           return NO;
+                                                       }
+                                                       [removed addObjectsFromArray:identities];
+                                                       return YES;
+                                                   },
+                                                   &error);
+                                     self.clearingSection = NO;
+                                     if (saved) {
+                                         if (removed.count) {
+                                             NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+                                             NSMutableSet *hidden = [NSMutableSet
+                                                 setWithArray:[defaults
+                                                                  stringArrayForKey:@"hiddenRuleIdentities"]
+                                                                  ?: @[]];
+                                             [hidden unionSet:removed];
+                                             [defaults setObject:hidden.allObjects
+                                                          forKey:@"hiddenRuleIdentities"];
+                                         }
+                                         if (!activity) {
+                                             NSRemoveAutomaticallyAllowedNotifications();
+                                         }
+                                         self.message = [NSString stringWithFormat:@"%@ cleared.", name];
+                                     } else {
+                                         [self showError:error
+                                               operation:[@"Clear " stringByAppendingString:name]];
+                                     }
+                                     [self reloadMonitor];
+                                 }]];
+    [self presentViewController:alert animated:YES completion:nil];
+    [self refreshTableKeepingPosition];
+}
 - (void)chooseActionForIdentity:(NSString *)identity defaultKey:(NSString *)key {
     [self chooseActionForIdentity:identity defaultKey:key connection:nil];
 }
@@ -328,34 +410,10 @@
     }
     NSRuleActionController *alert = [NSRuleActionController controllerWithTitle:title message:explanation];
     if (connection) {
-        NSMutableArray *details =
-            [NSConnectionDetailRows(connection[@"destination"], connection[@"direction"]) mutableCopy];
-        if (connection[@"connections"]) {
-            [details addObject:@[ @"Connections", [connection[@"connections"] stringValue] ]];
-        }
-        NSString *outcome = @{@"allow" : @"Allowed", @"block" : @"Blocked"}[connection[@"action"] ?: @""];
-        if (outcome) {
-            [details addObject:@[ @"Result", outcome ]];
-        }
-        if (connection[@"bytesIn"] || connection[@"bytesOut"]) {
-            [details addObject:@[
-                @"Received", [NSByteCountFormatter stringFromByteCount:[connection[@"bytesIn"] longLongValue]
-                                                            countStyle:NSByteCountFormatterCountStyleFile]
-            ]];
-            [details addObject:@[
-                @"Sent", [NSByteCountFormatter stringFromByteCount:[connection[@"bytesOut"] longLongValue]
-                                                        countStyle:NSByteCountFormatterCountStyleFile]
-            ]];
-        }
-        if (connection[@"time"]) {
-            [details addObject:@[
-                @"Last activity", [NSDateFormatter localizedStringFromDate:connection[@"time"]
-                                                                 dateStyle:NSDateFormatterShortStyle
-                                                                 timeStyle:NSDateFormatterShortStyle]
-            ]];
-        }
-        alert.detailRows = details;
+        alert.detailRows = NSActivityDetailRows(connection);
+        alert.clipboardText = NSActivityClipboardLine(connection);
     }
+    alert.centersTitle = !key;
     alert.opensExpanded = YES;
     alert.selectedRule = key ? self.policy.document[key] : self.policy.document[@"rules"][identity ?: @""];
     for (NSString *action in actions) {
@@ -476,16 +534,7 @@
             ^BOOL(NSMutableDictionary *document, NSError **mutationError) {
                 NSMutableDictionary *rules =
                     [document[@"globalRules"] mutableCopy] ?: [NSMutableDictionary new];
-                if ((original && !rules[original]) || (![original isEqual:key] && rules[key])) {
-                    if (mutationError) {
-                        *mutationError = [NSError
-                            errorWithDomain:@"NetShield2.Policy"
-                                       code:2
-                                   userInfo:@{
-                                       NSLocalizedDescriptionKey : @"The original rule was removed or an "
-                                                                   @"identical rule already exists."
-                                   }];
-                    }
+                if (!NSValidateGlobalRuleChange(rules, key, action, original, mutationError)) {
                     return NO;
                 }
                 if (original) {

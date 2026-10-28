@@ -6,8 +6,8 @@
 #import "NSRuleChoices.h"
 #import <CoreFoundation/CoreFoundation.h>
 
-// Directional allows do not decide traffic in the other or unknown direction.
-static NSString *NSGlobalActionForDirection(NSString *action, NSFlowDirection direction) {
+// Preserve app-rule semantics, including the opposite-direction allowance of directional blocks.
+static NSString *NSAppActionForDirection(NSString *action, NSFlowDirection direction) {
     if ([action isEqual:@"allow-inbound"]) {
         return direction == NSFlowDirectionInbound ? @"allow" : nil;
     }
@@ -15,6 +15,27 @@ static NSString *NSGlobalActionForDirection(NSString *action, NSFlowDirection di
         return direction == NSFlowDirectionOutbound ? @"allow" : nil;
     }
     return action;
+}
+
+// Globals cover only their selected direction; app rules retain their established semantics.
+static NSString *NSGlobalActionForDirection(NSString *action, NSFlowDirection direction) {
+    if ([action hasSuffix:@"-inbound"] || [action hasSuffix:@"-outbound"]) {
+        BOOL matches = [action hasSuffix:@"-inbound"] ? direction == NSFlowDirectionInbound
+                                                      : direction == NSFlowDirectionOutbound;
+        return matches ? (NSGlobalActionIsAllow(action) ? @"allow" : @"block") : nil;
+    }
+    return action;
+}
+static NSDictionary *NSGlobalsForDirection(NSDictionary *rules, NSFlowDirection direction) {
+    NSMutableDictionary *applicable = [NSMutableDictionary new];
+    for (NSString *key in rules) {
+        NSString *action = NSGlobalActionForDirection(rules[key], direction);
+        if (action) {
+            applicable[key] = action;
+        }
+    }
+    // Resolve coverage before expansion can merge actions from overlapping legacy groups.
+    return NSExpandedGlobalRules(applicable);
 }
 
 static BOOL NSCustomRuleApplies(NSDictionary *rule, NSString *identity, NSDictionary *destination) {
@@ -42,7 +63,9 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
     NSString *domain = NSGlobalHostKey(destination[@"domain"]);
     NSArray *hosts = rule[@"hosts"];
     BOOL hostMatches = !hosts.count;
-    for (NSString *host in hosts) {
+    for (NSString *savedHost in hosts) {
+        NSString *host =
+            NSGlobalHostKey([savedHost substringFromIndex:[savedHost rangeOfString:@":"].location + 1]);
         if ([host isEqual:address] || [host isEqual:domain]) {
             hostMatches = YES;
             break;
@@ -62,6 +85,7 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
 
 @interface NSPolicy ()
 @property(nonatomic, copy) NSArray<NSDictionary *> *customGlobalRules;
+@property(nonatomic, copy) NSArray<NSDictionary *> *directionalGlobalRules;
 @end
 
 @implementation NSPolicy
@@ -121,7 +145,8 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
                 if (!NSValidGlobalRuleKey(key) ||
                     (memberCount += MAX((NSUInteger)1, NSGlobalRuleMembers(key).count)) > NSMaximumRules ||
                     ![globalRules[key] isKindOfClass:NSString.class] ||
-                    ![globalActions containsObject:globalRules[key]]) {
+                    ![globalActions containsObject:globalRules[key]] ||
+                    !NSGlobalCoverageAgrees(key, globalRules[key])) {
                     valid = NO;
                     break;
                 }
@@ -201,12 +226,8 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
         return nil;
     }
     NSMutableDictionary *canonicalDocument = [d mutableCopy];
-    NSMutableDictionary *canonicalRules = [NSMutableDictionary new];
-    for (NSString *key in globalRules) {
-        NSString *canonical = [key hasPrefix:@"ip:"] ? NSGlobalHostKey([key substringFromIndex:3]) : key;
-        canonicalRules[canonical] = NSMergeGlobalActions(canonicalRules[canonical], globalRules[key]);
-    }
-    canonicalDocument[@"globalRules"] = canonicalRules;
+    // Preserve saved keys: canonical aliases can carry distinct direction coverage.
+    canonicalDocument[@"globalRules"] = globalRules ?: @{};
     NSMutableDictionary *canonicalAddresses = [NSMutableDictionary new];
     for (NSString *key in addresses) {
         NSMutableOrderedSet *values = [NSMutableOrderedSet new];
@@ -244,6 +265,12 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
                                                                     error:error];
     policy->_expandedGlobalRules = [NSExpandedGlobalRules(policy->_document[@"globalRules"]) copy];
     policy->_globalRuleConditions = [NSGlobalRuleConditions(policy->_document[@"globalRules"]) copy];
+    NSMutableArray *directionalRules = [NSMutableArray new];
+    for (NSFlowDirection direction = NSFlowDirectionUnknown; direction <= NSFlowDirectionOutbound;
+         direction++) {
+        [directionalRules addObject:NSGlobalsForDirection(policy->_document[@"globalRules"], direction)];
+    }
+    policy.directionalGlobalRules = directionalRules;
     NSMutableArray *customRules = [NSMutableArray new];
     for (NSString *key in policy->_document[@"globalRules"]) {
         NSArray *parts = NSCustomGlobalRuleComponents(key);
@@ -264,7 +291,7 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
     return [self.document[@"allowAppleSystemProcesses"] boolValue] && NSIsAppleSystemIdentity(identity);
 }
 - (NSString *)globalActionForDestination:(NSDictionary *)destination direction:(NSFlowDirection)direction {
-    NSDictionary *rules = self.expandedGlobalRules;
+    NSDictionary *rules = self.directionalGlobalRules[direction];
     NSString *addressKey = NSGlobalHostKey(destination[@"address"]);
     NSString *action = NSGlobalActionForDirection(addressKey ? rules[addressKey] : nil, direction);
     if (action) {
@@ -308,7 +335,7 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
 - (BOOL)requiresPermissionForIdentity:(NSString *)identity
                             direction:(NSFlowDirection)direction
                           destination:(NSDictionary *)destination {
-    NSString *action = NSGlobalActionForDirection(self.document[@"rules"][identity ?: @""], direction);
+    NSString *action = NSAppActionForDirection(self.document[@"rules"][identity ?: @""], direction);
     return ![self globalActionForIdentity:identity direction:direction destination:destination] &&
            ![self automaticallyAllowsIdentity:identity] && identity.length > 0 && !action &&
            [self.document[@"default"] isEqual:@"ask"];
@@ -348,8 +375,9 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
 - (BOOL)needsSocketDestination:(NSDictionary *)destination
                       identity:(NSString *)identity
                      direction:(NSFlowDirection)direction {
-    for (NSString *key in self.expandedGlobalRules) {
-        NSString *action = NSGlobalActionForDirection(self.expandedGlobalRules[key], direction);
+    NSDictionary *applicable = self.directionalGlobalRules[direction];
+    for (NSString *key in applicable) {
+        NSString *action = applicable[key];
         if (action && NSMissingGlobalEndpoint(key, action, destination)) {
             return YES;
         }
@@ -412,7 +440,7 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
         return YES;
     }
     NSString *action = identity.length
-                           ? (NSGlobalActionForDirection(self.document[@"rules"][identity], direction)
+                           ? (NSAppActionForDirection(self.document[@"rules"][identity], direction)
                                   ?: self.document[@"default"])
                            : self.document[@"unattributed"];
     action = globalAction ?: action;

@@ -868,14 +868,15 @@ static void TestGlobalRules(void) {
             NSPolicy *policy = [NSPolicy policyWithDocument:document error:NULL];
             CHECK(policy != nil);
             for (NSString *identity in @[ @"app", @"new.app", @"", @"com.apple.test" ]) {
-                CHECK(![policy requiresPermissionForIdentity:identity destination:peer]);
+                BOOL directional = [action hasPrefix:@"block-"];
+                CHECK([policy requiresPermissionForIdentity:identity destination:peer] ==
+                      (directional && [identity isEqual:@"new.app"]));
                 for (NSNumber *direction in
                      @[ @(NSFlowDirectionInbound), @(NSFlowDirectionOutbound), @(NSFlowDirectionUnknown) ]) {
-                    BOOL expected = [action isEqual:@"allow"] ||
-                                    ([action isEqual:@"block-inbound"] &&
-                                     direction.integerValue == NSFlowDirectionOutbound) ||
-                                    ([action isEqual:@"block-outbound"] &&
-                                     direction.integerValue == NSFlowDirectionInbound);
+                    BOOL covered = !directional || ([action isEqual:@"block-inbound"]
+                                                        ? direction.integerValue == NSFlowDirectionInbound
+                                                        : direction.integerValue == NSFlowDirectionOutbound);
+                    BOOL expected = covered ? [action isEqual:@"allow"] : ![identity isEqual:@"new.app"];
                     CHECK([policy allowsIdentity:identity
                                        direction:direction.integerValue
                                      destination:peer] == expected);
@@ -1025,9 +1026,9 @@ static void TestGlobalRules(void) {
     document[@"globalRules"] = @{@"port:443" : @"block-inbound"};
     policy = [NSPolicy policyWithDocument:document error:NULL];
     [queue resolveWithPolicy:policy now:1];
-    CHECK(allowed == 1 && blocked == 1 && other == 0 && queue.waitingCount == 1);
+    CHECK(allowed == 0 && blocked == 1 && other == 0 && queue.waitingCount == 2);
     [queue resolveWithPolicy:policy now:2];
-    CHECK(allowed == 1 && blocked == 1 && other == 0);
+    CHECK(allowed == 0 && blocked == 1 && other == 0);
     document[@"rules"] = @{@"new.app" : @"block"};
     [queue resolveWithPolicy:[NSPolicy policyWithDocument:document error:NULL] now:3];
     CHECK(other == 1 && queue.requests.count == 0);
@@ -1398,6 +1399,26 @@ static void TestDirectionalNotifications(void) {
     [notifications updateRequests:@[ incoming ] policy:NSReadPolicy(NULL) retryRevision:nil];
     CHECK([center.removed containsObject:@"mixed-token"]);
     [notifications stop];
+    for (NSString *action in @[ @"block-inbound", @"block-outbound" ]) {
+        NSMutableDictionary *document = [[NSPolicy defaultDocument] mutableCopy];
+        document[@"globalRules"] = @{NSCustomGlobalRuleKey(@"mixed.app", @"", @"", @"any") : action};
+        CHECK(NSWriteDocument(document, NSPolicyFile, NULL));
+        FakeNotificationCenter *globalCenter = [FakeNotificationCenter new];
+        NSPermissionNotifications *globalNotifications =
+            [[NSPermissionNotifications alloc] initWithCenter:globalCenter];
+        [globalNotifications updateRequests:@[ incoming, outgoing ]
+                                     policy:NSReadPolicy(NULL)
+                              retryRevision:nil];
+        CHECK(globalCenter.requests.count == 1);
+        CHECK(![globalCenter.removed containsObject:@"mixed-token"]);
+        document[@"globalRules"] = @{NSCustomGlobalRuleKey(@"mixed.app", @"", @"", @"any") : @"block"};
+        CHECK(NSWriteDocument(document, NSPolicyFile, NULL));
+        [globalNotifications updateRequests:@[ incoming, outgoing ]
+                                     policy:NSReadPolicy(NULL)
+                              retryRevision:nil];
+        CHECK([globalCenter.removed containsObject:@"mixed-token"]);
+        [globalNotifications stop];
+    }
 }
 
 @interface FakeFilterRemovalManager : NSObject <NSFilterRemovalManager>

@@ -67,6 +67,8 @@
     }
 }
 - (NSDictionary *)snapshotWithRunning:(BOOL)running policyError:(NSError *)error {
+    // All callers hold @synchronized(self). Prune the provider-owned buffer before publishing.
+    self.events = [NSActivityAfterClear(self.events) mutableCopy];
     return @{
         @"engine" : @(NSEngineVersion),
         @"schema" : @(NSSchemaVersion),
@@ -195,7 +197,7 @@
                 }
             }];
         self.stopped = NO;
-        if (!NSWriteDocument([self snapshotWithRunning:YES policyError:nil], NSMonitorFile, &error)) {
+        if (!NSWriteMonitorSnapshot([self snapshotWithRunning:YES policyError:nil], &error)) {
             self.stopped = YES;
             [self.notifications stop];
             [self.resolver stop];
@@ -338,7 +340,7 @@
             self.timer = nil;
         }
         if (self.providerLock) {
-            NSWriteDocument([self snapshotWithRunning:NO policyError:nil], NSMonitorFile, NULL);
+            NSWriteMonitorSnapshot([self snapshotWithRunning:NO policyError:nil], NULL);
             [self.providerLock unlock];
             self.providerLock = nil;
         }

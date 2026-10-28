@@ -2,6 +2,13 @@
 #import "../Shared/NSActivity.h"
 
 @implementation NSDashboard (Table)
+- (void)searchBar:(UISearchBar *)searchBar textDidChange:(NSString *)searchText {
+    self.activityQuery = searchText ?: @"";
+    [self refreshTableKeepingPosition];
+}
+- (void)searchBarSearchButtonClicked:(UISearchBar *)searchBar {
+    [searchBar resignFirstResponder];
+}
 - (BOOL)showsSystemRules {
     return self.policy && ![self.policy.document[@"allowAppleSystemProcesses"] boolValue];
 }
@@ -19,16 +26,16 @@
         [self identitiesForSection:path.section].count) {
         return [self identitiesForSection:path.section][path.row];
     }
-    if (path.section == NSDashboardSectionActivity && self.activityGroups.count) {
-        return self.activityGroups[path.row][@"groupKey"];
+    if (path.section == NSDashboardSectionActivity && self.filteredActivityGroups.count) {
+        return self.filteredActivityGroups[path.row][@"groupKey"];
     }
     return @(path.row);
 }
 - (id)heightKey:(NSIndexPath *)path {
     return @[
         @(path.section), [self rowKey:path],
-        path.section == NSDashboardSectionActivity && self.activityGroups.count
-            ? self.activityGroups[path.row]
+        path.section == NSDashboardSectionActivity && self.filteredActivityGroups.count
+            ? self.filteredActivityGroups[path.row]
             : @{},
         @(self.tableView.bounds.size.width), self.traitCollection.preferredContentSizeCategory
     ];
@@ -51,13 +58,26 @@
         return;
     }
     NSArray *signature = @[
-        self.policy.document ?: @{}, self.monitor[@"requests"] ?: @[], self.monitor[@"events"] ?: @[],
-        self.monitor[@"policyError"] ?: @"", self.monitor[@"dnsIssue"] ?: @"",
-        self.monitor[@"notificationDeliveryIssue"] ?: @"", @([self hasFreshMonitor]), @(self.loaded),
-        @(self.busy), @(NEFilterManager.sharedManager.enabled),
-        @(NEFilterManager.sharedManager.providerConfiguration.filterSockets), self.message ?: @"",
-        self.notificationStatus ?: @"", self.policyReadError ?: @"", self.monitor[@"overflowCount"] ?: @0,
-        self.monitor[@"evictedRequestCount"] ?: @0, self.identities ?: @[], self.systemIdentities ?: @[]
+        self.policy.document ?: @{},
+        self.monitor[@"requests"] ?: @[],
+        self.monitor[@"events"] ?: @[],
+        self.monitor[@"policyError"] ?: @"",
+        self.monitor[@"dnsIssue"] ?: @"",
+        self.monitor[@"notificationDeliveryIssue"] ?: @"",
+        @([self hasFreshMonitor]),
+        @(self.loaded),
+        @(self.busy),
+        @(NEFilterManager.sharedManager.enabled),
+        @(NEFilterManager.sharedManager.providerConfiguration.filterSockets),
+        self.message ?: @"",
+        self.notificationStatus ?: @"",
+        self.policyReadError ?: @"",
+        self.monitor[@"overflowCount"] ?: @0,
+        self.monitor[@"evictedRequestCount"] ?: @0,
+        self.identities ?: @[],
+        self.systemIdentities ?: @[],
+        self.activityQuery ?: @"",
+        @(self.clearingSection)
     ];
     if ([signature isEqual:self.displaySignature]) {
         return;
@@ -76,6 +96,20 @@
         }
     }
     self.activityGroups = NSGroupedActivity(self.monitor[@"events"] ?: @[]);
+    self.filteredActivityGroups = [self.activityGroups
+        filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *connection,
+                                                                          NSDictionary *bindings) {
+            return NSActivityMatchesQuery(connection, self.activityQuery);
+        }]];
+    UITextField *searchField = self.activitySearchBar.searchTextField;
+    BOOL searching = searchField.isFirstResponder;
+    UITextRange *selection = searchField.selectedTextRange;
+    NSInteger selectionStart = selection ? [searchField offsetFromPosition:searchField.beginningOfDocument
+                                                                toPosition:selection.start]
+                                         : 0;
+    NSInteger selectionEnd = selection ? [searchField offsetFromPosition:searchField.beginningOfDocument
+                                                              toPosition:selection.end]
+                                       : 0;
     NSMutableArray *rows = [NSMutableArray new];
     for (NSInteger section = 0; section < [self numberOfSectionsInTableView:self.tableView]; section++) {
         NSMutableArray *keys = [NSMutableArray new];
@@ -88,6 +122,16 @@
     [UIView performWithoutAnimation:^{
         [self.tableView reloadData];
         [self.tableView layoutIfNeeded];
+        if (searching) {
+            [searchField becomeFirstResponder];
+            UITextPosition *start = [searchField positionFromPosition:searchField.beginningOfDocument
+                                                               offset:selectionStart];
+            UITextPosition *end = [searchField positionFromPosition:searchField.beginningOfDocument
+                                                             offset:selectionEnd];
+            if (start && end) {
+                searchField.selectedTextRange = [searchField textRangeFromPosition:start toPosition:end];
+            }
+        }
         if (!atTop) {
             for (NSArray *anchor in anchors) {
                 NSInteger section = [anchor[0] integerValue];
@@ -141,7 +185,7 @@
     if (section == NSDashboardSectionSupport) {
         return 3;
     }
-    return MAX((NSUInteger)1, self.activityGroups.count);
+    return MAX((NSUInteger)1, self.filteredActivityGroups.count);
 }
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
     if (section == NSDashboardSectionSystemRules && ![self showsSystemRules]) {
@@ -177,6 +221,95 @@
     return nil;
 }
 - (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section {
+    BOOL scoped = section == NSDashboardSectionActivity || section == NSDashboardSectionRules ||
+                  section == NSDashboardSectionAddGlobalRule ||
+                  (section == NSDashboardSectionSystemRules && [self showsSystemRules]);
+    if (scoped) {
+        NSUInteger count = section == NSDashboardSectionActivity ? [self.monitor[@"events"] count]
+                           : section == NSDashboardSectionAddGlobalRule
+                               ? self.globalRuleKeys.count
+                               : [self identitiesForSection:section].count;
+        BOOL canClear = count > 0 && !self.busy && !self.clearingSection &&
+                        (section == NSDashboardSectionActivity || self.policy != nil);
+        if (section == NSDashboardSectionActivity && self.activityHeader) {
+            self.activityClearButton.enabled = canClear;
+            return self.activityHeader;
+        }
+        UIView *header = [UIView new];
+        header.directionalLayoutMargins = NSDirectionalEdgeInsetsMake(12, 20, 8, 20);
+        UILabel *title = [UILabel new];
+        title.translatesAutoresizingMaskIntoConstraints = NO;
+        title.text = [self tableView:tableView titleForHeaderInSection:section];
+        title.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+        title.adjustsFontForContentSizeCategory = YES;
+        title.textColor = UIColor.secondaryLabelColor;
+        title.numberOfLines = 0;
+        title.accessibilityTraits |= UIAccessibilityTraitHeader;
+        UIButton *clear = [UIButton buttonWithType:UIButtonTypeSystem];
+        clear.translatesAutoresizingMaskIntoConstraints = NO;
+        [clear setTitle:@"Clear" forState:UIControlStateNormal];
+        [clear setTitleColor:UIColor.lightGrayColor forState:UIControlStateNormal];
+        [clear setTitleColor:UIColor.grayColor forState:UIControlStateDisabled];
+        clear.backgroundColor = UIColor.darkGrayColor;
+        clear.layer.cornerRadius = 8;
+        clear.titleLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+        clear.titleLabel.adjustsFontForContentSizeCategory = YES;
+        UIButtonConfiguration *configuration = [UIButtonConfiguration plainButtonConfiguration];
+        configuration.contentInsets = NSDirectionalEdgeInsetsMake(8, 12, 8, 12);
+        configuration.baseForegroundColor = UIColor.lightGrayColor;
+        configuration.titleTextAttributesTransformer = ^NSDictionary *(NSDictionary *incoming) {
+            NSMutableDictionary *attributes = [incoming mutableCopy];
+            attributes[NSFontAttributeName] = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+            return attributes;
+        };
+        clear.configuration = configuration;
+        clear.tag = section;
+        clear.accessibilityLabel = [@"Clear " stringByAppendingString:title.text];
+        clear.enabled = canClear;
+        [clear addTarget:self
+                      action:@selector(clearSectionTapped:)
+            forControlEvents:UIControlEventTouchUpInside];
+        [header addSubview:title];
+        [header addSubview:clear];
+        UILayoutGuide *margins = header.layoutMarginsGuide;
+        [NSLayoutConstraint activateConstraints:@[
+            [title.leadingAnchor constraintEqualToAnchor:margins.leadingAnchor],
+            [title.trailingAnchor constraintLessThanOrEqualToAnchor:clear.leadingAnchor constant:-12],
+            [title.centerYAnchor constraintEqualToAnchor:clear.centerYAnchor],
+            [title.topAnchor constraintGreaterThanOrEqualToAnchor:margins.topAnchor],
+            [title.bottomAnchor constraintLessThanOrEqualToAnchor:clear.bottomAnchor],
+            [clear.trailingAnchor constraintEqualToAnchor:margins.trailingAnchor],
+            [clear.topAnchor constraintEqualToAnchor:margins.topAnchor],
+            [clear.heightAnchor constraintGreaterThanOrEqualToConstant:44],
+            [clear.widthAnchor constraintGreaterThanOrEqualToConstant:64]
+        ]];
+        if (section == NSDashboardSectionActivity) {
+            self.activityHeader = header;
+            self.activityClearButton = clear;
+            if (!self.activitySearchBar) {
+                self.activitySearchBar = [UISearchBar new];
+                self.activitySearchBar.searchBarStyle = UISearchBarStyleMinimal;
+                self.activitySearchBar.placeholder = @"Search connection details";
+                self.activitySearchBar.accessibilityLabel = @"Search Recent Activity";
+                self.activitySearchBar.autocapitalizationType = UITextAutocapitalizationTypeNone;
+                self.activitySearchBar.autocorrectionType = UITextAutocorrectionTypeNo;
+                self.activitySearchBar.delegate = self;
+                self.activitySearchBar.text = self.activityQuery;
+            }
+            UISearchBar *search = self.activitySearchBar;
+            search.translatesAutoresizingMaskIntoConstraints = NO;
+            [header addSubview:search];
+            [NSLayoutConstraint activateConstraints:@[
+                [search.topAnchor constraintEqualToAnchor:clear.bottomAnchor constant:4],
+                [search.leadingAnchor constraintEqualToAnchor:margins.leadingAnchor],
+                [search.trailingAnchor constraintEqualToAnchor:margins.trailingAnchor],
+                [search.bottomAnchor constraintEqualToAnchor:margins.bottomAnchor]
+            ]];
+        } else {
+            [clear.bottomAnchor constraintEqualToAnchor:margins.bottomAnchor].active = YES;
+        }
+        return header;
+    }
     if (section != NSDashboardSectionSupport) {
         return nil;
     }
@@ -405,11 +538,11 @@
             cell.detailTextLabel.text = self.monitor[@"notificationDeliveryIssue"];
         }
     } else if (path.section == NSDashboardSectionActivity) {
-        NSArray *events = self.activityGroups;
+        NSArray *events = self.filteredActivityGroups;
         cell.accessoryType = UITableViewCellAccessoryNone;
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
         if (!events.count) {
-            cell.textLabel.text = @"No activity yet";
+            cell.textLabel.text = self.activityGroups.count ? @"No matching activity" : @"No activity yet";
         } else {
             NSDictionary *event = events[path.row];
             BOOL allowed = [event[@"action"] isEqual:@"allow"];
@@ -475,8 +608,8 @@
     } else if ((path.section == NSDashboardSectionRules || path.section == NSDashboardSectionSystemRules) &&
                [self identitiesForSection:path.section].count) {
         [self chooseActionForIdentity:[self identitiesForSection:path.section][path.row] defaultKey:nil];
-    } else if (path.section == NSDashboardSectionActivity && self.activityGroups.count) {
-        NSDictionary *connection = self.activityGroups[path.row];
+    } else if (path.section == NSDashboardSectionActivity && self.filteredActivityGroups.count) {
+        NSDictionary *connection = self.filteredActivityGroups[path.row];
         [self chooseActionForIdentity:connection[@"identity"] defaultKey:nil connection:connection];
     } else if (path.section == NSDashboardSectionNotifications) {
         if (path.row == 0) {
