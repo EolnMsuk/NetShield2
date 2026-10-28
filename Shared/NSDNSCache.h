@@ -16,7 +16,7 @@ static inline BOOL NSApplyDNSResults(NSMutableDictionary *document, NSDictionary
     NSMutableDictionary *expirations =
         [document[@"globalDomainExpirations"] mutableCopy] ?: [NSMutableDictionary new];
     for (NSString *key in addresses.allKeys) {
-        if (!NSDNSExpiryIsLive(expirations[key], now) || !rules[key] || [rules[key] isEqual:@"allow"]) {
+        if (!NSDNSExpiryIsLive(expirations[key], now) || !rules[key] || NSGlobalActionIsAllow(rules[key])) {
             [addresses removeObjectForKey:key];
             [expirations removeObjectForKey:key];
         }

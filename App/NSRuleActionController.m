@@ -56,7 +56,13 @@
     return 2;
 }
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    return section == 0 ? 1 : self.choices.count;
+    return section == 0 ? 1 + self.detailRows.count : self.choices.count;
+}
+- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
+    return section == 0 && self.detailRows.count ? self.message : nil;
+}
+- (CGFloat)tableView:(UITableView *)tableView heightForFooterInSection:(NSInteger)section {
+    return section == 0 && self.detailRows.count ? UITableViewAutomaticDimension : 12;
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)path {
     UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle
@@ -68,11 +74,19 @@
     cell.textLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
     cell.detailTextLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
     if (path.section == 0) {
-        cell.textLabel.text = self.title;
-        cell.textLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
-        cell.detailTextLabel.text = self.message;
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
-        cell.accessibilityTraits |= UIAccessibilityTraitHeader;
+        if (path.row == 0) {
+            cell.textLabel.text = self.title;
+            cell.textLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
+            cell.detailTextLabel.text = self.detailRows.count ? nil : self.message;
+            cell.accessibilityTraits |= UIAccessibilityTraitHeader;
+        } else {
+            NSArray *detail = self.detailRows[path.row - 1];
+            cell.textLabel.text = detail[0];
+            cell.textLabel.textColor = UIColor.secondaryLabelColor;
+            cell.detailTextLabel.text = detail[1];
+            cell.detailTextLabel.textColor = UIColor.labelColor;
+        }
     } else {
         NSDictionary *choice = self.choices[path.row];
         UIColor *color = NSRuleColor(choice[@"rule"]);

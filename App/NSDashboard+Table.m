@@ -156,8 +156,7 @@
     if (section == NSDashboardSectionSystemRules) {
         return [self showsSystemRules] ? @"Tap a system identity to change its rule." : nil;
     }
-    if ((section == NSDashboardSectionGlobalRules && self.globalRuleKeys.count) ||
-        (section == NSDashboardSectionAddGlobalRule && !self.globalRuleKeys.count)) {
+    if (section == NSDashboardSectionAddGlobalRule) {
         return @"Overrides app rules and the iOS system traffic allowance.";
     }
     if (section == NSDashboardSectionFirewall) {
@@ -211,8 +210,7 @@
                : UITableViewAutomaticDimension;
 }
 - (CGFloat)tableView:(UITableView *)tableView heightForFooterInSection:(NSInteger)section {
-    if ((section == NSDashboardSectionAddGlobalRule && self.globalRuleKeys.count) ||
-        (section == NSDashboardSectionGlobalRules && !self.globalRuleKeys.count)) {
+    if (section == NSDashboardSectionGlobalRules && !self.globalRuleKeys.count) {
         return CGFLOAT_MIN;
     }
     // The links header already supplies the inter-section gap and keeps the
@@ -359,7 +357,7 @@
                                         NSDestinationSummary(request[@"destination"])];
         }
     } else if (path.section == NSDashboardSectionAddGlobalRule) {
-        cell.textLabel.text = @"Add a Global Rule";
+        cell.textLabel.text = @"Add a Custom Rule";
         cell.textLabel.textColor = UIColor.systemGreenColor;
         cell.detailTextLabel.text = @"Choose apps, destinations, ports and protocols";
     } else if (path.section == NSDashboardSectionGlobalRules) {
@@ -421,10 +419,8 @@
             if (color) {
                 cell.backgroundColor = [color colorWithAlphaComponent:0.14];
             }
-            if ([event[@"identity"] length]) {
-                cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-                cell.selectionStyle = UITableViewCellSelectionStyleDefault;
-            }
+            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+            cell.selectionStyle = UITableViewCellSelectionStyleDefault;
             cell.textLabel.text =
                 [NSString stringWithFormat:@"%@ / %@", action, NSIdentityDisplayName(event[@"identity"])];
             NSString *time = [NSDateFormatter localizedStringFromDate:event[@"time"]
@@ -480,10 +476,8 @@
                [self identitiesForSection:path.section].count) {
         [self chooseActionForIdentity:[self identitiesForSection:path.section][path.row] defaultKey:nil];
     } else if (path.section == NSDashboardSectionActivity && self.activityGroups.count) {
-        NSString *identity = self.activityGroups[path.row][@"identity"];
-        if (identity.length) {
-            [self chooseActionForIdentity:identity defaultKey:nil];
-        }
+        NSDictionary *connection = self.activityGroups[path.row];
+        [self chooseActionForIdentity:connection[@"identity"] defaultKey:nil connection:connection];
     } else if (path.section == NSDashboardSectionNotifications) {
         if (path.row == 0) {
             [self requestNotifications];

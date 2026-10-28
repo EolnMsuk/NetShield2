@@ -5,6 +5,17 @@
 #import "NSDNSCache.h"
 #import <CoreFoundation/CoreFoundation.h>
 
+// Directional allows do not decide traffic in the other or unknown direction.
+static NSString *NSGlobalActionForDirection(NSString *action, NSFlowDirection direction) {
+    if ([action isEqual:@"allow-inbound"]) {
+        return direction == NSFlowDirectionInbound ? @"allow" : nil;
+    }
+    if ([action isEqual:@"allow-outbound"]) {
+        return direction == NSFlowDirectionOutbound ? @"allow" : nil;
+    }
+    return action;
+}
+
 static BOOL NSCustomRuleApplies(NSDictionary *rule, NSString *identity, NSDictionary *destination) {
     if ([rule[@"identities"] count] && ![rule[@"identities"] containsObject:identity ?: @""]) {
         return NO;
@@ -19,7 +30,7 @@ static BOOL NSMissingGlobalEndpoint(NSString *key, NSString *action, NSDictionar
     BOOL needsAddress =
         [key hasPrefix:@"ip:"] ||
         ([key hasPrefix:@"domain:"] && ![NSGlobalHostKey(destination[@"domain"]) hasPrefix:@"domain:"] &&
-         ![action isEqual:@"allow"]);
+         !NSGlobalActionIsAllow(action));
     return (needsAddress && ![destination[@"address"] length]) ||
            ([key hasPrefix:@"port:"] && !destination[@"port"]) ||
            ([key hasPrefix:@"localPort:"] && !destination[@"localPort"]);
@@ -37,7 +48,7 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
         }
         // DNS address fallback is safe for blocking only; never grant an
         // allow rule to another hostname sharing the same IP address.
-        if (![rule[@"action"] isEqual:@"allow"] && ![domain hasPrefix:@"domain:"] && address &&
+        if (!NSGlobalActionIsAllow(rule[@"action"]) && ![domain hasPrefix:@"domain:"] && address &&
             [host hasPrefix:@"domain:"] &&
             NSDNSExpiryIsLive(document[@"globalDomainExpirations"][host], NSDate.date) &&
             [document[@"globalDomainAddresses"][host] containsObject:address]) {
@@ -70,6 +81,8 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
     BOOL valid = [document isKindOfClass:NSDictionary.class];
     NSDictionary *d = valid ? document : @{};
     NSSet *actions = [NSSet setWithArray:@[ @"allow", @"block", @"block-inbound", @"block-outbound" ]];
+    NSMutableSet *globalActions = [actions mutableCopy];
+    [globalActions addObjectsFromArray:@[ @"allow-inbound", @"allow-outbound" ]];
     NSSet *defaults = [NSSet setWithArray:@[ @"allow", @"block", @"ask" ]];
     NSSet *unknownActions = [NSSet setWithArray:@[ @"allow", @"block" ]];
     valid = valid && [d[@"schema"] isKindOfClass:NSNumber.class] &&
@@ -108,7 +121,7 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
                 if (!NSValidGlobalRuleKey(key) ||
                     (memberCount += MAX((NSUInteger)1, NSGlobalRuleMembers(key).count)) > NSMaximumRules ||
                     ![globalRules[key] isKindOfClass:NSString.class] ||
-                    ![actions containsObject:globalRules[key]]) {
+                    ![globalActions containsObject:globalRules[key]]) {
                     valid = NO;
                     break;
                 }
@@ -250,16 +263,16 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
 - (BOOL)automaticallyAllowsIdentity:(NSString *)identity {
     return [self.document[@"allowAppleSystemProcesses"] boolValue] && NSIsAppleSystemIdentity(identity);
 }
-- (NSString *)globalActionForDestination:(NSDictionary *)destination {
+- (NSString *)globalActionForDestination:(NSDictionary *)destination direction:(NSFlowDirection)direction {
     NSDictionary *rules = self.expandedGlobalRules;
     NSString *addressKey = NSGlobalHostKey(destination[@"address"]);
-    NSString *action = addressKey ? rules[addressKey] : nil;
+    NSString *action = NSGlobalActionForDirection(addressKey ? rules[addressKey] : nil, direction);
     if (action) {
         return action;
     }
     NSString *domainKey = NSGlobalHostKey(destination[@"domain"]);
     for (NSString *host in NSGlobalDomainAliases(domainKey)) {
-        action = rules[[@"domain:" stringByAppendingString:host]];
+        action = NSGlobalActionForDirection(rules[[@"domain:" stringByAppendingString:host]], direction);
         if (action) {
             return action;
         }
@@ -280,23 +293,33 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
         return inbound && outbound ? @"block" : inbound ? @"block-inbound" : @"block-outbound";
     }
     NSString *portKey = NSGlobalPortKey([destination[@"port"] stringValue]);
-    action = portKey ? rules[portKey] : nil;
+    action = NSGlobalActionForDirection(portKey ? rules[portKey] : nil, direction);
     if (action) {
         return action;
     }
     NSString *localPortKey = NSGlobalLocalPortKey([destination[@"localPort"] stringValue]);
-    return localPortKey ? rules[localPortKey] : nil;
+    return NSGlobalActionForDirection(localPortKey ? rules[localPortKey] : nil, direction);
 }
 - (BOOL)requiresPermissionForIdentity:(NSString *)identity destination:(NSDictionary *)destination {
-    return ![self globalActionForIdentity:identity destination:destination] &&
+    return [self requiresPermissionForIdentity:identity
+                                     direction:NSFlowDirectionUnknown
+                                   destination:destination];
+}
+- (BOOL)requiresPermissionForIdentity:(NSString *)identity
+                            direction:(NSFlowDirection)direction
+                          destination:(NSDictionary *)destination {
+    return ![self globalActionForIdentity:identity direction:direction destination:destination] &&
            [self requiresPermissionForIdentity:identity];
 }
-- (NSString *)globalActionForIdentity:(NSString *)identity destination:(NSDictionary *)destination {
-    NSString *result = [self globalActionForDestination:destination];
+- (NSString *)globalActionForIdentity:(NSString *)identity
+                            direction:(NSFlowDirection)direction
+                          destination:(NSDictionary *)destination {
+    NSString *result = [self globalActionForDestination:destination direction:direction];
     NSString *remotePort = NSGlobalPortKey([destination[@"port"] stringValue]);
     NSString *localPort = NSGlobalLocalPortKey([destination[@"localPort"] stringValue]);
     for (NSDictionary *rule in self.customGlobalRules) {
-        if (!NSCustomRuleApplies(rule, identity, destination)) {
+        if (!NSGlobalActionForDirection(rule[@"action"], direction) ||
+            !NSCustomRuleApplies(rule, identity, destination)) {
             continue;
         }
         NSArray *ports = rule[@"ports"];
@@ -306,7 +329,10 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
         }
         BOOL hostMatches = NSCustomHostsMatch(rule, destination, self.document);
         if (hostMatches) {
-            result = NSMergeGlobalActions(result, rule[@"action"]);
+            NSString *action = NSGlobalActionForDirection(rule[@"action"], direction);
+            if (action) {
+                result = NSMergeGlobalActions(result, action);
+            }
         }
     }
     return result;
@@ -315,13 +341,20 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
     return [self needsSocketDestination:destination identity:nil];
 }
 - (BOOL)needsSocketDestination:(NSDictionary *)destination identity:(NSString *)identity {
+    return [self needsSocketDestination:destination identity:identity direction:NSFlowDirectionUnknown];
+}
+- (BOOL)needsSocketDestination:(NSDictionary *)destination
+                      identity:(NSString *)identity
+                     direction:(NSFlowDirection)direction {
     for (NSString *key in self.expandedGlobalRules) {
-        if (NSMissingGlobalEndpoint(key, self.expandedGlobalRules[key], destination)) {
+        NSString *action = NSGlobalActionForDirection(self.expandedGlobalRules[key], direction);
+        if (action && NSMissingGlobalEndpoint(key, action, destination)) {
             return YES;
         }
     }
     for (NSDictionary *rule in self.customGlobalRules) {
-        if (!NSCustomRuleApplies(rule, identity, destination)) {
+        if (!NSGlobalActionForDirection(rule[@"action"], direction) ||
+            !NSCustomRuleApplies(rule, identity, destination)) {
             continue;
         }
         NSArray *ports = rule[@"ports"];
@@ -361,7 +394,9 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
 - (BOOL)allowsIdentity:(NSString *)identity
              direction:(NSFlowDirection)direction
            destination:(NSDictionary *)destination {
-    NSString *globalAction = [self globalActionForIdentity:identity destination:destination];
+    NSString *globalAction = [self globalActionForIdentity:identity
+                                                 direction:direction
+                                               destination:destination];
     if (!globalAction && [self automaticallyAllowsIdentity:identity]) {
         return YES;
     }

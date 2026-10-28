@@ -37,7 +37,7 @@ typedef NS_ENUM(NSInteger, NSGlobalEditorSection) {
 }
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = self.originalKey ? @"Edit Global Rule" : @"Add a Global Rule";
+    self.title = self.originalKey ? @"Edit Custom Rule" : @"Add a Custom Rule";
     self.modalInPresentation = YES;
     self.navigationController.modalInPresentation = YES;
     self.navigationItem.leftBarButtonItem =
@@ -56,7 +56,7 @@ typedef NS_ENUM(NSInteger, NSGlobalEditorSection) {
     self.portsField = [self fieldWithPlaceholder:@"All ports" label:@"Port numbers"];
     self.protocol = @"any";
     self.ruleAction = self.originalAction ?: @"allow";
-    NSArray *parts = NSCustomGlobalRuleComponents(self.originalKey);
+    NSArray *parts = NSCustomGlobalRuleComponents(self.originalKey ?: self.initialKey);
     NSString *hosts = @"", *ports = @"";
     if (parts) {
         [self.selectedIdentities addObjectsFromArray:NSCustomGlobalRuleIdentities(parts)];
@@ -73,7 +73,9 @@ typedef NS_ENUM(NSInteger, NSGlobalEditorSection) {
     }
     self.hostsField.text = hosts.length ? NSGlobalRuleInputText(hosts) : @"";
     self.portsField.text = ports.length ? NSGlobalRuleInputText(ports) : @"";
-    self.localPort = ports.length && [NSGlobalRuleMembers(ports).firstObject hasPrefix:@"localPort:"];
+    self.localPort = ports.length ? [NSGlobalRuleMembers(ports).firstObject hasPrefix:@"localPort:"]
+                                  : self.initialKey && [@[ @"allow-inbound", @"block-inbound" ]
+                                                           containsObject:self.ruleAction];
 }
 - (void)cancel {
     [self dismissViewControllerAnimated:YES completion:nil];
@@ -122,11 +124,11 @@ typedef NS_ENUM(NSInteger, NSGlobalEditorSection) {
     return section == NSGlobalEditorPorts ? 2 : 1;
 }
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
-    return @[ @"Action", @"App", @"Domains / IP ranges", @"Port", @"Protocol" ][section];
+    return @[ @"Direction", @"App", @"Domains / IP ranges", @"Port", @"Protocol" ][section];
 }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     return @[
-        @"Every selected condition must match. Leave apps, destinations and ports unrestricted to apply the action to all traffic for the selected protocol. Saved in Global Rules, overriding app rules and the iOS system traffic allowance. If global rules overlap, blocking takes priority.",
+        @"Every selected condition must match. Leave apps, destinations and ports unrestricted to apply the action to all traffic for the selected protocol. Saved in Global Rules, overriding app rules and the iOS system traffic allowance. Directional Allow leaves the opposite direction to other rules. If global rules overlap, blocking takes priority.",
         @"Select one or more apps. Tap a checked app to remove it, or choose All apps to clear the selection.",
         @"Separate entries with commas, e.g. example.com, 192.168.1.10-192.168.1.20. Blank means all destinations. Bare and www domains are separate.",
         @"Choose remote or local, then enter port numbers separated by commas. Blank means all ports.",
@@ -153,10 +155,14 @@ typedef NS_ENUM(NSInteger, NSGlobalEditorSection) {
 }
 - (void)showActionChoices:(UIButton *)sender {
     [self.view endEditing:YES];
-    NSRuleActionController *picker = [NSRuleActionController controllerWithTitle:@"Action" message:nil];
+    NSRuleActionController *picker = [NSRuleActionController controllerWithTitle:@"Direction" message:nil];
     picker.selectedRule = self.ruleAction;
-    NSArray *values = @[ @"allow", @"block-inbound", @"block-outbound", @"block" ];
-    NSArray *titles = @[ @"Allow", @"Block Incoming", @"Block Outgoing", @"Block In & Out" ];
+    NSArray *values =
+        @[ @"allow", @"allow-outbound", @"allow-inbound", @"block-inbound", @"block-outbound", @"block" ];
+    NSArray *titles = @[
+        @"Allow", @"Allow Outgoing", @"Allow Incoming", @"Block Incoming", @"Block Outgoing",
+        @"Block In & Out"
+    ];
     __weak typeof(self) weakSelf = self;
     for (NSUInteger index = 0; index < values.count; index++) {
         NSString *value = values[index];
@@ -345,8 +351,14 @@ typedef NS_ENUM(NSInteger, NSGlobalEditorSection) {
                                                [weakSelf.tableView reloadData];
                                            }];
             } else {
-                NSArray *values = @[ @"allow", @"block-inbound", @"block-outbound", @"block" ];
-                NSArray *titles = @[ @"Allow", @"Block Incoming", @"Block Outgoing", @"Block In & Out" ];
+                NSArray *values = @[
+                    @"allow", @"allow-outbound", @"allow-inbound", @"block-inbound", @"block-outbound",
+                    @"block"
+                ];
+                NSArray *titles = @[
+                    @"Allow", @"Allow Outgoing", @"Allow Incoming", @"Block Incoming", @"Block Outgoing",
+                    @"Block In & Out"
+                ];
                 title = titles[[values indexOfObject:self.ruleAction]];
                 button.showsMenuAsPrimaryAction = NO;
                 [button addTarget:self

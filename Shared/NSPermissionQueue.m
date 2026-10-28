@@ -10,6 +10,7 @@
 @end
 
 @interface NSPermissionEntry : NSObject
+@property(nonatomic) NSFlowDirection direction;
 @property(nonatomic, copy) NSString *identity;
 @property(nonatomic, copy) NSDictionary *destination;
 @property(nonatomic, copy) NSString *token;
@@ -27,6 +28,9 @@
         @"askGeneration" : self.askGeneration ?: @"",
         @"identity" : self.identity,
         @"destination" : self.destination ?: @{},
+        @"direction" : self.direction == NSFlowDirectionInbound ? @"inbound"
+        : self.direction == NSFlowDirectionOutbound             ? @"outbound"
+                                                                : @"unknown",
         @"created" : self.created,
         @"expires" : [self.created dateByAddingTimeInterval:NSPermissionTimeout],
         @"waiting" : @(self.waiters.count),
@@ -135,6 +139,7 @@
         entry = [NSPermissionEntry new];
         entry.identity = identity;
         entry.destination = [destination copy];
+        entry.direction = direction;
         entry.token = NSUUID.UUID.UUIDString;
         entry.askGeneration = self.generations[identity] ?: @"";
         entry.created = date;
@@ -168,6 +173,7 @@
     for (NSPermissionEntry *entry in [self.active copy]) {
         for (NSPermissionWaiter *waiter in [entry.waiters copy]) {
             if (policy && [policy requiresPermissionForIdentity:entry.identity
+                                                      direction:waiter.direction
                                                     destination:waiter.destination]) {
                 continue;
             }
@@ -183,6 +189,7 @@
             [self.active removeObject:entry];
         } else {
             entry.destination = entry.waiters.firstObject.destination;
+            entry.direction = entry.waiters.firstObject.direction;
         }
     }
     for (NSPermissionEntry *entry in [self.history copy]) {

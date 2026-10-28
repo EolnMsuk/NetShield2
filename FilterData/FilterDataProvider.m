@@ -20,13 +20,17 @@
     NSPolicy *policy = NSReadPolicy(NULL);
     NSDictionary *destination = NSDestinationForFlow(flow);
     if ([flow isKindOfClass:NEFilterSocketFlow.class] &&
-        [policy needsSocketDestination:destination identity:flow.sourceAppIdentifier]) {
+        [policy needsSocketDestination:destination
+                              identity:flow.sourceAppIdentifier
+                             direction:[self directionForFlow:flow]]) {
         return [NEFilterNewFlowVerdict filterDataVerdictWithFilterInbound:YES
                                                          peekInboundBytes:1
                                                            filterOutbound:YES
                                                         peekOutboundBytes:1];
     }
-    if ([policy requiresPermissionForIdentity:flow.sourceAppIdentifier destination:destination]) {
+    if ([policy requiresPermissionForIdentity:flow.sourceAppIdentifier
+                                    direction:[self directionForFlow:flow]
+                                  destination:destination]) {
         return [NEFilterNewFlowVerdict needRulesVerdict];
     }
     NSFlowDirection direction = NSFlowDirectionUnknown;
@@ -50,12 +54,16 @@
 - (NEFilterDataVerdict *)verdictForDeferredFlow:(NEFilterFlow *)flow {
     NSPolicy *policy = NSReadPolicy(NULL);
     NSDictionary *destination = NSDestinationForFlow(flow);
-    if (!policy || [policy needsSocketDestination:destination identity:flow.sourceAppIdentifier]) {
+    if (!policy || [policy needsSocketDestination:destination
+                                         identity:flow.sourceAppIdentifier
+                                        direction:[self directionForFlow:flow]]) {
         NEFilterDataVerdict *verdict = [NEFilterDataVerdict dropVerdict];
         verdict.shouldReport = YES;
         return verdict;
     }
-    if ([policy requiresPermissionForIdentity:flow.sourceAppIdentifier destination:destination]) {
+    if ([policy requiresPermissionForIdentity:flow.sourceAppIdentifier
+                                    direction:[self directionForFlow:flow]
+                                  destination:destination]) {
         return [NEFilterDataVerdict needRulesVerdict];
     }
     BOOL allow = [policy allowsIdentity:flow.sourceAppIdentifier

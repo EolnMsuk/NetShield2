@@ -281,7 +281,9 @@
             completionHandler([NEFilterControlVerdict dropVerdictWithUpdateRules:NO]);
             return;
         }
-        if (![policy requiresPermissionForIdentity:identity destination:NSDestinationForFlow(flow)]) {
+        if (![policy requiresPermissionForIdentity:identity
+                                         direction:direction
+                                       destination:NSDestinationForFlow(flow)]) {
             completionHandler([NEFilterControlVerdict updateRules]);
             return;
         }

@@ -462,6 +462,97 @@ static void TestIdentityDisplay(void) {
     CHECK([policy allowsIdentity:first direction:NSFlowDirectionOutbound]);
     CHECK(![policy allowsIdentity:second direction:NSFlowDirectionOutbound]);
 }
+static void TestDirectionalGlobalAllows(void) {
+    NSString *key = NSCustomGlobalRuleKey(@"test.app", @"domain:example.com", @"port:443", @"tcp");
+    NSDictionary *peer = @{@"domain" : @"example.com", @"port" : @443, @"protocol" : @"tcp"};
+    for (NSString *action in @[ @"allow-inbound", @"allow-outbound" ]) {
+        NSFlowDirection matching =
+            [action isEqual:@"allow-inbound"] ? NSFlowDirectionInbound : NSFlowDirectionOutbound;
+        NSFlowDirection opposite =
+            matching == NSFlowDirectionInbound ? NSFlowDirectionOutbound : NSFlowDirectionInbound;
+        NSMutableDictionary *document = [[NSPolicy defaultDocument] mutableCopy];
+        document[@"globalRules"] = @{key : action};
+        NSPolicy *policy = [NSPolicy policyWithDocument:document error:NULL];
+        CHECK(policy != nil);
+        CHECK([policy allowsIdentity:@"test.app" direction:matching destination:peer]);
+        CHECK(![policy requiresPermissionForIdentity:@"test.app" direction:matching destination:peer]);
+        CHECK([policy requiresPermissionForIdentity:@"test.app" direction:opposite destination:peer]);
+        CHECK([policy requiresPermissionForIdentity:@"test.app"
+                                          direction:NSFlowDirectionUnknown
+                                        destination:peer]);
+        CHECK([policy requiresPermissionForIdentity:@"other.app" direction:matching destination:peer]);
+        CHECK(![policy needsSocketDestination:@{@"domain" : @"example.com", @"protocol" : @"tcp"}
+                                     identity:@"test.app"
+                                    direction:opposite]);
+        CHECK([policy needsSocketDestination:@{@"domain" : @"example.com", @"protocol" : @"tcp"}
+                                    identity:@"test.app"
+                                   direction:matching]);
+        document[@"rules"] = @{@"test.app" : @"block"};
+        policy = [NSPolicy policyWithDocument:document error:NULL];
+        CHECK([policy allowsIdentity:@"test.app" direction:matching destination:peer]);
+        CHECK(![policy allowsIdentity:@"test.app" direction:opposite destination:peer]);
+        document[@"rules"] = @{@"test.app" : @"allow"};
+        policy = [NSPolicy policyWithDocument:document error:NULL];
+        CHECK([policy allowsIdentity:@"test.app" direction:opposite destination:peer]);
+        document[@"rules"] = @{};
+        document[@"default"] = @"allow";
+        policy = [NSPolicy policyWithDocument:document error:NULL];
+        CHECK([policy allowsIdentity:@"test.app" direction:opposite destination:peer]);
+        NSString *all = NSCustomGlobalRuleKey(@"test.app", @"", @"", @"any");
+        document[@"globalRules"] = @{key : action, all : @"block"};
+        policy = [NSPolicy policyWithDocument:document error:NULL];
+        CHECK(![policy allowsIdentity:@"test.app" direction:matching destination:peer]);
+        document[@"default"] = @"ask";
+        document[@"globalRules"] = @{key : action};
+        document[@"globalDomainAddresses"] = @{@"domain:example.com" : @[ @"ip:192.0.2.20" ]};
+        document[@"globalDomainExpirations"] =
+            @{@"domain:example.com" : [NSDate.date dateByAddingTimeInterval:120]};
+        policy = [NSPolicy policyWithDocument:document error:NULL];
+        CHECK(![policy allowsIdentity:@"test.app"
+                            direction:matching
+                          destination:@{
+                              @"address" : @"192.0.2.20",
+                              @"port" : @443,
+                              @"protocol" : @"tcp"
+                          }]);
+        NSPermissionQueue *queue = [NSPermissionQueue new];
+        __block NSUInteger allowed = 0, blocked = 0;
+        NSDictionary *request = [queue enqueueIdentity:@"test.app"
+                                             direction:matching
+                                           destination:peer
+                                                   now:1
+                                                  date:NSDate.date
+                                            completion:^(BOOL allow) {
+                                                if (allow) {
+                                                    allowed++;
+                                                } else {
+                                                    blocked++;
+                                                }
+                                            }];
+        CHECK([request[@"direction"] isEqual:matching == NSFlowDirectionInbound ? @"inbound" : @"outbound"]);
+        [queue enqueueIdentity:@"test.app"
+                     direction:opposite
+                   destination:peer
+                           now:1
+                          date:NSDate.date
+                    completion:^(BOOL allow) {
+                        if (allow) {
+                            allowed++;
+                        } else {
+                            blocked++;
+                        }
+                    }];
+        [queue resolveWithPolicy:policy now:2];
+        CHECK(allowed == 1 && blocked == 0 && queue.waitingCount == 1);
+        CHECK([queue.requests.firstObject[@"direction"]
+            isEqual:opposite == NSFlowDirectionInbound ? @"inbound" : @"outbound"]);
+        [queue resolveWithPolicy:policy now:32];
+        CHECK(allowed == 1 && blocked == 1);
+        CHECK([queue.requests.firstObject[@"direction"]
+            isEqual:opposite == NSFlowDirectionInbound ? @"inbound" : @"outbound"]);
+    }
+}
+
 static void TestCustomGlobalRules(void) {
     NSString *hosts = NSGlobalInputRuleKey(@"example.com, 192.0.2.1-192.0.2.2", NO, NO);
     NSString *key = NSCustomGlobalRuleKey(@"test.app", hosts, @"port:443", @"tcp");
@@ -1288,6 +1379,7 @@ int main(void) {
         TestGlobalRules();
         TestGroupedGlobalRules();
         TestCustomGlobalRules();
+        TestDirectionalGlobalAllows();
         TestReleaseVersions();
         TestIdentityDisplay();
         TestDirectionalPermissionAnswers();

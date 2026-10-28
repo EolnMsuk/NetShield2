@@ -3,8 +3,8 @@
 // Shared by rule rows, activity rows, and action pickers. Dark-mode colors are
 // brighter than the light palette; row backgrounds use the same tint.
 static inline UIColor *NSRuleColor(NSString *rule) {
-    BOOL allow = [rule isEqual:@"allow"];
-    BOOL incoming = [rule isEqual:@"block-inbound"];
+    BOOL allow = [rule isEqual:@"allow"] || [rule isEqual:@"allow-outbound"];
+    BOOL incoming = [rule isEqual:@"block-inbound"] || [rule isEqual:@"allow-inbound"];
     BOOL block = [@[ @"block", @"block-outbound", @"remove" ] containsObject:rule ?: @""];
     if (!allow && !incoming && !block) {
         return nil;

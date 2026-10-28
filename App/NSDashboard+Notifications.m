@@ -76,13 +76,13 @@
         return;
     }
     [self.deferredRequests addObject:request[@"token"]];
-    NSString *message = [NSString
-        stringWithFormat:
-            @"%@\nFirst requested peer: %@\nCountry: unavailable\n\nUnanswered "
-            @"connections are blocked after 30 seconds; retry the app if it has already timed out.",
-            NSIdentityDisplayName(request[@"identity"]), NSDestinationSummary(request[@"destination"])];
-    NSRuleActionController *alert = [NSRuleActionController controllerWithTitle:@"Allow network access?"
-                                                                        message:message];
+    NSString *message =
+        @"Unanswered connections are blocked after 30 seconds; retry the app if it has already timed out.";
+    NSString *identity = request[@"identity"];
+    NSRuleActionController *alert =
+        [NSRuleActionController controllerWithTitle:identity.length ? identity : @"Unidentified app"
+                                            message:message];
+    alert.detailRows = NSConnectionDetailRows(request[@"destination"], request[@"direction"]);
     alert.opensExpanded = YES;
     alert.centersActions = YES;
     for (NSString *rule in @[ @"allow", @"block-inbound", @"block" ]) {
@@ -92,6 +92,11 @@
                               [self answerRequest:request rule:rule];
                           }];
     }
+    [alert addActionWithTitle:@"Add Custom Rule"
+                         rule:nil
+                      handler:^{
+                          [self addCustomRuleForIdentity:request[@"identity"] connection:request];
+                      }];
     [alert addActionWithTitle:@"Not Now" rule:nil handler:nil];
     self.permissionAlert = alert;
     self.presentedRequest = request;

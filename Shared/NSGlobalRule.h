@@ -70,14 +70,20 @@ static inline NSString *NSGlobalHostKey(id value) {
     }
     return key;
 }
+static inline BOOL NSGlobalActionIsAllow(NSString *action) {
+    return [@[ @"allow", @"allow-inbound", @"allow-outbound" ] containsObject:action ?: @""];
+}
 static inline NSString *NSMergeGlobalActions(NSString *left, NSString *right) {
     if (!left || [left isEqual:right]) {
         return right;
     }
-    if ([left isEqual:@"allow"]) {
+    if (NSGlobalActionIsAllow(left) && NSGlobalActionIsAllow(right)) {
+        return @"allow";
+    }
+    if (NSGlobalActionIsAllow(left)) {
         return right;
     }
-    if ([right isEqual:@"allow"]) {
+    if (NSGlobalActionIsAllow(right)) {
         return left;
     }
     return @"block";

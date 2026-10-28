@@ -62,6 +62,13 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 - (void)reloadMonitor;
 - (BOOL)hasFreshMonitor;
 - (void)chooseActionForIdentity:(NSString *)identity defaultKey:(NSString *)key;
+- (void)chooseActionForIdentity:(NSString *)identity
+                     defaultKey:(NSString *)key
+                     connection:(NSDictionary *)connection;
+- (void)addCustomRuleForIdentity:(NSString *)identity connection:(NSDictionary *)connection;
+- (void)editGlobalRule:(NSString *)original
+            initialKey:(NSString *)initialKey
+                action:(NSString *)initialAction;
 - (void)exportRulesAndRecentActivityFromRow:(NSIndexPath *)path;
 - (void)editGlobalRule:(NSString *)original;
 - (void)chooseGlobalRule:(NSString *)key;

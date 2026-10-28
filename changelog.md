@@ -1,3 +1,10 @@
+# 2.4.6
+
+- Added Allow Outgoing and Allow Incoming to custom rules.
+- Show connection details and direction in separate rows in recent-activity menus and network permission prompts.
+- Added Add Custom Rule to app and connection menus, prefilling available details without changing existing app rules.
+- Renamed global-rule editing labels to Custom Rule and Action to Direction, and moved the override footer below Add a Custom Rule.
+
 # 2.4.5
 
 - Show full, unsanitized app/process identities in rule and recent-activity action popups and the Add/Edit Global Rule app selector.

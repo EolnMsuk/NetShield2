@@ -62,3 +62,32 @@ static inline NSString *NSDestinationSummary(NSDictionary *destination) {
     }
     return parts.count ? [parts componentsJoinedByString:@" / "] : @"Destination unavailable from iOS";
 }
+
+// Dedicated detail rows for connection sheets; keep compact dashboard summaries unchanged.
+static inline NSArray<NSArray<NSString *> *> *NSConnectionDetailRows(NSDictionary *destination,
+                                                                     NSString *direction) {
+    NSString *directionTitle = [direction isEqual:@"inbound"]    ? @"Incoming"
+                               : [direction isEqual:@"outbound"] ? @"Outgoing"
+                                                                 : @"Unavailable from iOS";
+    NSString *protocol = destination[@"protocol"];
+    NSMutableArray *rows = [NSMutableArray arrayWithArray:@[
+        @[ @"Direction", directionTitle ],
+        @[ @"Protocol", protocol.length ? protocol.uppercaseString : @"Unavailable from iOS" ]
+    ]];
+    for (NSArray *field in @[ @[ @"domain", @"Domain" ], @[ @"address", @"IP address" ] ]) {
+        NSString *value = NSCleanDestinationHost(destination[field[0]]);
+        if (value.length) {
+            [rows addObject:@[ field[1], value ]];
+        }
+    }
+    for (NSArray *field in @[ @[ @"localPort", @"Local port" ], @[ @"port", @"Remote port" ] ]) {
+        NSNumber *port = destination[field[0]];
+        if (port.integerValue >= 1 && port.integerValue <= 65535) {
+            [rows addObject:@[ field[1], port.stringValue ]];
+        }
+    }
+    if (rows.count == 2) {
+        [rows addObject:@[ @"Endpoints", @"Unavailable from iOS" ]];
+    }
+    return rows;
+}

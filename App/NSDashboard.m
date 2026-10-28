@@ -298,6 +298,11 @@
     return saved;
 }
 - (void)chooseActionForIdentity:(NSString *)identity defaultKey:(NSString *)key {
+    [self chooseActionForIdentity:identity defaultKey:key connection:nil];
+}
+- (void)chooseActionForIdentity:(NSString *)identity
+                     defaultKey:(NSString *)key
+                     connection:(NSDictionary *)connection {
     if (!self.policy) {
         return;
     }
@@ -315,9 +320,43 @@
                       @"interrupting system services.";
         actions = @[ @"allow", @"block" ];
     }
+    if (connection && !identity.length) {
+        actions = @[];
+        explanation =
+            @"iOS did not provide an app identity. A custom rule can match this connection's endpoints.";
+    }
     NSRuleActionController *alert = [NSRuleActionController controllerWithTitle:title message:explanation];
+    if (connection) {
+        NSMutableArray *details =
+            [NSConnectionDetailRows(connection[@"destination"], connection[@"direction"]) mutableCopy];
+        if (connection[@"connections"]) {
+            [details addObject:@[ @"Connections", [connection[@"connections"] stringValue] ]];
+        }
+        NSString *outcome = @{@"allow" : @"Allowed", @"block" : @"Blocked"}[connection[@"action"] ?: @""];
+        if (outcome) {
+            [details addObject:@[ @"Result", outcome ]];
+        }
+        if (connection[@"bytesIn"] || connection[@"bytesOut"]) {
+            [details addObject:@[
+                @"Received", [NSByteCountFormatter stringFromByteCount:[connection[@"bytesIn"] longLongValue]
+                                                            countStyle:NSByteCountFormatterCountStyleFile]
+            ]];
+            [details addObject:@[
+                @"Sent", [NSByteCountFormatter stringFromByteCount:[connection[@"bytesOut"] longLongValue]
+                                                        countStyle:NSByteCountFormatterCountStyleFile]
+            ]];
+        }
+        if (connection[@"time"]) {
+            [details addObject:@[
+                @"Last activity", [NSDateFormatter localizedStringFromDate:connection[@"time"]
+                                                                 dateStyle:NSDateFormatterShortStyle
+                                                                 timeStyle:NSDateFormatterShortStyle]
+            ]];
+        }
+        alert.detailRows = details;
+    }
     alert.opensExpanded = YES;
-    alert.selectedRule = key ? self.policy.document[key] : self.policy.document[@"rules"][identity];
+    alert.selectedRule = key ? self.policy.document[key] : self.policy.document[@"rules"][identity ?: @""];
     for (NSString *action in actions) {
         [alert addActionWithTitle:[self ruleTitle:action]
                              rule:action
@@ -335,6 +374,13 @@
                                   }
                                   return YES;
                               }];
+                          }];
+    }
+    if (!key) {
+        [alert addActionWithTitle:@"Add Custom Rule"
+                             rule:nil
+                          handler:^{
+                              [self addCustomRuleForIdentity:identity connection:connection];
                           }];
     }
     [alert addActionWithTitle:@"Cancel" rule:nil handler:nil];
@@ -387,7 +433,9 @@
                                                     @"rules and the iOS system traffic allowance."];
     alert.opensExpanded = YES;
     alert.selectedRule = self.policy.document[@"globalRules"][key];
-    NSMutableArray *actions = [@[ @"allow", @"block-inbound", @"block" ] mutableCopy];
+    NSMutableArray *actions =
+        [@[ @"allow", @"allow-outbound", @"allow-inbound", @"block-inbound", @"block-outbound", @"block" ]
+            mutableCopy];
     BOOL existing = !original && self.policy.document[@"globalRules"][key] != nil;
     if (existing) {
         [actions addObject:@"remove"];
@@ -426,7 +474,7 @@
                           }];
     }
     if (existing) {
-        [alert addActionWithTitle:@"Edit Rule"
+        [alert addActionWithTitle:@"Edit Custom Rule"
                              rule:nil
                           handler:^{
                               [self editGlobalRule:key];
@@ -435,7 +483,41 @@
     [alert addActionWithTitle:@"Cancel" rule:nil handler:nil];
     [self presentViewController:alert animated:YES completion:nil];
 }
+- (void)addCustomRuleForIdentity:(NSString *)identity connection:(NSDictionary *)connection {
+    NSString *hosts = @"", *ports = @"", *protocol = @"any";
+    NSString *action = self.policy.document[@"rules"][identity ?: @""] ?: @"allow";
+    if (connection) {
+        NSDictionary *destination = connection[@"destination"];
+        NSMutableArray *members = [NSMutableArray new];
+        for (NSString *field in @[ @"domain", @"address" ]) {
+            NSString *host = NSGlobalHostKey(destination[field]);
+            if (host) {
+                [members addObject:host];
+            }
+        }
+        hosts = members.count ? NSGlobalKeyFromMembers(members) : @"";
+        BOOL incoming = [connection[@"direction"] isEqual:@"inbound"];
+        BOOL outgoing = [connection[@"direction"] isEqual:@"outbound"];
+        if (incoming || outgoing) {
+            NSString *port = [destination[incoming ? @"localPort" : @"port"] stringValue];
+            ports = (incoming ? NSGlobalLocalPortKey(port) : NSGlobalPortKey(port)) ?: @"";
+            BOOL blocked = [@[ @"block", @"permission-block" ] containsObject:connection[@"action"] ?: @""];
+            action = incoming ? (blocked ? @"block-inbound" : @"allow-inbound")
+                              : (blocked ? @"block-outbound" : @"allow-outbound");
+        }
+        if ([@[ @"tcp", @"udp" ] containsObject:destination[@"protocol"] ?: @""]) {
+            protocol = destination[@"protocol"];
+        }
+    }
+    NSString *initialKey = NSCustomGlobalRuleKey(identity, hosts, ports, protocol);
+    [self editGlobalRule:nil initialKey:initialKey action:action];
+}
 - (void)editGlobalRule:(NSString *)original {
+    [self editGlobalRule:original initialKey:nil action:nil];
+}
+- (void)editGlobalRule:(NSString *)original
+            initialKey:(NSString *)initialKey
+                action:(NSString *)initialAction {
     if (!self.policy || self.busy) {
         return;
     }
@@ -448,7 +530,8 @@
     editor.identities =
         [identities.allObjects sortedArrayUsingSelector:@selector(localizedCaseInsensitiveCompare:)];
     editor.originalKey = original;
-    editor.originalAction = original ? self.policy.document[@"globalRules"][original] : nil;
+    editor.initialKey = initialKey;
+    editor.originalAction = original ? self.policy.document[@"globalRules"][original] : initialAction;
     __weak typeof(self) weakSelf = self;
     editor.saveRule = ^BOOL(NSString *key, NSString *action, NSError **error) {
         BOOL saved = NSUpdatePolicy(
@@ -491,6 +574,8 @@
     return @{
         @"ask" : @"Ask Me",
         @"allow" : @"Allow",
+        @"allow-outbound" : @"Allow Outgoing",
+        @"allow-inbound" : @"Allow Incoming",
         @"block" : @"Block In & Out",
         @"block-inbound" : @"Block Incoming",
         @"block-outbound" : @"Block Outgoing",

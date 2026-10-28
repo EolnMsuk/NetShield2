@@ -171,7 +171,7 @@ static void NSDNSAnswer(DNSServiceRef reference, DNSServiceFlags flags, uint32_t
         }
         NSMutableDictionary *wanted = [NSMutableDictionary new];
         for (NSString *key in rules) {
-            if ([key hasPrefix:@"domain:"] && ![rules[key] isEqual:@"allow"]) {
+            if ([key hasPrefix:@"domain:"] && !NSGlobalActionIsAllow(rules[key])) {
                 wanted[key] = rules[key];
             }
         }

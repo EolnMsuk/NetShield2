@@ -312,7 +312,9 @@ NSDictionary *NSReadMonitor(void) {
                 ![request[@"expires"] isKindOfClass:NSDate.class] ||
                 ![request[@"waiting"] isKindOfClass:NSNumber.class] ||
                 ![request[@"expired"] isKindOfClass:NSNumber.class] ||
-                (request[@"destination"] && !NSValidDestination(request[@"destination"]))) {
+                (request[@"destination"] && !NSValidDestination(request[@"destination"])) ||
+                (request[@"direction"] &&
+                 ![@[ @"inbound", @"outbound", @"unknown" ] containsObject:request[@"direction"]])) {
                 return @{};
             }
         }
