@@ -6,12 +6,12 @@ A customizable firewall & live network monitor with actionable notifications for
 
 ## Get started
 
-1. Install the (rootless or roothide or rootful) deb from the releases section. No respring is required.
+1. Install the (rootless or roothide or rootful) deb from the [latest release](https://github.com/EolnMsuk/NetShield2/releases/latest) page. No respring is required.
 2. Open NetShield2 from the homescreen and switch on the main **Firewall** toggle, accept the iOS Notification and allow **Filter Network Content**, enter passcode. To confirm the filter has been added, re-open Settings > General > VPN & Device Management > Content Filter > NetShield2... Running.
 3. Recommended: return to NetShield2, tap **Notification Settings** and switch Banner Style from Temporary to **Persistent**. If you use **Do Not Disturb**, allow NetShield2 in **Settings > Focus > Do Not Disturb > Apps**.
 4. When a new app connects, touch and hold the NetShield2 notification banner and choose **Allow In & Out**, **Block Incoming**, or **Keep Blocking**. Tapping the notification body (instead of long pressing) will open NetShield2 where you can also assign rules to any pending requests.
 
-Unanswered connections are blocked after 30 seconds. The latest 64 expired requests remain in **Waiting for your decision**, where you can decide later and retry the app. Older requests are removed as history fills. To force a process to request again, tap its rule and select **Use Default Rule** and you will be notified the next time it requests the internet.
+Unanswered connections are blocked after 30 seconds. The latest 64 expired requests remain in **Waiting for your decision**, where you can decide later and retry the app. Older requests are removed as history fills. To force a process to request again, tap on it and select remove (or swipe left on it).
 
 ## Options
 
@@ -23,8 +23,8 @@ Unanswered connections are blocked after 30 seconds. The latest 64 expired reque
 - **Notifications:** notification settings and instructions for banners and Do Not Disturb.
 - **Support:** Export Rules and Recent Activity, Reset Rules & History, Reset ALL Settings, Check for Update, GitHub Link, and Support Developer Links.
 - **Advanced Settings:** manual app identity, IP/domain and local/remote port rules.
-- **Global Rules:** IP/domain and local/remote port rules apply across all processes. Separate entries with commas (or range with - between IPs) to save one grouped rule.
-- **App Rules:** change saved decisions. Swipe left on a saved app or global rule and tap **Remove** to delete it. Changes apply to new connection requests only. Apps observed in history can remain listed with **Use Default Rule** after removal.
+- **Global Rules:** use the Add Global Rule button to add a custom rule (direction, process, domain/ip, remote/local port, udp/tcp etc).
+- **App Rules:** change saved decisions. Swipe left on a saved app or global rule and tap **Remove** to delete it.
 - **Recent Activity:** the rolling 300-event record grouped by process, IP/domain, remote port, direction and allowed/blocked outcome.
 
 ## Coverage
