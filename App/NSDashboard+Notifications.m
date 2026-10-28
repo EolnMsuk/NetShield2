@@ -1,4 +1,5 @@
 #import "NSDashboard+Internal.h"
+#import "../Shared/NSRuleChoices.h"
 
 @implementation NSDashboard (Notifications)
 - (void)refreshNotificationSettings {
@@ -64,15 +65,16 @@
     } else {
         NSDictionary *destination = NSReadPolicy(NULL).document[@"ruleDestinations"][request[@"identity"]];
         self.message = [NSString
-            stringWithFormat:@"Rule saved for %@. First requested peer: %@. Applies to all connections from "
-                             @"this app. Retry the app if its connection timed out.",
-                             NSIdentityDisplayName(request[@"identity"]), NSDestinationSummary(destination)];
+            stringWithFormat:
+                @"Rule saved for %@. First requested peer: %@. Applies to all connections from "
+                @"this app according to the selected direction. Retry the app if its connection timed out.",
+                NSIdentityDisplayName(request[@"identity"]), NSDestinationSummary(destination)];
     }
     [self reloadMonitor];
 }
 - (void)presentRequest:(NSDictionary *)request {
     NSPolicy *current = NSReadPolicy(NULL);
-    if (self.presentedViewController || ![current requiresPermissionForIdentity:request[@"identity"]]) {
+    if (self.presentedViewController || ![current requiresPermissionForRequest:request]) {
         return;
     }
     [self.deferredRequests addObject:request[@"token"]];
@@ -85,7 +87,7 @@
     alert.detailRows = NSConnectionDetailRows(request[@"destination"], request[@"direction"]);
     alert.opensExpanded = YES;
     alert.centersActions = YES;
-    for (NSString *rule in @[ @"allow", @"block-inbound", @"block" ]) {
+    for (NSString *rule in NSDirectionRuleValues()) {
         [alert addActionWithTitle:[self ruleTitle:rule]
                              rule:rule
                           handler:^{

@@ -1047,6 +1047,82 @@ static void TestGlobalRules(void) {
         CHECK([NSReadPolicy(NULL).document[@"globalRules"] count] == 0);
     }
 }
+static void TestDirectionalAppAllows(void) {
+    for (NSString *rule in @[ @"allow-inbound", @"allow-outbound" ]) {
+        NSFlowDirection matching =
+            [rule isEqual:@"allow-inbound"] ? NSFlowDirectionInbound : NSFlowDirectionOutbound;
+        NSFlowDirection opposite =
+            matching == NSFlowDirectionInbound ? NSFlowDirectionOutbound : NSFlowDirectionInbound;
+        for (NSString *fallback in @[ @"allow", @"block", @"ask" ]) {
+            NSMutableDictionary *document = [[NSPolicy defaultDocument] mutableCopy];
+            document[@"rules"] = @{@"direction.app" : rule};
+            document[@"default"] = fallback;
+            NSPolicy *policy = [NSPolicy policyWithDocument:document error:NULL];
+            CHECK(policy != nil);
+            CHECK([policy allowsIdentity:@"direction.app" direction:matching]);
+            CHECK(![policy requiresPermissionForIdentity:@"direction.app"
+                                               direction:matching
+                                             destination:@{}]);
+            for (NSNumber *direction in @[ @(opposite), @(NSFlowDirectionUnknown) ]) {
+                CHECK([policy allowsIdentity:@"direction.app"
+                                   direction:direction.integerValue] == [fallback isEqual:@"allow"]);
+                CHECK([policy requiresPermissionForIdentity:@"direction.app"
+                                                  direction:direction.integerValue
+                                                destination:@{}] == [fallback isEqual:@"ask"]);
+            }
+            document[@"globalRules"] =
+                @{NSCustomGlobalRuleKey(@"direction.app", @"", @"", @"any") : @"block"};
+            policy = [NSPolicy policyWithDocument:document error:NULL];
+            CHECK(![policy allowsIdentity:@"direction.app" direction:matching]);
+            CHECK(![policy requiresPermissionForIdentity:@"direction.app"
+                                               direction:opposite
+                                             destination:@{}]);
+            document[@"globalRules"] = @{};
+            document[@"default"] = rule;
+            CHECK(![NSPolicy policyWithDocument:document error:NULL]);
+            document[@"default"] = fallback;
+            document[@"unattributed"] = rule;
+            CHECK(![NSPolicy policyWithDocument:document error:NULL]);
+        }
+
+        CHECK(NSWriteDocument([NSPolicy defaultDocument], NSPolicyFile, NULL));
+        NSPermissionQueue *queue = [NSPermissionQueue new];
+        __block NSUInteger allowed = 0, blocked = 0;
+        NSDictionary *request = [queue enqueueIdentity:@"direction.app"
+                                             direction:matching
+                                                   now:1
+                                                  date:NSDate.date
+                                            completion:^(BOOL allow) {
+                                                CHECK(allow);
+                                                allowed++;
+                                            }];
+        [queue enqueueIdentity:@"direction.app"
+                     direction:opposite
+                           now:1
+                          date:NSDate.date
+                    completion:^(BOOL allow) {
+                        CHECK(!allow);
+                        blocked++;
+                    }];
+        CHECK(
+            NSWriteDocument(Monitor(queue.requests, YES, NSEngineVersion, NSDate.date), NSMonitorFile, NULL));
+        CHECK(NSAnswerPermissionRequestWithRule(request, rule, NULL));
+        CHECK([NSReadPolicy(NULL).document[@"rules"][@"direction.app"] isEqual:rule]);
+        [queue resolveWithPolicy:NSReadPolicy(NULL) now:2];
+        CHECK(allowed == 1 && blocked == 0 && queue.waitingCount == 1);
+        NSDictionary *remaining = queue.requests.firstObject;
+        CHECK([NSReadPolicy(NULL) requiresPermissionForRequest:remaining]);
+        CHECK(![NSReadPolicy(NULL) requiresPermissionForRequest:request]);
+        CHECK(
+            NSWriteDocument(Monitor(queue.requests, YES, NSEngineVersion, NSDate.date), NSMonitorFile, NULL));
+        NSMutableDictionary *forged = [remaining mutableCopy];
+        forged[@"direction"] = request[@"direction"];
+        CHECK(NSAnswerPermissionRequestWithRule(forged, @"block", NULL));
+        [queue resolveWithPolicy:NSReadPolicy(NULL) now:3];
+        CHECK(allowed == 1 && blocked == 1 && queue.requests.count == 0);
+    }
+}
+
 static void TestDirectionalPermissionAnswers(void) {
     for (NSString *rule in @[ @"block-inbound", @"block-outbound" ]) {
         CHECK(NSWriteDocument([NSPolicy defaultDocument], NSPolicyFile, NULL));
@@ -1302,6 +1378,28 @@ static void TestLateNotifications(void) {
     CHECK([center.removed containsObject:@"old-token"]);
     [old stop];
 }
+static void TestDirectionalNotifications(void) {
+    CHECK(NSWriteDocument([NSPolicy defaultDocument], NSPolicyFile, NULL));
+    FakeNotificationCenter *center = [FakeNotificationCenter new];
+    NSPermissionNotifications *notifications = [[NSPermissionNotifications alloc] initWithCenter:center];
+    NSDictionary *incoming =
+        @{@"token" : @"mixed-token", @"identity" : @"mixed.app", @"direction" : @"inbound"};
+    NSDictionary *outgoing =
+        @{@"token" : @"mixed-token", @"identity" : @"mixed.app", @"direction" : @"outbound"};
+    [notifications updateRequests:@[ incoming ] policy:NSReadPolicy(NULL) retryRevision:nil];
+    CHECK(center.requests.count == 1);
+    SaveRule(@"mixed.app", @"allow-inbound");
+    // The same queue token now represents the remaining opposite-direction waiter.
+    [notifications updateRequests:@[ outgoing ] policy:NSReadPolicy(NULL) retryRevision:nil];
+    [center.removed removeAllObjects];
+    [center finish:0 error:nil];
+    CHECK(![center.removed containsObject:@"mixed-token"]);
+    CHECK(center.settingsCompletions.count == 1);
+    [notifications updateRequests:@[ incoming ] policy:NSReadPolicy(NULL) retryRevision:nil];
+    CHECK([center.removed containsObject:@"mixed-token"]);
+    [notifications stop];
+}
+
 @interface FakeFilterRemovalManager : NSObject <NSFilterRemovalManager>
 @property(nonatomic, strong) id providerConfiguration;
 @property(nonatomic, getter=isEnabled) BOOL enabled;
@@ -1383,9 +1481,11 @@ int main(void) {
         TestReleaseVersions();
         TestIdentityDisplay();
         TestDirectionalPermissionAnswers();
+        TestDirectionalAppAllows();
         TestAnswersAndReset();
         TestSocketSettingsAndDestinations();
         TestLateNotifications();
+        TestDirectionalNotifications();
         TestFilterRemoval();
         NSRunRecoveryTests();
         CHECK([NSFileManager.defaultManager removeItemAtURL:root error:NULL]);

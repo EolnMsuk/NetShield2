@@ -2,6 +2,7 @@
 #import "NSDestination.h"
 #import "NSGlobalRule.h"
 #import "NSPolicyCache.h"
+#import "NSRuleChoices.h"
 #include <errno.h>
 
 NSString *const NSGroupIdentifier = @"group.com.eolnmsuk.netshield";
@@ -339,7 +340,7 @@ BOOL NSAnswerPermissionRequest(NSDictionary *request, BOOL allow, NSError **erro
     return NSAnswerPermissionRequestWithRule(request, allow ? @"allow" : @"block", error);
 }
 BOOL NSAnswerPermissionRequestWithRule(NSDictionary *request, NSString *rule, NSError **error) {
-    if (![@[ @"allow", @"block", @"block-inbound", @"block-outbound" ] containsObject:rule ?: @""]) {
+    if (![NSDirectionRuleValues() containsObject:rule ?: @""]) {
         if (error) {
             *error = NSStorageError(@"Unsupported permission rule.");
         }
@@ -369,6 +370,7 @@ NSDictionary *NSPermissionResponseDocument(NSDictionary *request, NSDictionary *
     NSDate *updated = monitor[@"updated"];
     BOOL current = NO;
     NSDictionary *destination = nil;
+    NSDictionary *currentRequest = nil;
     if ([request[@"token"] isKindOfClass:NSString.class] &&
         [request[@"identity"] isKindOfClass:NSString.class] && [monitor[@"controlRunning"] boolValue] &&
         updated && [updated timeIntervalSinceDate:now] <= 0 &&
@@ -377,6 +379,7 @@ NSDictionary *NSPermissionResponseDocument(NSDictionary *request, NSDictionary *
             if ([candidate[@"token"] isEqual:request[@"token"]] &&
                 [candidate[@"identity"] isEqual:request[@"identity"]]) {
                 current = YES;
+                currentRequest = candidate;
                 destination = candidate[@"destination"];
                 break;
             }
@@ -399,7 +402,7 @@ NSDictionary *NSPermissionResponseDocument(NSDictionary *request, NSDictionary *
             return nil;
         }
     }
-    if (![policy requiresPermissionForIdentity:request[@"identity"]]) {
+    if (![policy requiresPermissionForRequest:currentRequest]) {
         if (error) {
             *error =
                 NSStorageError(@"A rule already handles this app. Review its current rule in NetShield2.");

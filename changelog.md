@@ -1,3 +1,9 @@
+# 2.4.7
+
+- Open Edit Custom Rule directly when tapping an existing Global Rule.
+- Offer all six direction choices in App Rules, network permission prompts, and Recent Activity connection menus. 
+- Move connection details below the action choices in network permission and Recent Activity dialogs.
+
 # 2.4.6
 
 - The build script now automatically pulls version numbers from the tweak's control file.

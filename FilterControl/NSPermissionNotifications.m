@@ -7,6 +7,7 @@
 @property(nonatomic, strong) id<NSPermissionNotificationCenter> center;
 @property(nonatomic) BOOL stopped;
 @property(nonatomic, copy) NSSet<NSString *> *tokens;
+@property(nonatomic, copy) NSDictionary<NSString *, NSDictionary *> *requestsByToken;
 @property(nonatomic, copy) NSString *retryRevision;
 @property(nonatomic, strong) NSMutableSet<NSString *> *submitted;
 @property(nonatomic, strong) NSMutableSet<NSString *> *submitting;
@@ -95,6 +96,11 @@ static void NSWithdrawNotifications(id<NSPermissionNotificationCenter> center, N
         if (self.stopped) {
             return;
         }
+        requests = [requests
+            filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *request,
+                                                                              NSDictionary *bindings) {
+                return [policy requiresPermissionForRequest:request];
+            }]];
         NSSet *next = [NSSet setWithArray:[requests valueForKey:@"token"]];
         NSMutableSet *removed = [self.tokens mutableCopy];
         [removed minusSet:next];
@@ -107,6 +113,11 @@ static void NSWithdrawNotifications(id<NSPermissionNotificationCenter> center, N
             [self.issues removeObjectForKey:token];
         }
         self.tokens = next;
+        NSMutableDictionary *requestsByToken = [NSMutableDictionary new];
+        for (NSDictionary *request in requests) {
+            requestsByToken[request[@"token"]] = request;
+        }
+        self.requestsByToken = requestsByToken;
         if (revision && ![revision isEqual:self.retryRevision]) {
             self.retryRevision = revision;
             [self.submitted removeAllObjects];
@@ -116,7 +127,7 @@ static void NSWithdrawNotifications(id<NSPermissionNotificationCenter> center, N
             [self.submissionIDs removeAllObjects];
         }
         for (NSDictionary *request in requests) {
-            if ([policy requiresPermissionForIdentity:request[@"identity"]]) {
+            if ([policy requiresPermissionForRequest:request]) {
                 [self submit:request];
             }
         }
@@ -148,61 +159,62 @@ static void NSWithdrawNotifications(id<NSPermissionNotificationCenter> center, N
     id<NSPermissionNotificationCenter> center = self.center;
     __weak id<NSPermissionNotificationCenter> weakCenter = center;
     __weak typeof(self) weakSelf = self;
-    [center addNotificationRequest:notification
-             withCompletionHandler:^(NSError *error) {
-                 id<NSPermissionNotificationCenter> center = weakCenter;
-                 if (!center) {
-                     return;
-                 }
-                 NSPermissionNotifications *owner = weakSelf;
-                 if (!owner) {
+    [center
+        addNotificationRequest:notification
+         withCompletionHandler:^(NSError *error) {
+             id<NSPermissionNotificationCenter> center = weakCenter;
+             if (!center) {
+                 return;
+             }
+             NSPermissionNotifications *owner = weakSelf;
+             if (!owner) {
+                 NSWithdrawNotifications(center, @[ token ]);
+                 return;
+             }
+             @synchronized(owner) {
+                 [owner.submitting removeObject:token];
+                 if (![owner.submissionIDs[token] isEqual:submission]) {
                      NSWithdrawNotifications(center, @[ token ]);
                      return;
                  }
-                 @synchronized(owner) {
-                     [owner.submitting removeObject:token];
-                     if (![owner.submissionIDs[token] isEqual:submission]) {
-                         NSWithdrawNotifications(center, @[ token ]);
-                         return;
-                     }
-                     if (NSShouldWithdrawPermissionNotification(NSReadPolicy(NULL), identity,
-                                                                [owner isCurrent:token])) {
-                         NSWithdrawNotifications(center, @[ token ]);
-                         return;
-                     }
-                     if (error) {
-                         owner.issues[token] =
-                             [NSString stringWithFormat:@"Notification delivery failed: %@. Reopen "
-                                                        @"notification settings, then return to retry.",
-                                                        error.localizedDescription];
-                         return;
-                     }
-                     [owner.submitted addObject:token];
-                     [owner.issues removeObjectForKey:token];
+                 if (NSShouldWithdrawPermissionRequestNotification(
+                         NSReadPolicy(NULL), owner.requestsByToken[token], [owner isCurrent:token])) {
+                     NSWithdrawNotifications(center, @[ token ]);
+                     return;
                  }
-                 [center getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings *settings) {
-                     NSPermissionNotifications *current = weakSelf;
-                     if (!current) {
+                 if (error) {
+                     owner.issues[token] =
+                         [NSString stringWithFormat:@"Notification delivery failed: %@. Reopen "
+                                                    @"notification settings, then return to retry.",
+                                                    error.localizedDescription];
+                     return;
+                 }
+                 [owner.submitted addObject:token];
+                 [owner.issues removeObjectForKey:token];
+             }
+             [center getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings *settings) {
+                 NSPermissionNotifications *current = weakSelf;
+                 if (!current) {
+                     return;
+                 }
+                 @synchronized(current) {
+                     if (![current.submissionIDs[token] isEqual:submission]) {
                          return;
                      }
-                     @synchronized(current) {
-                         if (![current.submissionIDs[token] isEqual:submission]) {
-                             return;
-                         }
-                         if (NSShouldWithdrawPermissionNotification(NSReadPolicy(NULL), identity,
-                                                                    [current isCurrent:token])) {
-                             return;
-                         }
-                         if (settings.authorizationStatus == UNAuthorizationStatusDenied ||
-                             settings.authorizationStatus == UNAuthorizationStatusNotDetermined ||
-                             settings.alertSetting == UNNotificationSettingDisabled) {
-                             current.issues[token] =
-                                 @"iOS is not allowing alerts from the filter provider. Enable Allow "
-                                 @"Notifications and Banners in Notification settings, then return to retry.";
-                         }
+                     if (NSShouldWithdrawPermissionRequestNotification(
+                             NSReadPolicy(NULL), current.requestsByToken[token], [current isCurrent:token])) {
+                         return;
                      }
-                 }];
+                     if (settings.authorizationStatus == UNAuthorizationStatusDenied ||
+                         settings.authorizationStatus == UNAuthorizationStatusNotDetermined ||
+                         settings.alertSetting == UNNotificationSettingDisabled) {
+                         current.issues[token] =
+                             @"iOS is not allowing alerts from the filter provider. Enable Allow "
+                             @"Notifications and Banners in Notification settings, then return to retry.";
+                     }
+                 }
              }];
+         }];
 }
 - (void)stop {
     @synchronized(self) {

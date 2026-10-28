@@ -193,7 +193,9 @@
         }
     }
     for (NSPermissionEntry *entry in [self.history copy]) {
-        if (!policy || ![policy requiresPermissionForIdentity:entry.identity]) {
+        if (!policy || ![policy requiresPermissionForIdentity:entry.identity
+                                                    direction:entry.direction
+                                                  destination:entry.destination ?: @{}]) {
             [self.history removeObject:entry];
         }
     }

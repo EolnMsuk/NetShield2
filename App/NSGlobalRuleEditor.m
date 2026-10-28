@@ -2,6 +2,7 @@
 #import "NSRuleActionController.h"
 #import "NSRuleAppearance.h"
 #import "../Shared/NSGlobalRule.h"
+#import "../Shared/NSRuleChoices.h"
 
 typedef NS_ENUM(NSInteger, NSGlobalEditorSection) {
     NSGlobalEditorAction,
@@ -157,16 +158,11 @@ typedef NS_ENUM(NSInteger, NSGlobalEditorSection) {
     [self.view endEditing:YES];
     NSRuleActionController *picker = [NSRuleActionController controllerWithTitle:@"Direction" message:nil];
     picker.selectedRule = self.ruleAction;
-    NSArray *values =
-        @[ @"allow", @"allow-outbound", @"allow-inbound", @"block-inbound", @"block-outbound", @"block" ];
-    NSArray *titles = @[
-        @"Allow", @"Allow Outgoing", @"Allow Incoming", @"Block Incoming", @"Block Outgoing",
-        @"Block In & Out"
-    ];
+    NSArray *values = NSDirectionRuleValues();
     __weak typeof(self) weakSelf = self;
     for (NSUInteger index = 0; index < values.count; index++) {
         NSString *value = values[index];
-        [picker addActionWithTitle:titles[index]
+        [picker addActionWithTitle:NSDirectionRuleTitle(value)
                               rule:value
                            handler:^{
                                weakSelf.ruleAction = value;
@@ -351,15 +347,7 @@ typedef NS_ENUM(NSInteger, NSGlobalEditorSection) {
                                                [weakSelf.tableView reloadData];
                                            }];
             } else {
-                NSArray *values = @[
-                    @"allow", @"allow-outbound", @"allow-inbound", @"block-inbound", @"block-outbound",
-                    @"block"
-                ];
-                NSArray *titles = @[
-                    @"Allow", @"Allow Outgoing", @"Allow Incoming", @"Block Incoming", @"Block Outgoing",
-                    @"Block In & Out"
-                ];
-                title = titles[[values indexOfObject:self.ruleAction]];
+                title = NSDirectionRuleTitle(self.ruleAction);
                 button.showsMenuAsPrimaryAction = NO;
                 [button addTarget:self
                               action:@selector(showActionChoices:)

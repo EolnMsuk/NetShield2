@@ -3,6 +3,7 @@
 #import "NSDestination.h"
 #import "NSGlobalRule.h"
 #import "NSDNSCache.h"
+#import "NSRuleChoices.h"
 #import <CoreFoundation/CoreFoundation.h>
 
 // Directional allows do not decide traffic in the other or unknown direction.
@@ -80,9 +81,8 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
 + (instancetype)policyWithDocument:(id)document error:(NSError **)error {
     BOOL valid = [document isKindOfClass:NSDictionary.class];
     NSDictionary *d = valid ? document : @{};
-    NSSet *actions = [NSSet setWithArray:@[ @"allow", @"block", @"block-inbound", @"block-outbound" ]];
-    NSMutableSet *globalActions = [actions mutableCopy];
-    [globalActions addObjectsFromArray:@[ @"allow-inbound", @"allow-outbound" ]];
+    NSSet *actions = [NSSet setWithArray:NSDirectionRuleValues()];
+    NSSet *globalActions = actions;
     NSSet *defaults = [NSSet setWithArray:@[ @"allow", @"block", @"ask" ]];
     NSSet *unknownActions = [NSSet setWithArray:@[ @"allow", @"block" ]];
     valid = valid && [d[@"schema"] isKindOfClass:NSNumber.class] &&
@@ -308,8 +308,10 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
 - (BOOL)requiresPermissionForIdentity:(NSString *)identity
                             direction:(NSFlowDirection)direction
                           destination:(NSDictionary *)destination {
+    NSString *action = NSGlobalActionForDirection(self.document[@"rules"][identity ?: @""], direction);
     return ![self globalActionForIdentity:identity direction:direction destination:destination] &&
-           [self requiresPermissionForIdentity:identity];
+           ![self automaticallyAllowsIdentity:identity] && identity.length > 0 && !action &&
+           [self.document[@"default"] isEqual:@"ask"];
 }
 - (NSString *)globalActionForIdentity:(NSString *)identity
                             direction:(NSFlowDirection)direction
@@ -385,8 +387,17 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
     return NO;
 }
 - (BOOL)requiresPermissionForIdentity:(NSString *)identity {
-    return ![self automaticallyAllowsIdentity:identity] && identity.length > 0 &&
-           !self.document[@"rules"][identity] && [self.document[@"default"] isEqual:@"ask"];
+    // Without a direction, report whether any direction can still require permission.
+    return [self requiresPermissionForIdentity:identity direction:NSFlowDirectionUnknown destination:@{}];
+}
+- (BOOL)requiresPermissionForRequest:(NSDictionary *)request {
+    NSString *value = request[@"direction"];
+    NSFlowDirection direction = [value isEqual:@"inbound"]    ? NSFlowDirectionInbound
+                                : [value isEqual:@"outbound"] ? NSFlowDirectionOutbound
+                                                              : NSFlowDirectionUnknown;
+    return [self requiresPermissionForIdentity:request[@"identity"]
+                                     direction:direction
+                                   destination:request[@"destination"] ?: @{}];
 }
 - (BOOL)allowsIdentity:(NSString *)identity direction:(NSFlowDirection)direction {
     return [self allowsIdentity:identity direction:direction destination:@{}];
@@ -400,8 +411,10 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
     if (!globalAction && [self automaticallyAllowsIdentity:identity]) {
         return YES;
     }
-    NSString *action = identity.length ? (self.document[@"rules"][identity] ?: self.document[@"default"])
-                                       : self.document[@"unattributed"];
+    NSString *action = identity.length
+                           ? (NSGlobalActionForDirection(self.document[@"rules"][identity], direction)
+                                  ?: self.document[@"default"])
+                           : self.document[@"unattributed"];
     action = globalAction ?: action;
     if ([action isEqual:@"allow"]) {
         return YES;

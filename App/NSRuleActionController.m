@@ -23,7 +23,7 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.tableView.rowHeight = UITableViewAutomaticDimension;
-    self.tableView.estimatedRowHeight = 84;
+    self.tableView.estimatedRowHeight = 63;
     self.tableView.sectionHeaderHeight = 12;
     self.tableView.sectionFooterHeight = 12;
     if (self.modalPresentationStyle == UIModalPresentationPageSheet) {
@@ -53,16 +53,16 @@
     return UIModalPresentationNone;
 }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
-    return 2;
+    return self.detailRows.count ? 3 : 2;
 }
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    return section == 0 ? 1 + self.detailRows.count : self.choices.count;
+    return section == 0 ? 1 : section == 1 ? self.choices.count : self.detailRows.count;
 }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
-    return section == 0 && self.detailRows.count ? self.message : nil;
+    return section == 2 ? self.message : nil;
 }
 - (CGFloat)tableView:(UITableView *)tableView heightForFooterInSection:(NSInteger)section {
-    return section == 0 && self.detailRows.count ? UITableViewAutomaticDimension : 12;
+    return section == 2 ? UITableViewAutomaticDimension : 12;
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)path {
     UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle
@@ -73,15 +73,15 @@
     cell.detailTextLabel.adjustsFontForContentSizeCategory = YES;
     cell.textLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
     cell.detailTextLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
-    if (path.section == 0) {
+    if (path.section != 1) {
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
-        if (path.row == 0) {
+        if (path.section == 0) {
             cell.textLabel.text = self.title;
             cell.textLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
             cell.detailTextLabel.text = self.detailRows.count ? nil : self.message;
             cell.accessibilityTraits |= UIAccessibilityTraitHeader;
         } else {
-            NSArray *detail = self.detailRows[path.row - 1];
+            NSArray *detail = self.detailRows[path.row];
             cell.textLabel.text = detail[0];
             cell.textLabel.textColor = UIColor.secondaryLabelColor;
             cell.detailTextLabel.text = detail[1];
@@ -106,9 +106,9 @@
             label.font = actionFont;
             label.adjustsFontForContentSizeCategory = YES;
             label.numberOfLines = 0;
-            // Keep the enlarged row height independent of the action font size,
+            // Keep the compact row height independent of the action font size,
             // centering the text with equal padding above and below.
-            CGFloat rowHeight = MAX(44, bodyFont.lineHeight + 24) * 1.5;
+            CGFloat rowHeight = MAX(44, bodyFont.lineHeight + 24) * 1.5 * 0.75;
             CGFloat verticalPadding = (rowHeight - label.font.lineHeight) / 2;
             [cell.contentView addSubview:label];
             [NSLayoutConstraint activateConstraints:@[
@@ -140,7 +140,7 @@
 }
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)path {
     [tableView deselectRowAtIndexPath:path animated:YES];
-    if (path.section == 0) {
+    if (path.section != 1) {
         return;
     }
     tableView.userInteractionEnabled = NO;

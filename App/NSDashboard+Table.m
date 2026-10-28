@@ -471,7 +471,7 @@
     } else if (path.section == NSDashboardSectionAddGlobalRule) {
         [self editGlobalRule:nil];
     } else if (path.section == NSDashboardSectionGlobalRules) {
-        [self chooseGlobalRule:self.globalRuleKeys[path.row]];
+        [self editGlobalRule:self.globalRuleKeys[path.row]];
     } else if ((path.section == NSDashboardSectionRules || path.section == NSDashboardSectionSystemRules) &&
                [self identitiesForSection:path.section].count) {
         [self chooseActionForIdentity:[self identitiesForSection:path.section][path.row] defaultKey:nil];

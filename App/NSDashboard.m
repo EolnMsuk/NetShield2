@@ -3,6 +3,7 @@
 #import "../Shared/NSGlobalRule.h"
 #import "../Shared/NSExport.h"
 #import "../Shared/NSProviderHealth.h"
+#import "../Shared/NSRuleChoices.h"
 
 @interface NSCryptoWalletsController : UITableViewController
 @property(nonatomic, copy) NSArray<NSArray<NSString *> *> *wallets;
@@ -161,7 +162,7 @@
     NSMutableDictionary *monitor = [NSReadMonitor() mutableCopy];
     NSMutableArray *requests = [NSMutableArray new];
     for (NSDictionary *request in monitor[@"requests"]) {
-        if ([self.policy requiresPermissionForIdentity:request[@"identity"]]) {
+        if ([self.policy requiresPermissionForRequest:request]) {
             [requests addObject:request];
         }
     }
@@ -308,7 +309,7 @@
     }
     NSString *title = identity.length ? identity : @"Unidentified app";
     NSString *explanation = @"Choose a rule for new connections.";
-    NSArray *actions = @[ @"allow", @"block-inbound", @"block", @"remove" ];
+    NSArray *actions = [NSDirectionRuleValues() arrayByAddingObject:@"remove"];
     if ([key isEqual:@"default"]) {
         title = @"Default Rule";
         explanation = @"Choose what happens when an app without a saved rule connects. Ask me lets you "
@@ -420,69 +421,6 @@
                                                    : @"Domain";
     return [NSString stringWithFormat:@"%@: %@", kind, [key substringFromIndex:colon.location + 1]];
 }
-- (void)chooseGlobalRule:(NSString *)key {
-    [self chooseGlobalRule:key editingKey:nil];
-}
-- (void)chooseGlobalRule:(NSString *)key editingKey:(NSString *)original {
-    if (!self.policy) {
-        return;
-    }
-    NSRuleActionController *alert =
-        [NSRuleActionController controllerWithTitle:[self globalRuleTitle:key fullAppNames:YES]
-                                            message:@"Applies when all rule conditions match. Overrides app "
-                                                    @"rules and the iOS system traffic allowance."];
-    alert.opensExpanded = YES;
-    alert.selectedRule = self.policy.document[@"globalRules"][key];
-    NSMutableArray *actions =
-        [@[ @"allow", @"allow-outbound", @"allow-inbound", @"block-inbound", @"block-outbound", @"block" ]
-            mutableCopy];
-    BOOL existing = !original && self.policy.document[@"globalRules"][key] != nil;
-    if (existing) {
-        [actions addObject:@"remove"];
-    }
-    for (NSString *action in actions) {
-        [alert addActionWithTitle:[self ruleTitle:action]
-                             rule:action
-                          handler:^{
-                              [self updatePolicy:^BOOL(NSMutableDictionary *document, NSError **error) {
-                                  NSMutableDictionary *rules =
-                                      [document[@"globalRules"] mutableCopy] ?: [NSMutableDictionary new];
-                                  if (original) {
-                                      if (!rules[original] || (![original isEqual:key] && rules[key])) {
-                                          if (error) {
-                                              *error =
-                                                  [NSError errorWithDomain:@"NetShield2.Policy"
-                                                                      code:2
-                                                                  userInfo:@{
-                                                                      NSLocalizedDescriptionKey :
-                                                                          @"The original rule was removed or "
-                                                                          @"an identical rule already exists."
-                                                                  }];
-                                          }
-                                          return NO;
-                                      }
-                                      [rules removeObjectForKey:original];
-                                  }
-                                  if ([action isEqual:@"remove"]) {
-                                      [rules removeObjectForKey:key];
-                                  } else {
-                                      rules[key] = action;
-                                  }
-                                  document[@"globalRules"] = rules;
-                                  return YES;
-                              }];
-                          }];
-    }
-    if (existing) {
-        [alert addActionWithTitle:@"Edit Custom Rule"
-                             rule:nil
-                          handler:^{
-                              [self editGlobalRule:key];
-                          }];
-    }
-    [alert addActionWithTitle:@"Cancel" rule:nil handler:nil];
-    [self presentViewController:alert animated:YES completion:nil];
-}
 - (void)addCustomRuleForIdentity:(NSString *)identity connection:(NSDictionary *)connection {
     NSString *hosts = @"", *ports = @"", *protocol = @"any";
     NSString *action = self.policy.document[@"rules"][identity ?: @""] ?: @"allow";
@@ -571,17 +509,7 @@
     [self presentViewController:navigation animated:YES completion:nil];
 }
 - (NSString *)ruleTitle:(NSString *)rule {
-    return @{
-        @"ask" : @"Ask Me",
-        @"allow" : @"Allow",
-        @"allow-outbound" : @"Allow Outgoing",
-        @"allow-inbound" : @"Allow Incoming",
-        @"block" : @"Block In & Out",
-        @"block-inbound" : @"Block Incoming",
-        @"block-outbound" : @"Block Outgoing",
-        @"remove" : @"Remove Rule"
-    }[rule ?: @""]
-               ?: @"Default Rule";
+    return NSDirectionRuleTitle(rule ?: @"") ?: @{@"ask" : @"Ask Me", @"remove" : @"Remove Rule"}[rule ?: @""] ?: @"Default Rule";
 }
 - (void)firewallChanged:(UISwitch *)sender {
     if (self.busy) {

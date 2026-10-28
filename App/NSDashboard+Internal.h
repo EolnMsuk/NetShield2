@@ -71,8 +71,6 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
                 action:(NSString *)initialAction;
 - (void)exportRulesAndRecentActivityFromRow:(NSIndexPath *)path;
 - (void)editGlobalRule:(NSString *)original;
-- (void)chooseGlobalRule:(NSString *)key;
-- (void)chooseGlobalRule:(NSString *)key editingKey:(NSString *)original;
 - (NSString *)globalRuleTitle:(NSString *)key;
 - (NSString *)globalRuleTitle:(NSString *)key fullAppNames:(BOOL)fullAppNames;
 - (NSString *)ruleTitle:(NSString *)rule;
