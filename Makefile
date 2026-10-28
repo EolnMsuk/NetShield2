@@ -10,6 +10,9 @@ include $(THEOS)/makefiles/common.mk
 SUBPROJECTS = App FilterData FilterControl
 include $(THEOS_MAKE_PATH)/aggregate.mk
 
+before-all::
+	python3 scripts/sync_version.py
+
 before-package::
 	python3 scripts/prepare_package.py --stage "$(THEOS_STAGING_DIR)" --scheme "$(NETSHIELD_PACKAGE_VARIANT)"
 	chmod 755 "$(THEOS_STAGING_DIR)/DEBIAN/postinst" "$(THEOS_STAGING_DIR)/DEBIAN/prerm"

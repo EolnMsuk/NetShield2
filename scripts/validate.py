@@ -7,6 +7,7 @@ import re
 import struct
 from urllib.parse import urlsplit
 from prepare_package import PACKAGE_ARCHITECTURES, maintainer_script
+from sync_version import release_metadata
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
@@ -23,8 +24,7 @@ def plist(path):
 
 control = (ROOT / 'control').read_bytes()
 require(b'\r' not in control, 'control must have LF line endings')
-metadata = dict(line.split(': ', 1) for line in control.decode().splitlines() if ': ' in line)
-require(metadata['Version'] == '2.4.6', 'Wrong package version')
+metadata = release_metadata()
 require(metadata['Name'] == 'NetShield2', 'Wrong product name')
 require(metadata['Architecture'] == 'iphoneos-arm', 'Expected base rootful architecture; Theos overrides it for rootless and RootHide')
 require(metadata['Depends'] == 'firmware (>= 15.0), firmware (<< 19.0), uikittools', 'Expected iOS 15-18 package range')

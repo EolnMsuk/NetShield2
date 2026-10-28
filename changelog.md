@@ -1,5 +1,6 @@
 # 2.4.6
 
+- The build script now automatically pulls version numbers from the tweak's control file.
 - Added Allow Outgoing and Allow Incoming to custom rules.
 - Show connection details and direction in separate rows in recent-activity menus and network permission prompts.
 - Added Add Custom Rule to app and connection menus, prefilling available details without changing existing app rules.
