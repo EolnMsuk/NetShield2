@@ -15,7 +15,7 @@ Unanswered connections are blocked after 30 seconds. The latest 64 expired reque
 
 ## Options
 
-- **Firewall:** on/off; turning it off keeps your rules.
+- **Firewall:** on/off; enables/disables the content filter and rules.
 - **Filter System Sockets:** when enabled, the firewall is capable of filtering network for all apps and processes. Disable only if an app is crashing on launch.
 - **Allow all iOS system processes:** when enabled, processes starting with `com.apple` are allowed without prompts or permission notifications.
 - **Unidentified:** Allowed by default, set to blocked to prevent unknown processes from accessing network (not recommended).
