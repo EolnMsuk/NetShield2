@@ -183,9 +183,13 @@ static void TestConcurrentMutations(void) {
             }
         }
     });
+    NSPolicy *policy = NSReadPolicy(NULL);
+    CHECK(policy != nil);
     for (NSUInteger index = 0; index < 32; index++) {
-        CHECK([NSReadPolicy(NULL).document[@"rules"][
-            [NSString stringWithFormat:@"parallel.%lu", (unsigned long)index]] isEqual:@"block"]);
+        NSString *identity = [NSString stringWithFormat:@"parallel.%lu", (unsigned long)index];
+        CHECK([policy.document[@"rules"][identity] isEqual:@{@"both" : @"block"}]);
+        CHECK(![policy allowsIdentity:identity direction:NSFlowDirectionInbound]);
+        CHECK(![policy allowsIdentity:identity direction:NSFlowDirectionOutbound]);
     }
 }
 static void TestPermissionQueue(void) {
