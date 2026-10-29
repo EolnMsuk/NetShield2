@@ -173,7 +173,7 @@ jobs:
               ...repository,
               tag_name: version,
               target_commitish: context.sha,
-              name: `NetShield2 ${version}`,
+              name: `NetShield2 v${version}`,
               body,
               draft: true,
               prerelease: false
