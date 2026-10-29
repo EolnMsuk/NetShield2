@@ -617,10 +617,21 @@ static void TestGlobalDirectionStorage(void) {
             [queue resolveWithPolicy:policy now:2];
             VERIFY(completions == 1 && queue.waitingCount == 1);
             [queue cancelAll];
-            // Existing app directional blocks still allow their opposite direction.
+            // App directional blocks leave their opposite direction to the Default Rule,
+            // even alongside a global block covering the same named direction.
             document[@"rules"] = @{@"app" : action};
-            policy = [NSPolicy policyWithDocument:document error:NULL];
-            VERIFY([policy allowsIdentity:@"app" direction:opposite destination:peer]);
+            for (NSString *fallback in @[ @"ask", @"block", @"allow" ]) {
+                document[@"default"] = fallback;
+                policy = [NSPolicy policyWithDocument:document error:NULL];
+                VERIFY(policy);
+                VERIFY(![policy allowsIdentity:@"app" direction:matching destination:peer]);
+                VERIFY(![policy requiresPermissionForIdentity:@"app" direction:matching destination:peer]);
+                VERIFY([policy allowsIdentity:@"app" direction:opposite
+                                  destination:peer] == [fallback isEqual:@"allow"]);
+                VERIFY([policy requiresPermissionForIdentity:@"app" direction:opposite
+                                                 destination:peer] == [fallback isEqual:@"ask"]);
+            }
+            document[@"default"] = @"ask";
             document[@"rules"] = @{};
         }
     }
