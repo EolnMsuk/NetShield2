@@ -248,18 +248,19 @@
         UIButton *clear = [UIButton buttonWithType:UIButtonTypeSystem];
         clear.translatesAutoresizingMaskIntoConstraints = NO;
         [clear setTitle:@"Clear" forState:UIControlStateNormal];
-        [clear setTitleColor:UIColor.lightGrayColor forState:UIControlStateNormal];
-        [clear setTitleColor:UIColor.grayColor forState:UIControlStateDisabled];
-        clear.backgroundColor = UIColor.darkGrayColor;
+        [clear setTitleColor:UIColor.darkGrayColor forState:UIControlStateNormal];
+        [clear setTitleColor:UIColor.darkGrayColor forState:UIControlStateDisabled];
+        clear.backgroundColor = UIColor.grayColor;
         clear.layer.cornerRadius = 8;
-        clear.titleLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
         clear.titleLabel.adjustsFontForContentSizeCategory = YES;
         UIButtonConfiguration *configuration = [UIButtonConfiguration plainButtonConfiguration];
         configuration.contentInsets = NSDirectionalEdgeInsetsMake(8, 12, 8, 12);
-        configuration.baseForegroundColor = UIColor.lightGrayColor;
+        configuration.baseForegroundColor = UIColor.darkGrayColor;
         configuration.titleTextAttributesTransformer = ^NSDictionary *(NSDictionary *incoming) {
             NSMutableDictionary *attributes = [incoming mutableCopy];
-            attributes[NSFontAttributeName] = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+            UIFont *font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+            attributes[NSFontAttributeName] = [font fontWithSize:font.pointSize * 1.25];
+            attributes[NSForegroundColorAttributeName] = UIColor.darkGrayColor;
             return attributes;
         };
         clear.configuration = configuration;
