@@ -1,5 +1,6 @@
 #import "NSDashboard+Internal.h"
 #import "../Shared/NSRuleChoices.h"
+#import "../Shared/NSActivity.h"
 
 @implementation NSDashboard (Notifications)
 - (void)refreshNotificationSettings {
@@ -84,15 +85,24 @@
     NSRuleActionController *alert =
         [NSRuleActionController controllerWithTitle:identity.length ? identity : @"Unidentified app"
                                             message:message];
-    alert.detailRows = NSConnectionDetailRows(request[@"destination"], request[@"direction"]);
+    alert.detailRows = NSActivityDetailRows(request);
+    alert.clipboardText = NSActivityClipboardLine(request);
+    alert.connectionLayout = YES;
     alert.opensExpanded = YES;
     alert.centersTitle = YES;
     alert.centersActions = YES;
-    for (NSString *rule in NSDirectionRuleValues()) {
+    for (NSString *rule in NSConnectionRuleValues(request[@"direction"])) {
         [alert addActionWithTitle:[self ruleTitle:rule]
                              rule:rule
                           handler:^{
                               [self answerRequest:request rule:rule];
+                          }];
+    }
+    if (identity.length && !NSConnectionRuleValues(request[@"direction"]).count) {
+        [alert addActionWithTitle:@"Review App Rule"
+                             rule:nil
+                          handler:^{
+                              [self chooseActionForIdentity:identity defaultKey:nil];
                           }];
     }
     [alert addActionWithTitle:@"Add Custom Rule"

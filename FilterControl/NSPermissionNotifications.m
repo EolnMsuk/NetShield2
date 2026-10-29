@@ -55,8 +55,11 @@ static void NSWithdrawNotifications(id<NSPermissionNotificationCenter> center, N
         @synchronized(owner) {
             NSMutableArray *orphaned = [NSMutableArray new];
             for (UNNotificationRequest *request in requests) {
-                if ([request.content.categoryIdentifier isEqual:NSPermissionCategory] &&
-                    ![owner isCurrent:request.identifier]) {
+                if (NSIsPermissionCategory(request.content.categoryIdentifier) &&
+                    (![owner isCurrent:request.identifier] ||
+                     ![request.content.categoryIdentifier
+                         isEqual:NSPermissionCategoryForDirection(
+                                     owner.requestsByToken[request.identifier][@"direction"])])) {
                     [orphaned addObject:request.identifier];
                 }
             }
@@ -115,7 +118,18 @@ static void NSWithdrawNotifications(id<NSPermissionNotificationCenter> center, N
         self.tokens = next;
         NSMutableDictionary *requestsByToken = [NSMutableDictionary new];
         for (NSDictionary *request in requests) {
-            requestsByToken[request[@"token"]] = request;
+            NSString *token = request[@"token"];
+            if (self.requestsByToken[token] &&
+                ![(self.requestsByToken[token][@"direction"] ?: @"unknown") isEqual:(request[@"direction"]
+                                                                                         ?: @"unknown")]) {
+                NSWithdrawNotifications(self.center, @[ token ]);
+                [self.submitted removeObject:token];
+                [self.submitting removeObject:token];
+                [self.submissionIDs removeObjectForKey:token];
+                [self.attempts removeObjectForKey:token];
+                [self.attemptTimes removeObjectForKey:token];
+            }
+            requestsByToken[token] = request;
         }
         self.requestsByToken = requestsByToken;
         if (revision && ![revision isEqual:self.retryRevision]) {
@@ -150,9 +164,10 @@ static void NSWithdrawNotifications(id<NSPermissionNotificationCenter> center, N
     UNMutableNotificationContent *content = [UNMutableNotificationContent new];
     content.title = NSIdentityDisplayName(identity);
     content.body = @"Long-press this banner to Allow or Block";
-    content.categoryIdentifier = NSPermissionCategory;
+    content.categoryIdentifier = NSPermissionCategoryForDirection(request[@"direction"]);
     content.sound = UNNotificationSound.defaultSound;
-    content.userInfo = @{@"token" : token, @"identity" : identity};
+    content.userInfo =
+        @{@"token" : token, @"identity" : identity, @"direction" : request[@"direction"] ?: @"unknown"};
     UNNotificationRequest *notification = [UNNotificationRequest requestWithIdentifier:token
                                                                                content:content
                                                                                trigger:nil];
@@ -172,11 +187,13 @@ static void NSWithdrawNotifications(id<NSPermissionNotificationCenter> center, N
                  return;
              }
              @synchronized(owner) {
-                 [owner.submitting removeObject:token];
                  if (![owner.submissionIDs[token] isEqual:submission]) {
-                     NSWithdrawNotifications(center, @[ token ]);
+                     if (!owner.submissionIDs[token]) {
+                         NSWithdrawNotifications(center, @[ token ]);
+                     }
                      return;
                  }
+                 [owner.submitting removeObject:token];
                  if (NSShouldWithdrawPermissionRequestNotification(
                          NSReadPolicy(NULL), owner.requestsByToken[token], [owner isCurrent:token])) {
                      NSWithdrawNotifications(center, @[ token ]);

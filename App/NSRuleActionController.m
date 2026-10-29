@@ -1,8 +1,8 @@
 #import "NSRuleActionController.h"
 #import "NSRuleAppearance.h"
+#import "../Shared/NSRuleChoices.h"
 
 @interface NSRuleActionController ()
-@property(nonatomic, copy) NSString *message;
 @property(nonatomic, strong) NSMutableArray<NSDictionary *> *choices;
 @end
 
@@ -52,31 +52,28 @@
     (UIPresentationController *)controller {
     return UIModalPresentationNone;
 }
+- (NSInteger)logicalSection:(NSInteger)section {
+    return self.connectionLayout ? [@[ @1, @0, @3, @2 ][section] integerValue] : section;
+}
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
     return self.clipboardText ? 4 : self.detailRows.count ? 3 : 2;
 }
-- (NSInteger)copySection {
-    return self.clipboardText ? 2 : NSNotFound;
-}
-- (NSInteger)detailsSection {
-    return self.clipboardText ? 3 : 2;
-}
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    return section == 0 || section == self.copySection ? 1
-           : section == 1                              ? self.choices.count
-                                                       : self.detailRows.count;
+    section = [self logicalSection:section];
+    return section == 0 || section == 3 ? 1 : section == 1 ? self.choices.count : self.detailRows.count;
 }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
-    return section == self.detailsSection || (section == 0 && self.centersTitle && !self.detailRows.count)
-               ? self.message
-               : nil;
+    section = [self logicalSection:section];
+    return section == 2 || (section == 0 && self.centersTitle && !self.detailRows.count) ? self.message : nil;
 }
 - (CGFloat)tableView:(UITableView *)tableView heightForFooterInSection:(NSInteger)section {
-    return section == self.detailsSection || (section == 0 && self.centersTitle && !self.detailRows.count)
+    section = [self logicalSection:section];
+    return section == 2 || (section == 0 && self.centersTitle && !self.detailRows.count)
                ? UITableViewAutomaticDimension
                : 12;
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)path {
+    path = [NSIndexPath indexPathForRow:path.row inSection:[self logicalSection:path.section]];
     UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle
                                                    reuseIdentifier:nil];
     cell.textLabel.numberOfLines = 0;
@@ -85,8 +82,8 @@
     cell.detailTextLabel.adjustsFontForContentSizeCategory = YES;
     cell.textLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
     cell.detailTextLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
-    if (path.section == self.copySection) {
-        cell.textLabel.text = @"Copy connection details";
+    if (path.section == 3) {
+        cell.textLabel.text = @"Copy details";
         cell.textLabel.textColor = UIColor.systemBlueColor;
         cell.textLabel.textAlignment = NSTextAlignmentCenter;
         cell.accessibilityTraits |= UIAccessibilityTraitButton;
@@ -130,7 +127,8 @@
     } else {
         NSDictionary *choice = self.choices[path.row];
         UIColor *color = NSRuleColor(choice[@"rule"]);
-        BOOL selected = [choice[@"rule"] length] && [choice[@"rule"] isEqual:self.selectedRule];
+        BOOL selected = [choice[@"rule"] length] && ([choice[@"rule"] isEqual:self.selectedRule] ||
+                                                     [self.selectedRules containsObject:choice[@"rule"]]);
         UIColor *textColor = selected ? UIColor.labelColor : (color ?: UIColor.systemBlueColor);
         UIFont *bodyFont = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
         UIFont *actionFont = [[UIFontMetrics metricsForTextStyle:UIFontTextStyleBody]
@@ -180,17 +178,31 @@
 }
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)path {
     [tableView deselectRowAtIndexPath:path animated:YES];
-    if (path.section == self.copySection) {
+    NSIndexPath *visiblePath = path;
+    path = [NSIndexPath indexPathForRow:path.row inSection:[self logicalSection:path.section]];
+    if (path.section == 3) {
         UIPasteboard.generalPasteboard.string = self.clipboardText;
-        UITableViewCell *cell = [tableView cellForRowAtIndexPath:path];
+        UITableViewCell *cell = [tableView cellForRowAtIndexPath:visiblePath];
         cell.textLabel.text = @"Copied";
         UIAccessibilityPostNotification(UIAccessibilityAnnouncementNotification, @"Copied to clipboard");
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-            cell.textLabel.text = @"Copy connection details";
+            cell.textLabel.text = @"Copy details";
         });
         return;
     }
     if (path.section != 1) {
+        return;
+    }
+    NSString *rule = self.choices[path.row][@"rule"];
+    if (self.keepsRuleSelectionsOpen && [NSDirectionRuleValues() containsObject:rule]) {
+        if ([self.selectedRules containsObject:rule]) {
+            return;
+        }
+        void (^save)(void) = self.choices[path.row][@"handler"];
+        tableView.userInteractionEnabled = NO;
+        save();
+        tableView.userInteractionEnabled = YES;
+        [tableView reloadData];
         return;
     }
     tableView.userInteractionEnabled = NO;

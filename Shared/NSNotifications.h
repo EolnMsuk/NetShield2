@@ -1,10 +1,27 @@
 #import <UserNotifications/UserNotifications.h>
 #import "NSStore.h"
+#import "NSRuleChoices.h"
 
 #define NSPermissionCategory @"NETSHIELD_PERMISSION"
 #define NSAllowAction @"NETSHIELD_ALLOW"
 #define NSBlockIncomingAction @"NETSHIELD_BLOCK_INCOMING"
 #define NSBlockAction @"NETSHIELD_BLOCK"
+
+static inline NSString *NSPermissionCategoryForDirection(NSString *direction) {
+    if ([direction isEqual:@"inbound"]) {
+        return @"NETSHIELD_PERMISSION_INCOMING";
+    }
+    if ([direction isEqual:@"outbound"]) {
+        return @"NETSHIELD_PERMISSION_OUTGOING";
+    }
+    return @"NETSHIELD_PERMISSION_REVIEW";
+}
+static inline BOOL NSIsPermissionCategory(NSString *category) {
+    return [@[
+        @"NETSHIELD_PERMISSION", @"NETSHIELD_PERMISSION_INCOMING", @"NETSHIELD_PERMISSION_OUTGOING",
+        @"NETSHIELD_PERMISSION_REVIEW"
+    ] containsObject:category];
+}
 
 static inline void NSRemoveAutomaticallyAllowedNotifications(void) {
     UNUserNotificationCenter *center = UNUserNotificationCenter.currentNotificationCenter;
@@ -13,7 +30,7 @@ static inline void NSRemoveAutomaticallyAllowedNotifications(void) {
             NSPolicy *policy = NSReadPolicy(NULL);
             NSMutableArray *identifiers = [NSMutableArray new];
             for (UNNotificationRequest *request in requests) {
-                if ([request.content.categoryIdentifier isEqual:NSPermissionCategory] &&
+                if (NSIsPermissionCategory(request.content.categoryIdentifier) &&
                     [policy automaticallyAllowsIdentity:request.content.userInfo[@"identity"]]) {
                     [identifiers addObject:request.identifier];
                 }
@@ -27,7 +44,7 @@ static inline void NSRemoveAutomaticallyAllowedNotifications(void) {
         NSMutableArray *identifiers = [NSMutableArray new];
         for (UNNotification *notification in notifications) {
             UNNotificationRequest *request = notification.request;
-            if ([request.content.categoryIdentifier isEqual:NSPermissionCategory] &&
+            if (NSIsPermissionCategory(request.content.categoryIdentifier) &&
                 [policy automaticallyAllowsIdentity:request.content.userInfo[@"identity"]]) {
                 [identifiers addObject:request.identifier];
             }
@@ -39,21 +56,20 @@ static inline void NSRemoveAutomaticallyAllowedNotifications(void) {
 }
 
 static inline void NSRegisterPermissionActions(void) {
-    UNNotificationActionOptions options = UNNotificationActionOptionAuthenticationRequired;
-    UNNotificationAction *allow = [UNNotificationAction actionWithIdentifier:NSAllowAction
-                                                                       title:@"Allow"
-                                                                     options:options];
-    UNNotificationAction *blockIncoming = [UNNotificationAction actionWithIdentifier:NSBlockIncomingAction
-                                                                               title:@"Block Incoming"
-                                                                             options:options];
-    UNNotificationAction *block = [UNNotificationAction actionWithIdentifier:NSBlockAction
-                                                                       title:@"Keep Blocking"
-                                                                     options:options];
-    UNNotificationCategory *category =
-        [UNNotificationCategory categoryWithIdentifier:NSPermissionCategory
-                                               actions:@[ allow, blockIncoming, block ]
-                                     intentIdentifiers:@[]
-                                               options:UNNotificationCategoryOptionNone];
-    [UNUserNotificationCenter.currentNotificationCenter
-        setNotificationCategories:[NSSet setWithObject:category]];
+    NSMutableSet *categories = [NSMutableSet new];
+    for (NSString *direction in @[ @"inbound", @"outbound", @"unknown" ]) {
+        NSMutableArray *actions = [NSMutableArray new];
+        for (NSString *rule in NSConnectionRuleValues(direction)) {
+            [actions addObject:[UNNotificationAction
+                                   actionWithIdentifier:rule
+                                                  title:NSDirectionRuleTitle(rule)
+                                                options:UNNotificationActionOptionAuthenticationRequired]];
+        }
+        [categories addObject:[UNNotificationCategory
+                                  categoryWithIdentifier:NSPermissionCategoryForDirection(direction)
+                                                 actions:actions
+                                       intentIdentifiers:@[]
+                                                 options:UNNotificationCategoryOptionNone]];
+    }
+    [UNUserNotificationCenter.currentNotificationCenter setNotificationCategories:categories];
 }

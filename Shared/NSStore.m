@@ -213,8 +213,11 @@ BOOL NSEnsurePolicy(NSError **error) {
     }
     @try {
         NSError *readError = nil;
-        if (NSReadPolicy(&readError)) {
-            return YES;
+        NSPolicy *existing = NSReadPolicy(&readError);
+        if (existing) {
+            NSDictionary *stored = NSReadDocument(NSPolicyFile, error);
+            return stored && ([stored isEqual:existing.document] ||
+                              NSWriteDocument(existing.document, NSPolicyFile, error));
         }
         if (![readError.domain isEqual:NSPOSIXErrorDomain] || readError.code != ENOENT) {
             if (error) {
@@ -469,7 +472,10 @@ NSDictionary *NSReadMonitor(void) {
 }
 
 BOOL NSAnswerPermissionRequest(NSDictionary *request, BOOL allow, NSError **error) {
-    return NSAnswerPermissionRequestWithRule(request, allow ? @"allow" : @"block", error);
+    return NSAnswerPermissionRequestWithRule(request,
+                                             [NSString stringWithFormat:@"%@-%@", allow ? @"allow" : @"block",
+                                                                        request[@"direction"] ?: @"unknown"],
+                                             error);
 }
 BOOL NSAnswerPermissionRequestWithRule(NSDictionary *request, NSString *rule, NSError **error) {
     if (![NSDirectionRuleValues() containsObject:rule ?: @""]) {
@@ -484,15 +490,27 @@ BOOL NSAnswerPermissionRequestWithRule(NSDictionary *request, NSString *rule, NS
             if (!policy) {
                 return NO;
             }
-            NSDictionary *response = NSPermissionResponseDocument(
-                request, NSReadMonitor(), policy, NSDate.date, [rule isEqual:@"allow"], mutationError);
+            NSDictionary *monitor = NSReadMonitor();
+            NSDictionary *response = NSPermissionResponseDocument(request, monitor, policy, NSDate.date,
+                                                                  [rule hasPrefix:@"allow"], mutationError);
             if (!response) {
                 return NO;
             }
+            NSString *direction = nil;
+            for (NSDictionary *candidate in monitor[@"requests"]) {
+                if ([candidate[@"token"] isEqual:request[@"token"]]) {
+                    direction = candidate[@"direction"];
+                }
+            }
+            if (![NSConnectionRuleValues(direction) containsObject:rule] ||
+                (request[@"direction"] && ![request[@"direction"] isEqual:direction])) {
+                if (mutationError) {
+                    *mutationError =
+                        NSStorageError(@"This connection changed direction. Review its current request.");
+                }
+                return NO;
+            }
             [document setDictionary:response];
-            NSMutableDictionary *rules = [document[@"rules"] mutableCopy];
-            rules[request[@"identity"]] = rule;
-            document[@"rules"] = rules;
             return YES;
         },
         error);
@@ -543,12 +561,22 @@ NSDictionary *NSPermissionResponseDocument(NSDictionary *request, NSDictionary *
     }
     NSMutableDictionary *document = [policy.document mutableCopy];
     NSMutableDictionary *rules = [document[@"rules"] mutableCopy];
-    rules[request[@"identity"]] = allow ? @"allow" : @"block";
+    NSString *direction = currentRequest[@"direction"];
+    NSString *action = [NSString stringWithFormat:@"%@-%@", allow ? @"allow" : @"block", direction];
+    if (![NSConnectionRuleValues(direction) containsObject:action]) {
+        if (error) {
+            *error = NSStorageError(@"Connection direction is unavailable. Review the app rule.");
+        }
+        return nil;
+    }
+    rules[request[@"identity"]] = NSAppRuleBySelecting(rules[request[@"identity"]], action);
     document[@"rules"] = rules;
     if (NSValidDestination(destination)) {
         NSMutableDictionary *destinations =
             [document[@"ruleDestinations"] mutableCopy] ?: [NSMutableDictionary new];
-        destinations[request[@"identity"]] = destination;
+        if (!destinations[request[@"identity"]]) {
+            destinations[request[@"identity"]] = destination;
+        }
         document[@"ruleDestinations"] = destinations;
     }
     document[@"revision"] = NSUUID.UUID.UUIDString;

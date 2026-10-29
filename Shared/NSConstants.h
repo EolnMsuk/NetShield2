@@ -2,7 +2,7 @@
 
 enum {
     NSEngineVersion = 20042,
-    NSSchemaVersion = 2,
+    NSSchemaVersion = 3,
     NSMaximumRules = 4096,
     NSMaximumIdentityLength = 1024,
     NSMaximumEvents = 300,

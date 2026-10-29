@@ -1,3 +1,4 @@
+#import "../Shared/NSRuleChoices.h"
 #import "NSDashboard+Internal.h"
 #import "../Shared/NSActivity.h"
 
@@ -314,7 +315,7 @@
         title.translatesAutoresizingMaskIntoConstraints = NO;
         title.text = [self tableView:tableView titleForHeaderInSection:section];
         title.font = [[UIFontMetrics metricsForTextStyle:UIFontTextStyleBody]
-            scaledFontForFont:[UIFont systemFontOfSize:17]];
+            scaledFontForFont:[UIFont systemFontOfSize:16]];
         title.adjustsFontForContentSizeCategory = YES;
         title.textColor = UIColor.secondaryLabelColor;
         title.numberOfLines = 0;
@@ -367,10 +368,10 @@
             [title.leadingAnchor constraintEqualToAnchor:margins.leadingAnchor],
             [title.trailingAnchor constraintLessThanOrEqualToAnchor:clear.leadingAnchor constant:-12],
             [title.topAnchor constraintGreaterThanOrEqualToAnchor:margins.topAnchor],
-            [title.bottomAnchor constraintLessThanOrEqualToAnchor:clear.bottomAnchor],
+
             [clear.trailingAnchor constraintEqualToAnchor:margins.trailingAnchor],
             [clear.topAnchor constraintEqualToAnchor:margins.topAnchor],
-            [clear.centerYAnchor constraintEqualToAnchor:title.centerYAnchor],
+            [title.bottomAnchor constraintEqualToAnchor:clear.bottomAnchor],
             [clear.heightAnchor constraintGreaterThanOrEqualToConstant:33],
             [clear.widthAnchor constraintGreaterThanOrEqualToConstant:64]
         ]];
@@ -449,6 +450,14 @@
         [label.bottomAnchor constraintEqualToAnchor:margins.bottomAnchor]
     ]];
     return header;
+}
+- (void)tableView:(UITableView *)tableView
+    willDisplayHeaderView:(UIView *)view
+               forSection:(NSInteger)section {
+    if ([view isKindOfClass:UITableViewHeaderFooterView.class]) {
+        ((UITableViewHeaderFooterView *)view).textLabel.font = [[UIFontMetrics
+            metricsForTextStyle:UIFontTextStyleFootnote] scaledFontForFont:[UIFont systemFontOfSize:16]];
+    }
 }
 - (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section {
     if (section == NSDashboardSectionGlobalRules) {
@@ -612,7 +621,11 @@
     } else if (path.section == NSDashboardSectionGlobalRules) {
         NSString *key = self.globalRuleKeys[path.row];
         NSString *rule = self.policy.document[@"globalRules"][key];
-        UIColor *color = NSRuleColor(rule);
+        UIColor *color =
+            [rule isKindOfClass:NSDictionary.class]
+                ? (NSAppRuleSelections(rule).count == 1 ? NSRuleColor(NSAppRuleSelections(rule).firstObject)
+                                                        : nil)
+                : NSRuleColor(rule);
         if (color) {
             cell.backgroundColor = [color colorWithAlphaComponent:0.14];
         }
@@ -627,8 +640,12 @@
             cell.accessoryType = UITableViewCellAccessoryNone;
         } else {
             NSString *identity = identities[path.row];
-            NSString *rule = self.policy.document[@"rules"][identity];
-            UIColor *color = NSRuleColor(rule);
+            id rule = self.policy.document[@"rules"][identity];
+            UIColor *color = [rule isKindOfClass:NSDictionary.class]
+                                 ? (NSAppRuleSelections(rule).count == 1
+                                        ? NSRuleColor(NSAppRuleSelections(rule).firstObject)
+                                        : nil)
+                                 : NSRuleColor(rule);
             if (color) {
                 cell.backgroundColor = [color colorWithAlphaComponent:0.14];
             }
@@ -637,8 +654,8 @@
                 [self.policy automaticallyAllowsIdentity:identity]
                     ? [NSString stringWithFormat:
                                     @"Allowed by iOS setting unless a global rule matches. Saved rule: %@",
-                                    [self ruleTitle:self.policy.document[@"rules"][identity]]]
-                    : [self ruleTitle:self.policy.document[@"rules"][identity]];
+                                    NSAppRuleSummary(self.policy.document[@"rules"][identity])]
+                    : NSAppRuleSummary(self.policy.document[@"rules"][identity]);
             NSDictionary *destination = self.policy.document[@"ruleDestinations"][identity];
             if (destination) {
                 cell.detailTextLabel.text = [cell.detailTextLabel.text

@@ -125,6 +125,14 @@ typedef NS_ENUM(NSInteger, NSGlobalEditorSection) {
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     return section == NSGlobalEditorPorts ? 2 : 1;
 }
+- (void)tableView:(UITableView *)tableView
+    willDisplayHeaderView:(UIView *)view
+               forSection:(NSInteger)section {
+    if ([view isKindOfClass:UITableViewHeaderFooterView.class]) {
+        ((UITableViewHeaderFooterView *)view).textLabel.font = [[UIFontMetrics
+            metricsForTextStyle:UIFontTextStyleFootnote] scaledFontForFont:[UIFont systemFontOfSize:16]];
+    }
+}
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
     return @[ @"Direction", @"App", @"Domains / IP ranges", @"Port", @"Protocol" ][section];
 }

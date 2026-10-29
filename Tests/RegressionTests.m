@@ -1,3 +1,5 @@
+#import "../Shared/NSNotifications.h"
+#import "../Shared/NSRuleChoices.h"
 #import <Foundation/Foundation.h>
 #import "../Shared/NSStore.h"
 #import "../Shared/NSActivity.h"
@@ -65,7 +67,7 @@ static void TestPolicyAndCache(void) {
             return YES;
         },
         NULL));
-    CHECK([NSReadPolicy(NULL).document[@"rules"][@"test.app"] isEqual:@"block"]);
+    CHECK([NSReadPolicy(NULL).document[@"rules"][@"test.app"] isEqual:NSAppRuleRecord(@"block")]);
 }
 
 static void TestRulesAndActivityExport(void) {
@@ -101,10 +103,10 @@ static void TestRulesAndActivityExport(void) {
         CHECK(data && !error);
         NSDictionary *export = [NSJSONSerialization JSONObjectWithData:data options:0 error:&error];
         CHECK(export && !error);
-        CHECK([export[@"appRules"] isEqual:@{@"test.app" : @"block-outbound"}]);
+        CHECK([export[@"appRules"] isEqual:@{@"test.app" : NSAppRuleRecord(@"block-outbound")}]);
         CHECK([export[@"systemRules"] count] == systemIdentities.count);
         for (NSString *identity in systemIdentities) {
-            CHECK([export[@"systemRules"][identity] isEqual:@"block"]);
+            CHECK([export[@"systemRules"][identity] isEqual:NSAppRuleRecord(@"block")]);
             CHECK([policy automaticallyAllowsIdentity:identity] == allowSystem.boolValue);
         }
         CHECK([export[@"allowAppleSystemProcesses"] isEqual:allowSystem]);
@@ -113,7 +115,9 @@ static void TestRulesAndActivityExport(void) {
         CHECK([export[@"recentActivity"][0][@"time"] isEqual:@"1970-01-01T00:00:00Z"]);
         CHECK([export[@"recentActivity"][0][@"bytesOut"] isEqual:event[@"bytesOut"]]);
         CHECK([event[@"time"] isKindOfClass:NSDate.class]);
-        CHECK([policy.document[@"rules"] isEqual:rules]);
+        for (NSString *identity in rules) {
+            CHECK([policy.document[@"rules"][identity] isEqual:NSAppRuleRecord(rules[identity])]);
+        }
     }
     NSData *empty = NSRulesAndActivityJSON(Policy(@{}), @[], @"2.2.6", NULL);
     NSDictionary *export = [NSJSONSerialization JSONObjectWithData:empty options:0 error:NULL];
@@ -249,7 +253,7 @@ static void TestPermissionQueue(void) {
                        now:100
                       date:NSDate.date
                 completion:^(BOOL allow) {
-                    CHECK(allow);
+                    CHECK(!allow);
                     directional++;
                 }];
     [queue resolveWithPolicy:Policy(@{@"directional" : @"block-inbound"}) now:129];
@@ -1048,6 +1052,36 @@ static void TestGlobalRules(void) {
         CHECK([NSReadPolicy(NULL).document[@"globalRules"] count] == 0);
     }
 }
+static void TestCompositeAppRules(void) {
+    NSDictionary *first = NSAppRuleBySelecting(nil, @"allow-outbound");
+    CHECK([NSAppRuleBySelecting(first, @"allow-outbound") isEqual:first]);
+    NSDictionary *mixed = NSAppRuleBySelecting(first, @"block-inbound");
+    CHECK(NSAppRuleSelections(mixed).count == 2);
+    NSPolicy *policy = Policy(@{@"app" : mixed});
+    CHECK([policy allowsIdentity:@"app" direction:NSFlowDirectionOutbound]);
+    CHECK(![policy allowsIdentity:@"app" direction:NSFlowDirectionInbound]);
+    CHECK(![policy requiresPermissionForIdentity:@"app"]);
+    NSDictionary *both = NSAppRuleBySelecting(mixed, @"allow");
+    CHECK([NSAppRuleSelections(both) isEqual:@[ @"allow" ]]);
+    CHECK([NSAppRuleBySelecting(both, @"block-inbound") isEqual:mixed]);
+    CHECK(!NSAppRuleRecord(@{@"both" : @"allow", @"inbound" : @"block"}));
+    CHECK(!NSAppRuleRecord(@{@"inbound" : @"ask"}));
+    for (NSString *fallback in @[ @"ask", @"block", @"allow" ]) {
+        NSMutableDictionary *legacy = [[NSPolicy defaultDocument] mutableCopy];
+        legacy[@"schema"] = @2;
+        legacy[@"default"] = fallback;
+        legacy[@"rules"] = @{@"app" : @"block-inbound"};
+        policy = [NSPolicy policyWithDocument:legacy error:NULL];
+        CHECK([policy.document[@"schema"] isEqual:@(NSSchemaVersion)]);
+        CHECK(![policy allowsIdentity:@"app" direction:NSFlowDirectionInbound]);
+        CHECK([policy allowsIdentity:@"app"
+                           direction:NSFlowDirectionOutbound] == [fallback isEqual:@"allow"]);
+        CHECK([policy requiresPermissionForIdentity:@"app"
+                                          direction:NSFlowDirectionOutbound
+                                        destination:@{}] == [fallback isEqual:@"ask"]);
+    }
+}
+
 static void TestDirectionalAppAllows(void) {
     for (NSString *rule in @[ @"allow-inbound", @"allow-outbound" ]) {
         NSFlowDirection matching =
@@ -1108,7 +1142,7 @@ static void TestDirectionalAppAllows(void) {
         CHECK(
             NSWriteDocument(Monitor(queue.requests, YES, NSEngineVersion, NSDate.date), NSMonitorFile, NULL));
         CHECK(NSAnswerPermissionRequestWithRule(request, rule, NULL));
-        CHECK([NSReadPolicy(NULL).document[@"rules"][@"direction.app"] isEqual:rule]);
+        CHECK([NSReadPolicy(NULL).document[@"rules"][@"direction.app"] isEqual:NSAppRuleRecord(rule)]);
         [queue resolveWithPolicy:NSReadPolicy(NULL) now:2];
         CHECK(allowed == 1 && blocked == 0 && queue.waitingCount == 1);
         NSDictionary *remaining = queue.requests.firstObject;
@@ -1118,7 +1152,11 @@ static void TestDirectionalAppAllows(void) {
             NSWriteDocument(Monitor(queue.requests, YES, NSEngineVersion, NSDate.date), NSMonitorFile, NULL));
         NSMutableDictionary *forged = [remaining mutableCopy];
         forged[@"direction"] = request[@"direction"];
-        CHECK(NSAnswerPermissionRequestWithRule(forged, @"block", NULL));
+        CHECK(!NSAnswerPermissionRequestWithRule(forged, @"block", NULL));
+        NSString *oppositeBlock =
+            [remaining[@"direction"] isEqual:@"inbound"] ? @"block-inbound" : @"block-outbound";
+        CHECK(NSAnswerPermissionRequestWithRule(remaining, oppositeBlock, NULL));
+        CHECK(NSAppRuleSelections(NSReadPolicy(NULL).document[@"rules"][@"direction.app"]).count == 2);
         [queue resolveWithPolicy:NSReadPolicy(NULL) now:3];
         CHECK(allowed == 1 && blocked == 1 && queue.requests.count == 0);
     }
@@ -1129,13 +1167,14 @@ static void TestDirectionalPermissionAnswers(void) {
         CHECK(NSWriteDocument([NSPolicy defaultDocument], NSPolicyFile, NULL));
         NSPermissionQueue *queue = [NSPermissionQueue new];
         NSDictionary *destination = @{@"domain" : @"incoming.example"};
-        NSDictionary *request = [queue enqueueIdentity:@"incoming.app"
-                                             direction:NSFlowDirectionOutbound
-                                           destination:destination
-                                                   now:0
-                                                  date:NSDate.date
-                                            completion:^(BOOL allow){
-                                            }];
+        NSDictionary *request = [queue
+            enqueueIdentity:@"incoming.app"
+                  direction:[rule isEqual:@"block-inbound"] ? NSFlowDirectionInbound : NSFlowDirectionOutbound
+                destination:destination
+                        now:0
+                       date:NSDate.date
+                 completion:^(BOOL allow){
+                 }];
         CHECK(
             NSWriteDocument(Monitor(queue.requests, YES, NSEngineVersion, NSDate.date), NSMonitorFile, NULL));
         CHECK(!NSAnswerPermissionRequestWithRule(request, @"invalid", NULL));
@@ -1147,12 +1186,10 @@ static void TestDirectionalPermissionAnswers(void) {
         forged[@"destination"] = @{@"domain" : @"forged.example"};
         CHECK(NSAnswerPermissionRequestWithRule(forged, rule, NULL));
         NSPolicy *policy = NSReadPolicy(NULL);
-        CHECK([policy.document[@"rules"][@"incoming.app"] isEqual:rule]);
+        CHECK([policy.document[@"rules"][@"incoming.app"] isEqual:NSAppRuleRecord(rule)]);
         CHECK([policy.document[@"ruleDestinations"][@"incoming.app"] isEqual:destination]);
-        CHECK([policy allowsIdentity:@"incoming.app"
-                           direction:NSFlowDirectionInbound] == [rule isEqual:@"block-outbound"]);
-        CHECK([policy allowsIdentity:@"incoming.app"
-                           direction:NSFlowDirectionOutbound] == [rule isEqual:@"block-inbound"]);
+        CHECK([policy allowsIdentity:@"incoming.app" direction:NSFlowDirectionInbound] == NO);
+        CHECK(![policy allowsIdentity:@"incoming.app" direction:NSFlowDirectionOutbound]);
         CHECK(!NSAnswerPermissionRequestWithRule(request, rule, NULL));
     }
 }
@@ -1171,8 +1208,8 @@ static void TestAnswersAndReset(void) {
     CHECK(NSAnswerPermissionRequest(request, YES, NULL));
     CHECK(!oldDashboardSnapshot.document[@"rules"][@"answered"]);
     SaveRule(@"edited", @"block");
-    CHECK([NSReadPolicy(NULL).document[@"rules"][@"answered"] isEqual:@"allow"]);
-    CHECK([NSReadPolicy(NULL).document[@"rules"][@"edited"] isEqual:@"block"]);
+    CHECK([NSReadPolicy(NULL).document[@"rules"][@"answered"] isEqual:NSAppRuleRecord(@"allow-outbound")]);
+    CHECK([NSReadPolicy(NULL).document[@"rules"][@"edited"] isEqual:NSAppRuleRecord(@"block")]);
     CHECK(!NSAnswerPermissionRequest(request, NO, NULL));
     NSString *revision = NSReadPolicy(NULL).document[@"revision"];
     NSStoreLock *running = NSAcquireProviderLock(NULL);
@@ -1341,7 +1378,8 @@ static void TestLateNotifications(void) {
     CHECK([banner.content.body isEqual:@"Long-press this banner to Allow or Block"]);
     CHECK(banner.content.subtitle.length == 0);
     CHECK(banner.content.attachments.count == 0);
-    CHECK([banner.content.userInfo isEqual:@{@"token" : @"old-token", @"identity" : @"notify.app"}]);
+    CHECK([banner.content.userInfo
+        isEqual:@{@"token" : @"old-token", @"identity" : @"notify.app", @"direction" : @"unknown"}]);
     CHECK([request[@"destination"][@"domain"] isEqual:@"notify.example"]);
     CHECK([request[@"destination"][@"address"] isEqual:@"192.0.2.1"]);
     CHECK(![banner.content.body containsString:@"notify.example"]);
@@ -1393,7 +1431,11 @@ static void TestDirectionalNotifications(void) {
     // The same queue token now represents the remaining opposite-direction waiter.
     [notifications updateRequests:@[ outgoing ] policy:NSReadPolicy(NULL) retryRevision:nil];
     [center.removed removeAllObjects];
+    CHECK(center.requests.count == 2);
+    CHECK([((UNNotificationRequest *)center.requests[1]).content.categoryIdentifier
+        isEqual:NSPermissionCategoryForDirection(@"outbound")]);
     [center finish:0 error:nil];
+    [center finish:1 error:nil];
     CHECK(![center.removed containsObject:@"mixed-token"]);
     CHECK(center.settingsCompletions.count == 1);
     [notifications updateRequests:@[ incoming ] policy:NSReadPolicy(NULL) retryRevision:nil];
@@ -1502,6 +1544,7 @@ int main(void) {
         TestReleaseVersions();
         TestIdentityDisplay();
         TestDirectionalPermissionAnswers();
+        TestCompositeAppRules();
         TestDirectionalAppAllows();
         TestAnswersAndReset();
         TestSocketSettingsAndDestinations();

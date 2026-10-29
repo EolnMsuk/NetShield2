@@ -71,7 +71,7 @@
     self.events = [NSActivityAfterClear(self.events) mutableCopy];
     return @{
         @"engine" : @(NSEngineVersion),
-        @"schema" : @(NSSchemaVersion),
+        @"schema" : @2,
         @"controlRunning" : @(running),
         @"session" : self.session ?: @"",
         @"activation" : self.filterConfiguration.vendorConfiguration[@"activation"] ?: @"",

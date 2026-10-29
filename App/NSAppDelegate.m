@@ -37,17 +37,14 @@
              withCompletionHandler:(void (^)(void))completionHandler {
     dispatch_async(dispatch_get_main_queue(), ^{
         NSDictionary *request = response.notification.request.content.userInfo;
-        if ([response.notification.request.content.categoryIdentifier isEqual:NSPermissionCategory] &&
+        if (NSIsPermissionCategory(response.notification.request.content.categoryIdentifier) &&
             [request[@"token"] isKindOfClass:NSString.class] &&
             [request[@"identity"] isKindOfClass:NSString.class]) {
-            if ([response.actionIdentifier isEqual:NSAllowAction] ||
-                [response.actionIdentifier isEqual:NSBlockAction] ||
-                [response.actionIdentifier isEqual:NSBlockIncomingAction]) {
+            if ([NSDirectionRuleValues() containsObject:response.actionIdentifier] ||
+                [@[ NSAllowAction, NSBlockAction, NSBlockIncomingAction ]
+                    containsObject:response.actionIdentifier]) {
                 NSError *error = nil;
-                NSString *rule = [response.actionIdentifier isEqual:NSAllowAction] ? @"allow"
-                                 : [response.actionIdentifier isEqual:NSBlockIncomingAction]
-                                     ? @"block-inbound"
-                                     : @"block";
+                NSString *rule = response.actionIdentifier;
                 BOOL saved = NSAnswerPermissionRequestWithRule(request, rule, &error);
                 if (!saved && ![NSReadPolicy(NULL) automaticallyAllowsIdentity:request[@"identity"]]) {
                     UNMutableNotificationContent *failure = [UNMutableNotificationContent new];

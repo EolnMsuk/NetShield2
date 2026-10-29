@@ -1,3 +1,10 @@
+## Unreleased
+
+- Save independent incoming/outgoing app and system decisions in one rule row. The existing-rule editor saves each choice immediately, shows all active checkmarks, and closes with Done.
+- Restrict connection prompts and notification actions to the current direction; retain the opposite decision and refresh banners when a pending token changes direction.
+- Migrate directional blocks so the opposite direction follows the Default Rule instead of being implicitly allowed.
+- Reorder connection sheets around the full identity and Copy details; use 16pt base section titles, lower titles beside Clear buttons, and align the Recent Activity search field.
+
 # 2.5.1
 
 - Name release deb files with the current control-file version and rootful, rootless, or roothide suffix.

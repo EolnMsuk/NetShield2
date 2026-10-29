@@ -33,6 +33,14 @@
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     return section == 0 ? self.wallets.count : 1;
 }
+- (void)tableView:(UITableView *)tableView
+    willDisplayHeaderView:(UIView *)view
+               forSection:(NSInteger)section {
+    if ([view isKindOfClass:UITableViewHeaderFooterView.class]) {
+        ((UITableViewHeaderFooterView *)view).textLabel.font = [[UIFontMetrics
+            metricsForTextStyle:UIFontTextStyleFootnote] scaledFontForFont:[UIFont systemFontOfSize:16]];
+    }
+}
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
     return section == 0 ? @"Tap a wallet address to copy" : nil;
 }
@@ -406,7 +414,7 @@
         return;
     }
     NSString *title = identity.length ? identity : @"Unidentified app";
-    NSString *explanation = @"Choose a rule for new connections.";
+    NSString *explanation = nil;
     NSArray *actions = [NSDirectionRuleValues() arrayByAddingObject:@"remove"];
     if ([key isEqual:@"default"]) {
         title = @"Default Rule";
@@ -419,6 +427,9 @@
                       @"interrupting system services.";
         actions = @[ @"allow", @"block" ];
     }
+    if (connection) {
+        actions = NSConnectionRuleValues(connection[@"direction"]);
+    }
     if (connection && !identity.length) {
         actions = @[];
         explanation =
@@ -428,10 +439,14 @@
     if (connection) {
         alert.detailRows = NSActivityDetailRows(connection);
         alert.clipboardText = NSActivityClipboardLine(connection);
+        alert.connectionLayout = YES;
     }
     alert.centersTitle = !key;
     alert.opensExpanded = YES;
-    alert.selectedRule = key ? self.policy.document[key] : self.policy.document[@"rules"][identity ?: @""];
+    alert.selectedRule = key ? self.policy.document[key] : nil;
+    alert.selectedRules = key ? @[] : NSAppRuleSelections(self.policy.document[@"rules"][identity ?: @""]);
+    alert.keepsRuleSelectionsOpen = !key && !connection;
+    __weak NSRuleActionController *weakAlert = alert;
     for (NSString *action in actions) {
         [alert addActionWithTitle:[self ruleTitle:action]
                              rule:action
@@ -440,25 +455,38 @@
                                   [self removeAppRuleForIdentity:identity];
                                   return;
                               }
-                              [self updatePolicy:^BOOL(NSMutableDictionary *document, NSError **error) {
-                                  if (key) {
-                                      document[key] = action;
-                                  } else {
-                                      NSMutableDictionary *rules = document[@"rules"];
-                                      rules[identity] = action;
-                                  }
-                                  return YES;
-                              }];
+                              BOOL saved =
+                                  [self updatePolicy:^BOOL(NSMutableDictionary *document, NSError **error) {
+                                      if (key) {
+                                          document[key] = action;
+                                      } else {
+                                          NSMutableDictionary *rules = document[@"rules"];
+                                          rules[identity] = NSAppRuleBySelecting(rules[identity], action);
+                                      }
+                                      return YES;
+                                  }];
+                              if (!saved) {
+                                  weakAlert.message = self.message;
+                              }
+                              weakAlert.selectedRules =
+                                  NSAppRuleSelections(NSReadPolicy(NULL).document[@"rules"][identity ?: @""]);
                           }];
     }
     if (!key) {
+        if (connection && identity.length && !NSConnectionRuleValues(connection[@"direction"]).count) {
+            [alert addActionWithTitle:@"Review App Rule"
+                                 rule:nil
+                              handler:^{
+                                  [self chooseActionForIdentity:identity defaultKey:nil];
+                              }];
+        }
         [alert addActionWithTitle:@"Add Custom Rule"
                              rule:nil
                           handler:^{
                               [self addCustomRuleForIdentity:identity connection:connection];
                           }];
     }
-    [alert addActionWithTitle:@"Cancel" rule:nil handler:nil];
+    [alert addActionWithTitle:(!key && !connection) ? @"Done" : @"Cancel" rule:nil handler:nil];
     [self presentViewController:alert animated:YES completion:nil];
 }
 - (NSString *)globalRuleTitle:(NSString *)key {
@@ -497,7 +525,8 @@
 }
 - (void)addCustomRuleForIdentity:(NSString *)identity connection:(NSDictionary *)connection {
     NSString *hosts = @"", *ports = @"", *protocol = @"any";
-    NSString *action = self.policy.document[@"rules"][identity ?: @""] ?: @"allow";
+    NSString *action =
+        NSAppRuleSelections(self.policy.document[@"rules"][identity ?: @""]).firstObject ?: @"allow";
     if (connection) {
         NSDictionary *destination = connection[@"destination"];
         NSMutableArray *members = [NSMutableArray new];
@@ -679,8 +708,8 @@
 - (void)showNotificationHelp {
     UIAlertController *alert = [UIAlertController
         alertControllerWithTitle:@"Answer without leaving your app"
-                         message:@"Touch and hold a NetShield2 notification, then choose Allow, "
-                                 @"Block Incoming, or Keep Blocking. Tapping the notification body opens "
+                         message:@"Touch and hold a NetShield2 notification, then choose Allow or "
+                                 @"Block for the connection direction. Tapping the notification body opens "
                                  @"NetShield2.\n\nUsing "
                                  @"Do Not "
                                  @"Disturb? In Settings > Focus > Do Not Disturb > Apps, allow notifications "

@@ -6,18 +6,15 @@
 #import "NSRuleChoices.h"
 #import <CoreFoundation/CoreFoundation.h>
 
-// Preserve app-rule semantics, including the opposite-direction allowance of directional blocks.
-static NSString *NSAppActionForDirection(NSString *action, NSFlowDirection direction) {
-    if ([action isEqual:@"allow-inbound"]) {
-        return direction == NSFlowDirectionInbound ? @"allow" : nil;
-    }
-    if ([action isEqual:@"allow-outbound"]) {
-        return direction == NSFlowDirectionOutbound ? @"allow" : nil;
-    }
-    return action;
+static NSString *NSAppActionForDirection(id value, NSFlowDirection direction) {
+    NSDictionary *record = NSAppRuleRecord(value);
+    return record[@"both"]
+               ?: record[direction == NSFlowDirectionInbound    ? @"inbound"
+                         : direction == NSFlowDirectionOutbound ? @"outbound"
+                                                                : @"unknown"];
 }
 
-// Globals cover only their selected direction; app rules retain their established semantics.
+// Global actions cover only their selected direction.
 static NSString *NSGlobalActionForDirection(NSString *action, NSFlowDirection direction) {
     if ([action hasSuffix:@"-inbound"] || [action hasSuffix:@"-outbound"]) {
         BOOL matches = [action hasSuffix:@"-inbound"] ? direction == NSFlowDirectionInbound
@@ -111,10 +108,10 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
     NSSet *unknownActions = [NSSet setWithArray:@[ @"allow", @"block" ]];
     valid = valid && [d[@"schema"] isKindOfClass:NSNumber.class] &&
             CFGetTypeID((__bridge CFTypeRef)d[@"schema"]) != CFBooleanGetTypeID() &&
-            [d[@"schema"] isEqual:@(NSSchemaVersion)] && [d[@"revision"] isKindOfClass:NSString.class] &&
-            [d[@"revision"] length] > 0 && [d[@"revision"] length] <= 128 &&
-            [d[@"default"] isKindOfClass:NSString.class] && [defaults containsObject:d[@"default"]] &&
-            [d[@"unattributed"] isKindOfClass:NSString.class] &&
+            ([d[@"schema"] isEqual:@2] || [d[@"schema"] isEqual:@(NSSchemaVersion)]) &&
+            [d[@"revision"] isKindOfClass:NSString.class] && [d[@"revision"] length] > 0 &&
+            [d[@"revision"] length] <= 128 && [d[@"default"] isKindOfClass:NSString.class] &&
+            [defaults containsObject:d[@"default"]] && [d[@"unattributed"] isKindOfClass:NSString.class] &&
             [unknownActions containsObject:d[@"unattributed"]] &&
             [d[@"rules"] isKindOfClass:NSDictionary.class];
     id appleAllowance = d[@"allowAppleSystemProcesses"];
@@ -129,8 +126,7 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
         for (id key in d[@"rules"]) {
             id value = d[@"rules"][key];
             if (![key isKindOfClass:NSString.class] || [key length] == 0 ||
-                [key length] > NSMaximumIdentityLength || ![value isKindOfClass:NSString.class] ||
-                ![actions containsObject:value]) {
+                [key length] > NSMaximumIdentityLength || !NSAppRuleRecord(value)) {
                 valid = NO;
                 break;
             }
@@ -226,6 +222,12 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
         return nil;
     }
     NSMutableDictionary *canonicalDocument = [d mutableCopy];
+    canonicalDocument[@"schema"] = @(NSSchemaVersion);
+    NSMutableDictionary *appRules = [NSMutableDictionary new];
+    for (NSString *identity in d[@"rules"]) {
+        appRules[identity] = NSAppRuleRecord(d[@"rules"][identity]);
+    }
+    canonicalDocument[@"rules"] = appRules;
     // Preserve saved keys: canonical aliases can carry distinct direction coverage.
     canonicalDocument[@"globalRules"] = globalRules ?: @{};
     NSMutableDictionary *canonicalAddresses = [NSMutableDictionary new];
@@ -416,7 +418,8 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
 }
 - (BOOL)requiresPermissionForIdentity:(NSString *)identity {
     // Without a direction, report whether any direction can still require permission.
-    return [self requiresPermissionForIdentity:identity direction:NSFlowDirectionUnknown destination:@{}];
+    return [self requiresPermissionForIdentity:identity direction:NSFlowDirectionInbound destination:@{}] ||
+           [self requiresPermissionForIdentity:identity direction:NSFlowDirectionOutbound destination:@{}];
 }
 - (BOOL)requiresPermissionForRequest:(NSDictionary *)request {
     NSString *value = request[@"direction"];
@@ -446,12 +449,6 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
     action = globalAction ?: action;
     if ([action isEqual:@"allow"]) {
         return YES;
-    }
-    if ([action isEqual:@"block-inbound"]) {
-        return direction == NSFlowDirectionOutbound;
-    }
-    if ([action isEqual:@"block-outbound"]) {
-        return direction == NSFlowDirectionInbound;
     }
     return NO;
 }

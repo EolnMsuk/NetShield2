@@ -110,7 +110,7 @@ static inline NSArray<NSArray<NSString *> *> *NSActivityDetailRows(NSDictionary 
     NSString *identity = connection[@"identity"];
     NSMutableArray *details = [NSMutableArray arrayWithArray:@[
         @[ @"Process identity", identity.length ? identity : @"Unavailable from iOS" ],
-        @[ @"Process name", NSIdentityDisplayName(identity) ]
+        @[ @"Process name", identity.length ? identity : @"Unavailable from iOS" ]
     ]];
     [details
         addObjectsFromArray:NSConnectionDetailRows(connection[@"destination"], connection[@"direction"])];
@@ -119,7 +119,9 @@ static inline NSArray<NSArray<NSString *> *> *NSActivityDetailRows(NSDictionary 
     }
     NSString *outcome =
         @{@"allow" : @"Allowed", @"block" : @"Blocked"}[connection[@"action"] ?: @""] ?: @"Connection";
-    [details addObject:@[ @"Result", outcome ]];
+    if (connection[@"action"]) {
+        [details addObject:@[ @"Result", outcome ]];
+    }
     if (connection[@"bytesIn"] || connection[@"bytesOut"]) {
         [details addObject:@[
             @"Received", [NSByteCountFormatter stringFromByteCount:[connection[@"bytesIn"] longLongValue]

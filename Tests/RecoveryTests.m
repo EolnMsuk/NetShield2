@@ -720,7 +720,9 @@ static void TestScopedRuleClear(void) {
         },
         NULL));
     NSDictionary *cleared = NSReadPolicy(NULL).document;
-    VERIFY([cleared[@"rules"] isEqual:document[@"rules"]]);
+    for (NSString *identity in document[@"rules"]) {
+        VERIFY([cleared[@"rules"][identity] isEqual:NSAppRuleRecord(document[@"rules"][identity])]);
+    }
     VERIFY([cleared[@"ruleDestinations"] isEqual:document[@"ruleDestinations"]]);
     VERIFY([cleared[@"default"] isEqual:@"ask"] && [cleared[@"allowAppleSystemProcesses"] isEqual:@YES]);
     VERIFY([cleared[@"globalRules"] count] == 0 && [cleared[@"globalDomainAddresses"] count] == 0 &&
@@ -741,7 +743,7 @@ static void TestScopedRuleClear(void) {
         VERIFY([saved[@"default"] isEqual:@"ask"]);
         VERIFY([saved[@"allowAppleSystemProcesses"] isEqual:@YES]);
         if (!system.boolValue) {
-            VERIFY([saved[@"rules"] isEqual:@{@"com.apple.test" : @"block-outbound"}]);
+            VERIFY([saved[@"rules"] isEqual:@{@"com.apple.test" : NSAppRuleRecord(@"block-outbound")}]);
             VERIFY([saved[@"ruleDestinations"] isEqual:@{@"com.apple.test" : @{@"port" : @53}}]);
             VERIFY(saved[@"askGenerations"][@"app"] && saved[@"askGenerations"][@"history.app"]);
         } else {
