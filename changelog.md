@@ -1,4 +1,4 @@
-## 2.5.2
+# 2.5.2
 
 - Save independent incoming/outgoing app and system decisions in one rule row. The existing-rule editor saves each choice immediately, shows all active checkmarks, and closes with Done.
 - Restrict connection prompts and notification actions to the current direction; retain the opposite decision and refresh banners when a pending token changes direction.
