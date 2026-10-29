@@ -55,14 +55,24 @@
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
     return self.clipboardText ? 4 : self.detailRows.count ? 3 : 2;
 }
+- (NSInteger)copySection {
+    return self.clipboardText ? 2 : NSNotFound;
+}
+- (NSInteger)detailsSection {
+    return self.clipboardText ? 3 : 2;
+}
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    return section == 0 || section == 3 ? 1 : section == 1 ? self.choices.count : self.detailRows.count;
+    return section == 0 || section == self.copySection ? 1
+           : section == 1                              ? self.choices.count
+                                                       : self.detailRows.count;
 }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
-    return section == 2 || (section == 0 && self.centersTitle && !self.detailRows.count) ? self.message : nil;
+    return section == self.detailsSection || (section == 0 && self.centersTitle && !self.detailRows.count)
+               ? self.message
+               : nil;
 }
 - (CGFloat)tableView:(UITableView *)tableView heightForFooterInSection:(NSInteger)section {
-    return section == 2 || (section == 0 && self.centersTitle && !self.detailRows.count)
+    return section == self.detailsSection || (section == 0 && self.centersTitle && !self.detailRows.count)
                ? UITableViewAutomaticDimension
                : 12;
 }
@@ -75,8 +85,8 @@
     cell.detailTextLabel.adjustsFontForContentSizeCategory = YES;
     cell.textLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
     cell.detailTextLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
-    if (path.section == 3) {
-        cell.textLabel.text = @"Copy to Clipboard";
+    if (path.section == self.copySection) {
+        cell.textLabel.text = @"Copy connection details";
         cell.textLabel.textColor = UIColor.systemBlueColor;
         cell.textLabel.textAlignment = NSTextAlignmentCenter;
         cell.accessibilityTraits |= UIAccessibilityTraitButton;
@@ -170,13 +180,13 @@
 }
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)path {
     [tableView deselectRowAtIndexPath:path animated:YES];
-    if (path.section == 3) {
+    if (path.section == self.copySection) {
         UIPasteboard.generalPasteboard.string = self.clipboardText;
         UITableViewCell *cell = [tableView cellForRowAtIndexPath:path];
         cell.textLabel.text = @"Copied";
         UIAccessibilityPostNotification(UIAccessibilityAnnouncementNotification, @"Copied to clipboard");
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-            cell.textLabel.text = @"Copy to Clipboard";
+            cell.textLabel.text = @"Copy connection details";
         });
         return;
     }

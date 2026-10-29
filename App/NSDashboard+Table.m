@@ -1,13 +1,82 @@
 #import "NSDashboard+Internal.h"
 #import "../Shared/NSActivity.h"
 
+// Align the visible field, rather than the UISearchBar's padded outer bounds.
+@interface NSActivitySearchBar : UISearchBar
+@end
+@implementation NSActivitySearchBar
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    UITextField *field = self.searchTextField;
+    CGRect available = [self convertRect:self.bounds toView:field.superview];
+    CGRect frame = field.frame;
+    frame.origin.x = available.origin.x;
+    frame.size.width = available.size.width;
+    field.frame = frame;
+}
+@end
+
+@interface NSDashboardClearButton : UIButton
+@end
+@implementation NSDashboardClearButton
+- (BOOL)pointInside:(CGPoint)point withEvent:(UIEvent *)event {
+    CGFloat extra = MAX(0, (44 - self.bounds.size.height) / 2);
+    return CGRectContainsPoint(CGRectInset(self.bounds, 0, -extra), point);
+}
+@end
+
+// UIKit may inset the header itself. Measure cells in header coordinates so the
+// Clear button ends at the group's edge, without adding a second trailing inset.
+@interface NSDashboardSectionHeader : UIView
+@property(nonatomic, weak) UITableView *table;
+@property(nonatomic) NSInteger section;
+@end
+@implementation NSDashboardSectionHeader
+- (void)layoutSubviews {
+    UITableViewCell *cell = [self.table cellForRowAtIndexPath:[NSIndexPath indexPathForRow:0
+                                                                                 inSection:self.section]];
+    cell = cell ?: self.table.visibleCells.firstObject;
+    CGRect group =
+        cell ? [cell convertRect:cell.bounds toView:self]
+             : [self.table convertRect:UIEdgeInsetsInsetRect(self.table.bounds, self.table.layoutMargins)
+                                toView:self];
+    CGFloat left = MAX(0, CGRectGetMinX(group));
+    CGFloat right = MAX(0, self.bounds.size.width - CGRectGetMaxX(group));
+    BOOL rtl = self.effectiveUserInterfaceLayoutDirection == UIUserInterfaceLayoutDirectionRightToLeft;
+    NSDirectionalEdgeInsets margins =
+        NSDirectionalEdgeInsetsMake(12, (rtl ? right : left) + 20, 8, rtl ? left : right);
+    if (!NSDirectionalEdgeInsetsEqualToDirectionalEdgeInsets(self.directionalLayoutMargins, margins)) {
+        self.directionalLayoutMargins = margins;
+    }
+    [super layoutSubviews];
+}
+@end
+
 @implementation NSDashboard (Table)
 - (void)searchBar:(UISearchBar *)searchBar textDidChange:(NSString *)searchText {
     self.activityQuery = searchText ?: @"";
+    searchBar.searchTextField.rightViewMode =
+        self.activityQuery.length ? UITextFieldViewModeAlways : UITextFieldViewModeNever;
     [self refreshTableKeepingPosition];
 }
 - (void)searchBarSearchButtonClicked:(UISearchBar *)searchBar {
-    [searchBar resignFirstResponder];
+    [self dismissActivityKeyboard];
+}
+- (void)dismissActivityKeyboard {
+    [self.activitySearchBar.searchTextField resignFirstResponder];
+}
+- (void)clearActivitySearch {
+    // This control owns clearing, so UISearchBar never implicitly starts editing.
+    self.activitySearchBar.text = @"";
+    [self searchBar:self.activitySearchBar textDidChange:@""];
+}
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldReceiveTouch:(UITouch *)touch {
+    if (self.navigationController.topViewController == self && !self.presentedViewController &&
+        ![touch.view isDescendantOfView:self.activitySearchBar.searchTextField]) {
+        // Observe the touch without competing with rows, switches, or scrolling.
+        [self dismissActivityKeyboard];
+    }
+    return NO;
 }
 - (BOOL)showsSystemRules {
     return self.policy && ![self.policy.document[@"allowAppleSystemProcesses"] boolValue];
@@ -192,8 +261,8 @@
         return nil;
     }
     return @[
-        @"Firewall", @"Waiting for your decision", @"Notifications", @"Reset Settings", @"", @"Global Rules",
-        @"", @"App Rules", @"System Rules", @"Recent activity"
+        @"FIREWALL", @"WAITING FOR YOUR DECISION", @"NOTIFICATIONS", @"CONFIGURATION", @"", @"GLOBAL RULES",
+        @"", @"APP RULES", @"SYSTEM RULES", @"RECENT ACTIVITY"
     ][section];
 }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
@@ -224,7 +293,8 @@
     BOOL scoped = section == NSDashboardSectionActivity || section == NSDashboardSectionRules ||
                   section == NSDashboardSectionAddGlobalRule ||
                   (section == NSDashboardSectionSystemRules && [self showsSystemRules]);
-    if (scoped) {
+    NSString *heading = [self tableView:tableView titleForHeaderInSection:section];
+    if (heading.length) {
         NSUInteger count = section == NSDashboardSectionActivity ? [self.monitor[@"events"] count]
                            : section == NSDashboardSectionAddGlobalRule
                                ? self.globalRuleKeys.count
@@ -235,17 +305,32 @@
             self.activityClearButton.enabled = canClear;
             return self.activityHeader;
         }
-        UIView *header = [UIView new];
-        header.directionalLayoutMargins = NSDirectionalEdgeInsetsMake(12, 20, 8, 20);
+        NSDashboardSectionHeader *header = [NSDashboardSectionHeader new];
+        header.insetsLayoutMarginsFromSafeArea = NO;
+        header.table = tableView;
+        header.section = section;
+        header.directionalLayoutMargins = NSDirectionalEdgeInsetsMake(12, 20, 8, 0);
         UILabel *title = [UILabel new];
         title.translatesAutoresizingMaskIntoConstraints = NO;
         title.text = [self tableView:tableView titleForHeaderInSection:section];
-        title.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+        title.font = [[UIFontMetrics metricsForTextStyle:UIFontTextStyleBody]
+            scaledFontForFont:[UIFont systemFontOfSize:17]];
         title.adjustsFontForContentSizeCategory = YES;
         title.textColor = UIColor.secondaryLabelColor;
         title.numberOfLines = 0;
         title.accessibilityTraits |= UIAccessibilityTraitHeader;
-        UIButton *clear = [UIButton buttonWithType:UIButtonTypeSystem];
+        [header addSubview:title];
+        UILayoutGuide *margins = header.layoutMarginsGuide;
+        if (!scoped) {
+            [NSLayoutConstraint activateConstraints:@[
+                [title.leadingAnchor constraintEqualToAnchor:margins.leadingAnchor],
+                [title.trailingAnchor constraintEqualToAnchor:margins.trailingAnchor],
+                [title.topAnchor constraintEqualToAnchor:margins.topAnchor],
+                [title.bottomAnchor constraintEqualToAnchor:margins.bottomAnchor]
+            ]];
+            return header;
+        }
+        UIButton *clear = [NSDashboardClearButton buttonWithType:UIButtonTypeSystem];
         clear.translatesAutoresizingMaskIntoConstraints = NO;
         [clear setTitle:@"Clear" forState:UIControlStateNormal];
         UIColor *clearTextColor = [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *traits) {
@@ -261,7 +346,7 @@
         clear.layer.cornerRadius = 8;
         clear.titleLabel.adjustsFontForContentSizeCategory = YES;
         UIButtonConfiguration *configuration = [UIButtonConfiguration plainButtonConfiguration];
-        configuration.contentInsets = NSDirectionalEdgeInsetsMake(8, 12, 8, 12);
+        configuration.contentInsets = NSDirectionalEdgeInsetsMake(4, 12, 4, 12);
         configuration.baseForegroundColor = clearTextColor;
         configuration.titleTextAttributesTransformer = ^NSDictionary *(NSDictionary *incoming) {
             NSMutableDictionary *attributes = [incoming mutableCopy];
@@ -277,31 +362,55 @@
         [clear addTarget:self
                       action:@selector(clearSectionTapped:)
             forControlEvents:UIControlEventTouchUpInside];
-        [header addSubview:title];
         [header addSubview:clear];
-        UILayoutGuide *margins = header.layoutMarginsGuide;
         [NSLayoutConstraint activateConstraints:@[
             [title.leadingAnchor constraintEqualToAnchor:margins.leadingAnchor],
             [title.trailingAnchor constraintLessThanOrEqualToAnchor:clear.leadingAnchor constant:-12],
             [title.topAnchor constraintGreaterThanOrEqualToAnchor:margins.topAnchor],
-            [title.bottomAnchor constraintEqualToAnchor:clear.bottomAnchor constant:-4],
+            [title.bottomAnchor constraintLessThanOrEqualToAnchor:clear.bottomAnchor],
             [clear.trailingAnchor constraintEqualToAnchor:margins.trailingAnchor],
             [clear.topAnchor constraintEqualToAnchor:margins.topAnchor],
-            [clear.heightAnchor constraintGreaterThanOrEqualToConstant:44],
+            [clear.centerYAnchor constraintEqualToAnchor:title.centerYAnchor],
+            [clear.heightAnchor constraintGreaterThanOrEqualToConstant:33],
             [clear.widthAnchor constraintGreaterThanOrEqualToConstant:64]
         ]];
         if (section == NSDashboardSectionActivity) {
             self.activityHeader = header;
             self.activityClearButton = clear;
             if (!self.activitySearchBar) {
-                self.activitySearchBar = [UISearchBar new];
+                self.activitySearchBar = [NSActivitySearchBar new];
                 self.activitySearchBar.searchBarStyle = UISearchBarStyleMinimal;
-                self.activitySearchBar.placeholder = @"Search connection details";
+                self.activitySearchBar.placeholder = @"Search recent connections";
                 self.activitySearchBar.accessibilityLabel = @"Search Recent Activity";
                 self.activitySearchBar.autocapitalizationType = UITextAutocapitalizationTypeNone;
                 self.activitySearchBar.autocorrectionType = UITextAutocorrectionTypeNo;
                 self.activitySearchBar.delegate = self;
                 self.activitySearchBar.text = self.activityQuery;
+                UITextField *field = self.activitySearchBar.searchTextField;
+                field.clearButtonMode = UITextFieldViewModeNever;
+                UIButton *clearSearch = [UIButton buttonWithType:UIButtonTypeSystem];
+                clearSearch.frame = CGRectMake(0, 0, 36, 36);
+                [clearSearch setImage:[UIImage systemImageNamed:@"xmark.circle.fill"]
+                             forState:UIControlStateNormal];
+                clearSearch.tintColor = UIColor.tertiaryLabelColor;
+                clearSearch.accessibilityLabel = @"Clear search";
+                [clearSearch addTarget:self
+                                action:@selector(clearActivitySearch)
+                      forControlEvents:UIControlEventTouchUpInside];
+                field.rightView = clearSearch;
+                field.rightViewMode =
+                    self.activityQuery.length ? UITextFieldViewModeAlways : UITextFieldViewModeNever;
+                UIToolbar *toolbar = [UIToolbar new];
+                toolbar.items = @[
+                    [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace
+                                                                  target:nil
+                                                                  action:nil],
+                    [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone
+                                                                  target:self
+                                                                  action:@selector(dismissActivityKeyboard)]
+                ];
+                [toolbar sizeToFit];
+                field.inputAccessoryView = toolbar;
             }
             UISearchBar *search = self.activitySearchBar;
             search.translatesAutoresizingMaskIntoConstraints = NO;

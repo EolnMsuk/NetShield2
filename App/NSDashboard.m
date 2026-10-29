@@ -97,6 +97,16 @@
                                                       action:@selector(loadConfiguration)];
     self.tableView.rowHeight = UITableViewAutomaticDimension;
     self.tableView.estimatedRowHeight = 64;
+    self.tableView.keyboardDismissMode = UIScrollViewKeyboardDismissModeOnDrag;
+    UITapGestureRecognizer *outside =
+        [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(dismissActivityKeyboard)];
+    outside.delegate = self;
+    outside.cancelsTouchesInView = NO;
+    [self.tableView addGestureRecognizer:outside];
+    self.navigationKeyboardDismissGesture =
+        [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(dismissActivityKeyboard)];
+    self.navigationKeyboardDismissGesture.delegate = self;
+    self.navigationKeyboardDismissGesture.cancelsTouchesInView = NO;
     self.rowHeights = [NSMutableDictionary new];
     [NSNotificationCenter.defaultCenter addObserver:self
                                            selector:@selector(configurationChanged:)
@@ -130,6 +140,7 @@
 }
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
+    [self.navigationController.navigationBar addGestureRecognizer:self.navigationKeyboardDismissGesture];
     __weak typeof(self) weakSelf = self;
     self.timer = [NSTimer scheduledTimerWithTimeInterval:2
                                                  repeats:YES
@@ -144,6 +155,11 @@
         [self checkForUpdateManually:NO];
     }
     [self presentPendingUpdateResult];
+}
+- (void)viewWillDisappear:(BOOL)animated {
+    [super viewWillDisappear:animated];
+    [self dismissActivityKeyboard];
+    [self.navigationController.navigationBar removeGestureRecognizer:self.navigationKeyboardDismissGesture];
 }
 - (void)viewDidDisappear:(BOOL)animated {
     [super viewDidDisappear:animated];

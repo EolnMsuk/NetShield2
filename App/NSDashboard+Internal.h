@@ -27,7 +27,7 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
     NSDashboardSectionCount,
 };
 
-@interface NSDashboard () <UISearchBarDelegate>
+@interface NSDashboard () <UISearchBarDelegate, UIGestureRecognizerDelegate>
 @property(nonatomic, strong) NSPolicy *policy;
 @property(nonatomic, copy) NSString *policyReadError;
 @property(nonatomic, copy) NSDictionary *monitor;
@@ -36,6 +36,7 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 @property(nonatomic, copy) NSString *activityQuery;
 @property(nonatomic, strong) UISearchBar *activitySearchBar;
 @property(nonatomic, strong) UIView *activityHeader;
+@property(nonatomic, strong) UITapGestureRecognizer *navigationKeyboardDismissGesture;
 @property(nonatomic, weak) UIButton *activityClearButton;
 @property(nonatomic) BOOL clearingSection;
 @property(nonatomic, copy) NSArray<NSString *> *identities;
@@ -106,6 +107,7 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 @end
 
 @interface NSDashboard (Table)
+- (void)dismissActivityKeyboard;
 - (void)refreshTableKeepingPosition;
 @end
 

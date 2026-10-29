@@ -1,3 +1,13 @@
+# 2.5.1
+
+- Name release deb files with the current control-file version and rootful, rootless, or roothide suffix.
+- Move Copy connection details below rule choices and above connection details in Recent Activity menus.
+- Align the Recent Activity search field with its heading and rename its placeholder to Search recent connections.
+- Dismiss the search keyboard on outside touches or scrolling, and add a Done button above the keyboard even with an empty query.
+- Preserve keyboard visibility when clearing the Recent Activity search with its x button.
+- Align Clear buttons with the surrounding content and reduce their height by 25% while retaining their font size, including System Rules.
+- Use larger, consistent uppercase section titles and rename Reset Settings to CONFIGURATION.
+
 # 2.4.8
 
 - Search Recent Activity by connection details, including full process identities.
