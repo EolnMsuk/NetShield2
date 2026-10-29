@@ -121,15 +121,26 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Publish release notes
+    name: Prepare draft release
     needs: build
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    concurrency:
+      group: ${{ github.repository }}-draft-release
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
-      - name: Publish the current version from control
+      - name: Read release metadata
+        run: python3 scripts/sync_version.py --github-env "$GITHUB_ENV"
+      - name: Download all three release packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: NetShield2-${{ env.PACKAGE_VERSION }}-iOS15-18-*
+          path: release-assets
+          merge-multiple: true
+      - name: Prepare the current version as a draft with deb assets
         uses: actions/github-script@v7
         with:
           script: |
@@ -141,22 +152,50 @@ jobs:
             const entry = changelog.split(/^# /m).find(section => section.startsWith(`${version}\n`));
             const body = entry?.slice(version.length).trim();
             if (!body) throw new Error(`Missing changelog entry for ${version}`);
+            const packageId = control.match(/^Package: ([a-z0-9][a-z0-9+.-]+)$/m)?.[1];
+            if (!packageId) throw new Error('Missing package identifier in control');
+            const names = ['rootful', 'rootless', 'roothide'].map(variant => `${packageId}_${version}_${variant}.deb`);
+            // Validate every input before changing the release or replacing assets.
+            const assets = names.map(name => {
+              const data = fs.readFileSync(`release-assets/${name}`);
+              if (!data.length) throw new Error(`Empty package: ${name}`);
+              return { name, data };
+            });
             const repository = { owner: context.repo.owner, repo: context.repo.repo };
-            try {
-              const existing = await github.rest.repos.getReleaseByTag({ ...repository, tag: version });
-              core.info(`Release already exists: ${existing.data.html_url}`);
+            // Listing releases also finds drafts, which tag lookup may omit.
+            const releases = await github.paginate(github.rest.repos.listReleases, { ...repository, per_page: 100 });
+            let release = releases.find(candidate => candidate.tag_name === version);
+            if (release && !release.draft) {
+              core.info(`Keeping published release unchanged: ${release.html_url}`);
               return;
-            } catch (error) {
-              if (error.status !== 404) throw error;
             }
-            const { data: release } = await github.rest.repos.createRelease({
+            const metadata = {
               ...repository,
               tag_name: version,
               target_commitish: context.sha,
               name: `NetShield2 ${version}`,
               body,
-              draft: false,
-              prerelease: false,
-              make_latest: 'true'
+              draft: true,
+              prerelease: false
+            };
+            if (release) {
+              ({ data: release } = await github.rest.repos.updateRelease({ ...metadata, release_id: release.id }));
+            } else {
+              ({ data: release } = await github.rest.repos.createRelease(metadata));
+            }
+            const existingAssets = await github.paginate(github.rest.repos.listReleaseAssets, {
+              ...repository, release_id: release.id, per_page: 100
             });
-            core.info(`Published ${release.html_url}`);
+            for (const asset of assets) {
+              for (const existing of existingAssets.filter(candidate => candidate.name === asset.name)) {
+                await github.rest.repos.deleteReleaseAsset({ ...repository, asset_id: existing.id });
+              }
+              await github.rest.repos.uploadReleaseAsset({
+                ...repository,
+                release_id: release.id,
+                name: asset.name,
+                data: asset.data,
+                headers: { 'content-type': 'application/vnd.debian.binary', 'content-length': asset.data.length }
+              });
+            }
+            core.info(`Draft ready with all three deb assets: ${release.html_url}`);
