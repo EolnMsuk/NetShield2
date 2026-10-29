@@ -248,19 +248,26 @@
         UIButton *clear = [UIButton buttonWithType:UIButtonTypeSystem];
         clear.translatesAutoresizingMaskIntoConstraints = NO;
         [clear setTitle:@"Clear" forState:UIControlStateNormal];
-        [clear setTitleColor:UIColor.darkGrayColor forState:UIControlStateNormal];
-        [clear setTitleColor:UIColor.darkGrayColor forState:UIControlStateDisabled];
-        clear.backgroundColor = UIColor.grayColor;
+        UIColor *clearTextColor = [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *traits) {
+            return traits.userInterfaceStyle == UIUserInterfaceStyleDark ? UIColor.blackColor
+                                                                         : UIColor.darkGrayColor;
+        }];
+        [clear setTitleColor:clearTextColor forState:UIControlStateNormal];
+        [clear setTitleColor:clearTextColor forState:UIControlStateDisabled];
+        clear.backgroundColor = [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *traits) {
+            return traits.userInterfaceStyle == UIUserInterfaceStyleDark ? UIColor.grayColor
+                                                                         : UIColor.whiteColor;
+        }];
         clear.layer.cornerRadius = 8;
         clear.titleLabel.adjustsFontForContentSizeCategory = YES;
         UIButtonConfiguration *configuration = [UIButtonConfiguration plainButtonConfiguration];
         configuration.contentInsets = NSDirectionalEdgeInsetsMake(8, 12, 8, 12);
-        configuration.baseForegroundColor = UIColor.darkGrayColor;
+        configuration.baseForegroundColor = clearTextColor;
         configuration.titleTextAttributesTransformer = ^NSDictionary *(NSDictionary *incoming) {
             NSMutableDictionary *attributes = [incoming mutableCopy];
             UIFont *font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
             attributes[NSFontAttributeName] = [font fontWithSize:font.pointSize * 1.25];
-            attributes[NSForegroundColorAttributeName] = UIColor.darkGrayColor;
+            attributes[NSForegroundColorAttributeName] = clearTextColor;
             return attributes;
         };
         clear.configuration = configuration;
@@ -276,9 +283,8 @@
         [NSLayoutConstraint activateConstraints:@[
             [title.leadingAnchor constraintEqualToAnchor:margins.leadingAnchor],
             [title.trailingAnchor constraintLessThanOrEqualToAnchor:clear.leadingAnchor constant:-12],
-            [title.centerYAnchor constraintEqualToAnchor:clear.centerYAnchor],
             [title.topAnchor constraintGreaterThanOrEqualToAnchor:margins.topAnchor],
-            [title.bottomAnchor constraintLessThanOrEqualToAnchor:clear.bottomAnchor],
+            [title.bottomAnchor constraintEqualToAnchor:clear.bottomAnchor constant:-4],
             [clear.trailingAnchor constraintEqualToAnchor:margins.trailingAnchor],
             [clear.topAnchor constraintEqualToAnchor:margins.topAnchor],
             [clear.heightAnchor constraintGreaterThanOrEqualToConstant:44],
