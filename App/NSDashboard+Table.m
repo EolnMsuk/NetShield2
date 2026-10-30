@@ -72,6 +72,22 @@
 @end
 
 @implementation NSDashboard (Table)
+- (void)keepActivitySearchVisible {
+    UITextField *field = self.activitySearchBar.searchTextField;
+    if (!field.isFirstResponder || !field.window || ![field isDescendantOfView:self.tableView]) {
+        return;
+    }
+    [self.tableView layoutIfNeeded];
+    CGRect fieldRect = [field convertRect:field.bounds toView:self.tableView];
+    [self.tableView scrollRectToVisible:CGRectInset(fieldRect, 0, -12) animated:NO];
+}
+- (void)activityKeyboardFrameDidChange:(NSNotification *)notification {
+    // Let UITableViewController finish updating its keyboard insets, including
+    // changes to the predictive text bar, before revealing the header's field.
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self keepActivitySearchVisible];
+    });
+}
 - (void)searchBar:(UISearchBar *)searchBar textDidChange:(NSString *)searchText {
     self.activityQuery = searchText ?: @"";
     searchBar.searchTextField.rightViewMode =
@@ -240,6 +256,8 @@
         [self.tableView
             setContentOffset:CGPointMake(offset.x, atTop ? minimum : MIN(maximum, MAX(minimum, offset.y)))
                     animated:NO];
+        // Restoring row anchors after filtering must not hide the active search.
+        [self keepActivitySearchVisible];
     }];
 }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {

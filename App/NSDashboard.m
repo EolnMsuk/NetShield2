@@ -124,6 +124,10 @@
                                            selector:@selector(configurationChanged:)
                                                name:UIApplicationDidBecomeActiveNotification
                                              object:nil];
+    [NSNotificationCenter.defaultCenter addObserver:self
+                                           selector:@selector(activityKeyboardFrameDidChange:)
+                                               name:UIKeyboardDidChangeFrameNotification
+                                             object:nil];
     NSError *error = nil;
     if (NSEnsurePolicy(&error)) {
         self.policy = NSReadPolicy(&error);

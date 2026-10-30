@@ -109,6 +109,7 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 @end
 
 @interface NSDashboard (Table)
+- (void)activityKeyboardFrameDidChange:(NSNotification *)notification;
 - (void)dismissActivityKeyboard;
 - (void)clearActivitySearch;
 - (void)refreshTableKeepingPosition;

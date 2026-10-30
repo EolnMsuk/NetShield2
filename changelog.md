@@ -1,9 +1,15 @@
+# 2.5.5
+
+- Fixed searchbar keyboard predictive text from covering the input field.
+- 1st attempt at tipa version to enable remove filter/disable firewall from non jailbroken state (to fix no internet issue if firewall left on).
+
 # 2.5.4
 
-- Removed the duplicate large process name from popups with process details.
-- Removed the Done toolbar above the Recent Activity search keyboard.
+- Remove the duplicate large process name from popups with process details; keep it in windows without those details.
+- Remove the Done toolbar above the Recent Activity search keyboard.
 - Clear the Recent Activity search after either CONFIGURATION reset.
-- Renamed **Check for Update** to **Check for Updates** and move it above **GitHub Link**.
+- Rename **Check for Update** to **Check for Updates** and move it above **GitHub Link**.
+- Change its description to **Checks GitHub for a newer version**.
 
 # 2.5.3
 
