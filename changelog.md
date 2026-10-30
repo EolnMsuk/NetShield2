@@ -1,3 +1,11 @@
+# 2.5.4
+
+- Remove the duplicate large process name from popups with process details; keep it in windows without those details.
+- Remove the Done toolbar above the Recent Activity search keyboard.
+- Clear the Recent Activity search after either CONFIGURATION reset.
+- Rename **Check for Update** to **Check for Updates** and move it above **GitHub Link**.
+- Change its description to **Checks GitHub for a newer version**.
+
 # 2.5.3
 
 - UI fixes.

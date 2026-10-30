@@ -110,6 +110,7 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 
 @interface NSDashboard (Table)
 - (void)dismissActivityKeyboard;
+- (void)clearActivitySearch;
 - (void)refreshTableKeepingPosition;
 @end
 

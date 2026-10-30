@@ -178,6 +178,7 @@
         [NSUserDefaults.standardUserDefaults
             removePersistentDomainForName:NSBundle.mainBundle.bundleIdentifier];
     }
+    [self clearActivitySearch];
     if (self.restoreFirewallAfterReset) {
         self.restoreFirewallAfterReset = NO;
         [self changeConfiguration:NSConfigurationEnable];

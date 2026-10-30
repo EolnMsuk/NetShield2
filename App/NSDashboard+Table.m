@@ -419,17 +419,6 @@
                 field.rightView = clearSearch;
                 field.rightViewMode =
                     self.activityQuery.length ? UITextFieldViewModeAlways : UITextFieldViewModeNever;
-                UIToolbar *toolbar = [UIToolbar new];
-                toolbar.items = @[
-                    [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace
-                                                                  target:nil
-                                                                  action:nil],
-                    [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone
-                                                                  target:self
-                                                                  action:@selector(dismissActivityKeyboard)]
-                ];
-                [toolbar sizeToFit];
-                field.inputAccessoryView = toolbar;
             }
             UISearchBar *search = self.activitySearchBar;
             search.translatesAutoresizingMaskIntoConstraints = NO;
@@ -490,7 +479,7 @@
         return CGFLOAT_MIN;
     }
     // The links header already supplies the inter-section gap and keeps the
-    // version label close to GitHub Link; don't stack an empty footer above it.
+    // version label close to the support rows; don't stack an empty footer above it.
     if (section == NSDashboardSectionAdvanced) {
         return CGFLOAT_MIN;
     }
@@ -715,9 +704,9 @@
                 stringByAppendingFormat:@"\n%@", NSDestinationSummary(event[@"destination"])];
         }
     } else if (path.section == NSDashboardSectionSupport) {
-        cell.textLabel.text = @[ @"GitHub Link", @"Check for Update", @"Support the Developer" ][path.row];
+        cell.textLabel.text = @[ @"Check for Updates", @"GitHub Link", @"Support the Developer" ][path.row];
         cell.detailTextLabel.text = @[
-            @"Source code, releases and issues", @"Check GitHub for a newer version",
+            @"Checks GitHub for a newer version", @"Source code, releases and issues",
             @"Choose Venmo or Crypto"
         ][path.row];
         cell.textLabel.textColor = UIColor.systemBlueColor;
@@ -768,9 +757,9 @@
         [self chooseActionForIdentity:nil defaultKey:@"unattributed"];
     } else if (path.section == NSDashboardSectionSupport) {
         if (path.row == 0) {
-            [self openSupportURL:[NSURL URLWithString:@"https://github.com/EolnMsuk/NetShield2/"]];
-        } else if (path.row == 1) {
             [self checkForUpdateManually:YES];
+        } else if (path.row == 1) {
+            [self openSupportURL:[NSURL URLWithString:@"https://github.com/EolnMsuk/NetShield2/"]];
         } else if (path.row == 2) {
             [self supportDeveloper];
         }

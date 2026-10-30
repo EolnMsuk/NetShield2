@@ -65,7 +65,11 @@
         if (self.clipboardText) {
             [sections addObject:@3];
         }
-        [sections addObject:@0];
+        // Process name already appears in connection details; retain the heading
+        // when no details are available, including ordinary app/system editors.
+        if (!self.detailRows.count) {
+            [sections addObject:@0];
+        }
         if (self.detailRows.count) {
             [sections addObject:@2];
         }
