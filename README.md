@@ -6,6 +6,7 @@ A customizable firewall & live network monitor with actionable notifications for
 
 ## Get started
 
+**Warning:** Until 2.5.5 is released a known bug exists for semi-untethered jailbreaks, If you leave the firewall ON and reboot into a non jailbroken state, you will have no internet access until rejailbroken and disable the firewall. The content filter will also not be able to be removed while in a non jailbroken state, but if the firewall is off during restart, the content filter is harmeless. If you wish to remove the content filter for any reason, use the Reset All Settings & Filter
 1. Download the (rootless or roothide or rootful) deb from the [latest release](https://github.com/EolnMsuk/NetShield2/releases/latest) page, open / install with Sileo or Zebra.
 2. Open NetShield2 from the homescreen and switch on the main **Firewall** toggle, accept the iOS Notification and allow **Filter Network Content**, enter passcode.
 3. Recommended: return to NetShield2, tap **Notification Settings** and switch Banner Style from Temporary to **Persistent**. If you use **Do Not Disturb**, allow NetShield2 in **Settings > Focus > Do Not Disturb > Apps**.
@@ -19,10 +20,9 @@ A customizable firewall & live network monitor with actionable notifications for
 - **Unidentified:** Allowed by default, set to blocked to prevent unknown processes from accessing network (not recommended).
 - **Default Rule:** Ask me by default, changing this to Allow or Block will prevent prompting / notifications and block or allow any new requests.
 - **Notifications:** notification settings and instructions for banners and Do Not Disturb.
-- **Support:** Export Rules and Recent Activity, Reset Rules & History, Reset ALL Settings, Check for Updates, GitHub Link, and Support Developer Links.
-- **Advanced Settings:** manual app identity, IP/domain and local/remote port rules.
+- **Configuration:** Export Rules and Recent Activity, Reset Rules & History, Reset ALL Settings, Check for Updates, GitHub Link, and Support Developer Links.
 - **Global Rules:** use the Add Global Rule button to add a custom rule (direction, process, domain/ip, remote/local port, udp/tcp etc).
-- **App Rules / System Rules:** Tapping a checked rule clears it; clearing the last checkmark restores **Default Rule**. Unset directions follow the default policy, subject to global rules and the iOS system allowance.
+- **App Rules / System Rules:** Tapping a checked rule clears it; clearing the last checkmark restores **Default Rule**.
 - **Recent Activity:** the rolling 300-event record grouped by process, IP/domain, remote port, direction and allowed/blocked outcome.
 
 ## Coverage
