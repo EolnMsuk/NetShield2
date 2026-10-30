@@ -114,7 +114,7 @@
         }
         self.manager.providerConfiguration = configuration;
         self.manager.localizedDescription =
-            self.restoring ? self.previousDescription : @"NetShield2 network access control";
+            self.restoring ? self.previousDescription : @"Firewall Active";
         self.manager.enabled = YES;
         self.touchedPreferences = YES;
         NSUInteger saveGeneration = self.generation;
