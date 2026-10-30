@@ -20,6 +20,8 @@ FOUNDATION_EXPORT BOOL NSEnsurePolicy(NSError **error);
 FOUNDATION_EXPORT BOOL NSUpdatePolicy(BOOL (^mutation)(NSMutableDictionary *document, NSError **error),
                                       NSError **error);
 FOUNDATION_EXPORT BOOL NSUseDefaultRule(NSMutableDictionary *document, NSString *identity, NSError **error);
+FOUNDATION_EXPORT BOOL NSToggleAppRule(NSMutableDictionary *document, NSString *identity, NSString *action,
+                                       NSError **error);
 FOUNDATION_EXPORT NSArray<NSString *> *_Nullable NSClearIdentityRules(NSMutableDictionary *document,
                                                                       BOOL system, NSArray *events,
                                                                       NSError **error);

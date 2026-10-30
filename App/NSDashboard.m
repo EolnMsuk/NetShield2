@@ -213,14 +213,21 @@
         }
     }
     NSMutableSet *systemIdentities = [NSMutableSet new];
+    // Keep manually entered identities visible while their editor has no saved selection.
+    if (self.ruleEditor && !self.ruleEditor.isBeingDismissed && self.editingRuleIdentity.length) {
+        [identities addObject:self.editingRuleIdentity];
+    }
     for (NSString *identity in [identities allObjects]) {
         if (NSIsAppleSystemIdentity(identity)) {
             [systemIdentities addObject:identity];
             [identities removeObject:identity];
         }
     }
-    self.identities = [[identities allObjects] sortedArrayUsingSelector:@selector(compare:)];
-    self.systemIdentities = [[systemIdentities allObjects] sortedArrayUsingSelector:@selector(compare:)];
+    NSComparator byDisplayName = ^NSComparisonResult(NSString *left, NSString *right) {
+        return NSCompareIdentityDisplayNames(left, right);
+    };
+    self.identities = [[identities allObjects] sortedArrayUsingComparator:byDisplayName];
+    self.systemIdentities = [[systemIdentities allObjects] sortedArrayUsingComparator:byDisplayName];
     self.globalRuleKeys =
         [[self.policy.document[@"globalRules"] allKeys] sortedArrayUsingSelector:@selector(compare:)];
     NSSet *tokens = [NSSet setWithArray:[self.monitor[@"requests"] valueForKey:@"token"] ?: @[]];
@@ -446,6 +453,11 @@
     alert.selectedRule = key ? self.policy.document[key] : nil;
     alert.selectedRules = key ? @[] : NSAppRuleSelections(self.policy.document[@"rules"][identity ?: @""]);
     alert.keepsRuleSelectionsOpen = !key && !connection;
+    alert.allowsRuleDeselection = !key && !connection;
+    if (alert.allowsRuleDeselection) {
+        self.ruleEditor = alert;
+        self.editingRuleIdentity = identity;
+    }
     __weak NSRuleActionController *weakAlert = alert;
     for (NSString *action in actions) {
         [alert addActionWithTitle:[self ruleTitle:action]
@@ -460,16 +472,20 @@
                                       if (key) {
                                           document[key] = action;
                                       } else {
+                                          if (!connection) {
+                                              return NSToggleAppRule(document, identity, action, error);
+                                          }
                                           NSMutableDictionary *rules = document[@"rules"];
                                           rules[identity] = NSAppRuleBySelecting(rules[identity], action);
                                       }
                                       return YES;
                                   }];
-                              if (!saved) {
-                                  weakAlert.message = self.message;
+                              weakAlert.message = saved ? nil : self.message;
+                              NSPolicy *persisted = NSReadPolicy(NULL);
+                              if (persisted) {
+                                  weakAlert.selectedRules =
+                                      NSAppRuleSelections(persisted.document[@"rules"][identity ?: @""]);
                               }
-                              weakAlert.selectedRules =
-                                  NSAppRuleSelections(NSReadPolicy(NULL).document[@"rules"][identity ?: @""]);
                           }];
     }
     if (!key) {

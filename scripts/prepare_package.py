@@ -12,6 +12,7 @@ PACKAGE_ARCHITECTURES = {
 
 def maintainer_script(source, scheme):
     # Rootful uses / directly; RootHide resolves it within its relocated root.
+    # Apply this consistently to registration, sbreload and dpkg-query paths.
     if scheme in ('roothide', 'rootful'):
         return source.replace(b'/var/jb/', b'/')
     if scheme == 'rootless':

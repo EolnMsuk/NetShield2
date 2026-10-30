@@ -314,6 +314,30 @@ BOOL NSUseDefaultRule(NSMutableDictionary *document, NSString *identity, NSError
     [document[@"rules"] removeObjectForKey:identity];
     return YES;
 }
+BOOL NSToggleAppRule(NSMutableDictionary *document, NSString *identity, NSString *action, NSError **error) {
+    if (![NSDirectionRuleValues() containsObject:action]) {
+        if (error) {
+            *error = NSStorageError(@"Unknown app rule selection.");
+        }
+        return NO;
+    }
+    NSDictionary *previous = NSAppRuleRecord(document[@"rules"][identity]);
+    NSDictionary *next = NSAppRuleByTogglingSelection(previous, action);
+    BOOL exposesDefault = !next;
+    for (NSString *direction in @[ @"inbound", @"outbound" ]) {
+        if ((previous[@"both"] || previous[direction]) && !next[@"both"] && !next[direction]) {
+            exposesDefault = YES;
+        }
+    }
+    // Invalidate pending tokens/history before restoring any remaining explicit direction.
+    if (exposesDefault && !NSUseDefaultRule(document, identity, error)) {
+        return NO;
+    }
+    if (next) {
+        document[@"rules"][identity] = next;
+    }
+    return YES;
+}
 NSArray<NSString *> *NSClearIdentityRules(NSMutableDictionary *document, BOOL system, NSArray *events,
                                           NSError **error) {
     NSMutableSet *identities = [NSMutableSet setWithArray:[document[@"rules"] allKeys]];

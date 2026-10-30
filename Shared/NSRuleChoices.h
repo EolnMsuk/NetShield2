@@ -11,7 +11,7 @@ static inline NSString *NSDirectionRuleTitle(NSString *rule) {
         @"allow-inbound" : @"Allow Incoming",
         @"block-inbound" : @"Block Incoming",
         @"block-outbound" : @"Block Outgoing",
-        @"block" : @"Block In & Out"
+        @"block" : @"Block"
     }[rule];
 }
 
@@ -83,6 +83,26 @@ static inline NSArray<NSString *> *NSConnectionRuleValues(NSString *direction) {
         return @[ @"allow-outbound", @"block-outbound" ];
     }
     return @[];
+}
+// Persistent editors toggle explicit choices; connection decisions never toggle.
+static inline NSDictionary *NSAppRuleByTogglingSelection(id value, NSString *action) {
+    NSDictionary *record = NSAppRuleRecord(value);
+    if (![NSDirectionRuleValues() containsObject:action]) {
+        return record;
+    }
+    if ([action isEqual:@"allow"] || [action isEqual:@"block"]) {
+        return [record[@"both"] isEqual:action] ? nil : @{@"both" : action};
+    }
+    NSMutableDictionary *result =
+        record[@"both"] ? [NSMutableDictionary new] : ([record mutableCopy] ?: [NSMutableDictionary new]);
+    NSString *direction = [action hasSuffix:@"-inbound"] ? @"inbound" : @"outbound";
+    NSString *decision = [action hasPrefix:@"allow"] ? @"allow" : @"block";
+    if ([result[direction] isEqual:decision]) {
+        [result removeObjectForKey:direction];
+    } else {
+        result[direction] = decision;
+    }
+    return result.count ? result : nil;
 }
 static inline NSString *NSAppRuleSummary(id value) {
     NSMutableArray *titles = [NSMutableArray new];

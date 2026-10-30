@@ -1,3 +1,15 @@
+# 2.5.3
+
+- Align the visible Recent Activity search field with the outer edges of the surrounding list cards while retaining the heading inset.
+- Place **Copy all details** immediately below **Not Now** in network requests and **Cancel** in Recent Activity, above the process heading. Remove the duplicate **Process identity** detail while retaining the full **Process name** value.
+- Copy only a detail's displayed value when tapped, with a brief **Copied** confirmation and VoiceOver announcement, without closing the popup.
+- Allow checked choices to be deselected only in App Rules/System Rules editors. Switching from a both-directions action to one direction keeps only that direction; clearing the last choice restores the configured default policy and invalidates stale permission decisions. Preserve connection-popup selection behavior and policy precedence.
+- Color app/system rows with two explicit directions using the outgoing decision: green for allowed and red for blocked.
+- Rename the both-directions **Block In & Out** action to **Block**.
+- Sort App Rules/System Rules alphabetically by their displayed names, retaining full identities as distinct policy keys.
+- Schedule one automatic respring after successful fresh installs, updates and reinstalls, after app registration and dpkg configuration finish. Preserve saved rules/settings and provide manual recovery instructions if reload cannot be initiated.
+- Generate app/provider release metadata from `control` into build outputs before signing, without rewriting source plists. Retain the existing engine-based bundle build-number convention and internal engine/schema compatibility controls.
+
 # 2.5.2
 
 - Save independent incoming/outgoing app and system decisions in one rule row. The existing-rule editor saves each choice immediately, shows all active checkmarks, and closes with Done.

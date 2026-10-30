@@ -469,6 +469,9 @@ static void TestIdentityDisplay(void) {
     NSPolicy *policy = Policy(@{first : @"allow", second : @"block"});
     CHECK([policy allowsIdentity:first direction:NSFlowDirectionOutbound]);
     CHECK(![policy allowsIdentity:second direction:NSFlowDirectionOutbound]);
+    CHECK(NSCompareIdentityDisplayNames(@"ZZZ.com.Alpha", @"AAA.com.beta") == NSOrderedAscending);
+    CHECK(NSCompareIdentityDisplayNames(first, second) == NSOrderedAscending);
+    CHECK(NSCompareIdentityDisplayNames(@"com.Alpha", @"com.alpha") == NSOrderedAscending);
 }
 static void TestDirectionalGlobalAllows(void) {
     NSString *key = NSCustomGlobalRuleKey(@"test.app", @"domain:example.com", @"port:443", @"tcp");
@@ -1086,6 +1089,119 @@ static void TestCompositeAppRules(void) {
     }
 }
 
+static void TestAppRuleEditorTransitions(void) {
+    id none = NSNull.null;
+    NSArray *cases = @[
+        @[ none, @"allow", @"allow" ], @[ none, @"block", @"block" ], @[ @"allow", @"allow", none ],
+        @[ @"block", @"block", none ], @[ @"allow", @"block", @"block" ], @[ @"block", @"allow", @"allow" ],
+        @[ @"allow", @"block-inbound", @"block-inbound" ],
+        @[ @"block", @"allow-outbound", @"allow-outbound" ], @[ @"allow-inbound", @"allow-inbound", none ],
+        @[ @"block-outbound", @"block-outbound", none ],
+        @[ @"allow-inbound", @"block-inbound", @"block-inbound" ],
+        @[ @"block-outbound", @"allow-outbound", @"allow-outbound" ],
+        @[ @"allow-inbound", @"block-outbound", @{@"inbound" : @"allow", @"outbound" : @"block"} ],
+        @[ @"block-outbound", @"allow-inbound", @{@"inbound" : @"allow", @"outbound" : @"block"} ],
+        @[ @{@"inbound" : @"allow", @"outbound" : @"block"}, @"allow-inbound", @"block-outbound" ],
+        @[ @{@"inbound" : @"allow", @"outbound" : @"block"}, @"block-outbound", @"allow-inbound" ],
+        @[
+            @{@"inbound" : @"allow", @"outbound" : @"block"}, @"block-inbound",
+            @{@"inbound" : @"block", @"outbound" : @"block"}
+        ],
+        @[ @{@"inbound" : @"allow", @"outbound" : @"block"}, @"allow", @"allow" ],
+        @[ @{@"inbound" : @"block", @"outbound" : @"allow"}, @"block", @"block" ]
+    ];
+    for (NSArray *test in cases) {
+        for (id previous in @[ test[0], NSAppRuleRecord(test[0]) ?: none ]) {
+            NSDictionary *result = NSAppRuleByTogglingSelection(previous, test[1]);
+            NSDictionary *expected = NSAppRuleRecord(test[2]);
+            CHECK(expected ? [result isEqual:expected] : result == nil);
+        }
+    }
+    // Default fallback respects both global precedence and the system allowance.
+    for (NSString *identity in @[ @"editor.app", @"com.apple.editor" ]) {
+        for (NSString *fallback in @[ @"ask", @"allow", @"block" ]) {
+            CHECK(NSWriteDocument([NSPolicy defaultDocument], NSPolicyFile, NULL));
+            CHECK(NSUpdatePolicy(
+                ^BOOL(NSMutableDictionary *document, NSError **error) {
+                    document[@"allowAppleSystemProcesses"] = @NO;
+                    document[@"default"] = fallback;
+                    document[@"rules"][identity] = @"allow";
+                    return NSToggleAppRule(document, identity, @"allow", error);
+                },
+                NULL));
+            NSPolicy *policy = NSReadPolicy(NULL);
+            CHECK(!policy.document[@"rules"][identity]);
+            CHECK([policy.document[@"askGenerations"][identity] length] > 0);
+            CHECK([policy requiresPermissionForIdentity:identity
+                                              direction:NSFlowDirectionInbound
+                                            destination:@{}] == [fallback isEqual:@"ask"]);
+            CHECK([policy allowsIdentity:identity
+                               direction:NSFlowDirectionInbound] == [fallback isEqual:@"allow"]);
+            NSMutableDictionary *document = [policy.document mutableCopy];
+            document[@"allowAppleSystemProcesses"] = @YES;
+            NSPolicy *systemPolicy = [NSPolicy policyWithDocument:document error:NULL];
+            if (NSIsAppleSystemIdentity(identity)) {
+                CHECK([systemPolicy allowsIdentity:identity direction:NSFlowDirectionInbound]);
+                CHECK(![systemPolicy requiresPermissionForIdentity:identity]);
+            }
+            document[@"globalRules"] = @{NSCustomGlobalRuleKey(identity, @"", @"", @"any") : @"block"};
+            NSPolicy *globalPolicy = [NSPolicy policyWithDocument:document error:NULL];
+            CHECK(![globalPolicy allowsIdentity:identity direction:NSFlowDirectionInbound]);
+            CHECK(![globalPolicy requiresPermissionForIdentity:identity]);
+        }
+    }
+    CHECK(NSWriteDocument([NSPolicy defaultDocument], NSPolicyFile, NULL));
+    NSPermissionQueue *queue = [NSPermissionQueue new];
+    NSDictionary *old = [queue enqueueIdentity:@"editor.app"
+                                     direction:NSFlowDirectionInbound
+                                           now:0
+                                          date:NSDate.date
+                                    completion:^(BOOL allow) {
+                                        CHECK(!allow);
+                                    }];
+    [queue resolveWithPolicy:NSReadPolicy(NULL) now:31];
+    CHECK(queue.requests.count == 1);
+    CHECK(NSWriteDocument(Monitor(queue.requests, YES, NSEngineVersion, NSDate.date), NSMonitorFile, NULL));
+    SaveRule(@"editor.app", @"allow");
+    CHECK(NSUpdatePolicy(
+        ^BOOL(NSMutableDictionary *document, NSError **error) {
+            return NSToggleAppRule(document, @"editor.app", @"allow-outbound", error);
+        },
+        NULL));
+    NSPolicy *partial = NSReadPolicy(NULL);
+    CHECK([partial.document[@"rules"][@"editor.app"] isEqual:NSAppRuleRecord(@"allow-outbound")]);
+    CHECK(!NSAnswerPermissionRequest(old, YES, NULL));
+    [queue resolveWithPolicy:partial now:32];
+    CHECK(queue.requests.count == 0);
+    NSDictionary *fresh = [queue enqueueIdentity:@"editor.app"
+                                       direction:NSFlowDirectionInbound
+                                             now:33
+                                            date:NSDate.date
+                                      completion:^(BOOL allow) {
+                                          CHECK(!allow);
+                                      }];
+    CHECK(fresh && ![fresh[@"token"] isEqual:old[@"token"]]);
+    CHECK([fresh[@"askGeneration"] isEqual:partial.document[@"askGenerations"][@"editor.app"]]);
+    // Failed transactions retain both the actual checkmarks and generation.
+    CHECK(!NSUpdatePolicy(
+        ^BOOL(NSMutableDictionary *document, NSError **error) {
+            CHECK(NSToggleAppRule(document, @"editor.app", @"allow-outbound", error));
+            return NO;
+        },
+        NULL));
+    CHECK([NSReadPolicy(NULL).document isEqual:partial.document]);
+    CHECK(NSUpdatePolicy(
+        ^BOOL(NSMutableDictionary *document, NSError **error) {
+            return NSToggleAppRule(document, @"editor.app", @"allow-outbound", error);
+        },
+        NULL));
+    CHECK(!NSReadPolicy(NULL).document[@"rules"][@"editor.app"]);
+    CHECK(![NSReadPolicy(NULL).document[@"askGenerations"][@"editor.app"]
+        isEqual:partial.document[@"askGenerations"][@"editor.app"]]);
+    [queue resolveWithPolicy:NSReadPolicy(NULL) now:34];
+    CHECK(queue.requests.count == 0);
+}
+
 static void TestDirectionalAppAllows(void) {
     for (NSString *rule in @[ @"allow-inbound", @"allow-outbound" ]) {
         NSFlowDirection matching =
@@ -1549,6 +1665,7 @@ int main(void) {
         TestIdentityDisplay();
         TestDirectionalPermissionAnswers();
         TestCompositeAppRules();
+        TestAppRuleEditorTransitions();
         TestDirectionalAppAllows();
         TestAnswersAndReset();
         TestSocketSettingsAndDestinations();

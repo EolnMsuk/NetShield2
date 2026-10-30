@@ -13,3 +13,9 @@ static inline NSString *NSIdentityDisplayName(id identity) {
     name = [name stringByReplacingOccurrencesOfString:@"org." withString:@""];
     return name.length ? name : @"Unidentified app";
 }
+
+static inline NSComparisonResult NSCompareIdentityDisplayNames(NSString *left, NSString *right) {
+    NSComparisonResult result =
+        [NSIdentityDisplayName(left) localizedCaseInsensitiveCompare:NSIdentityDisplayName(right)];
+    return result == NSOrderedSame ? [left compare:right options:NSLiteralSearch] : result;
+}

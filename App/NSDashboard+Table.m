@@ -31,8 +31,24 @@
 @interface NSDashboardSectionHeader : UIView
 @property(nonatomic, weak) UITableView *table;
 @property(nonatomic) NSInteger section;
+@property(nonatomic, strong) UILayoutGuide *cardLayoutGuide;
+@property(nonatomic, strong) NSLayoutConstraint *cardLeft;
+@property(nonatomic, strong) NSLayoutConstraint *cardRight;
 @end
 @implementation NSDashboardSectionHeader
+- (instancetype)initWithFrame:(CGRect)frame {
+    if ((self = [super initWithFrame:frame])) {
+        _cardLayoutGuide = [UILayoutGuide new];
+        [self addLayoutGuide:_cardLayoutGuide];
+        _cardLeft = [_cardLayoutGuide.leftAnchor constraintEqualToAnchor:self.leftAnchor];
+        _cardRight = [_cardLayoutGuide.rightAnchor constraintEqualToAnchor:self.rightAnchor];
+        [NSLayoutConstraint activateConstraints:@[
+            _cardLeft, _cardRight, [_cardLayoutGuide.topAnchor constraintEqualToAnchor:self.topAnchor],
+            [_cardLayoutGuide.bottomAnchor constraintEqualToAnchor:self.bottomAnchor]
+        ]];
+    }
+    return self;
+}
 - (void)layoutSubviews {
     UITableViewCell *cell = [self.table cellForRowAtIndexPath:[NSIndexPath indexPathForRow:0
                                                                                  inSection:self.section]];
@@ -43,6 +59,8 @@
                                 toView:self];
     CGFloat left = MAX(0, CGRectGetMinX(group));
     CGFloat right = MAX(0, self.bounds.size.width - CGRectGetMaxX(group));
+    self.cardLeft.constant = left;
+    self.cardRight.constant = -right;
     BOOL rtl = self.effectiveUserInterfaceLayoutDirection == UIUserInterfaceLayoutDirectionRightToLeft;
     NSDirectionalEdgeInsets margins =
         NSDirectionalEdgeInsetsMake(12, (rtl ? right : left) + 20, 8, rtl ? left : right);
@@ -418,8 +436,8 @@
             [header addSubview:search];
             [NSLayoutConstraint activateConstraints:@[
                 [search.topAnchor constraintEqualToAnchor:clear.bottomAnchor constant:4],
-                [search.leadingAnchor constraintEqualToAnchor:margins.leadingAnchor],
-                [search.trailingAnchor constraintEqualToAnchor:margins.trailingAnchor],
+                [search.leadingAnchor constraintEqualToAnchor:header.cardLayoutGuide.leadingAnchor],
+                [search.trailingAnchor constraintEqualToAnchor:header.cardLayoutGuide.trailingAnchor],
                 [search.bottomAnchor constraintEqualToAnchor:margins.bottomAnchor]
             ]];
         } else {
@@ -641,11 +659,7 @@
         } else {
             NSString *identity = identities[path.row];
             id rule = self.policy.document[@"rules"][identity];
-            UIColor *color = [rule isKindOfClass:NSDictionary.class]
-                                 ? (NSAppRuleSelections(rule).count == 1
-                                        ? NSRuleColor(NSAppRuleSelections(rule).firstObject)
-                                        : nil)
-                                 : NSRuleColor(rule);
+            UIColor *color = NSAppRuleColor(rule);
             if (color) {
                 cell.backgroundColor = [color colorWithAlphaComponent:0.14];
             }

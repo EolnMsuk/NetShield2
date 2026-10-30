@@ -7,7 +7,7 @@ import re
 import struct
 from urllib.parse import urlsplit
 from prepare_package import PACKAGE_ARCHITECTURES, maintainer_script
-from sync_version import release_metadata
+from sync_version import bundle_metadata, release_metadata
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
@@ -50,7 +50,6 @@ require(banner_url.scheme == 'https' and
 require((ROOT / 'App/Resources/banner.png').read_bytes().startswith(b'\x89PNG\r\n\x1a\n'), 'Invalid package banner')
 
 
-engine_version = re.search(r'NSEngineVersion\s*=\s*(\d+)', (ROOT / 'Shared/NSConstants.h').read_text()).group(1)
 bundles = [
     ('App', 'NetShield2', '', None, None),
     ('FilterData', 'NetShield2Data', '.data', 'com.apple.networkextension.filter-data', 'NSFilterDataProvider'),
@@ -63,12 +62,9 @@ for directory, binary, suffix, point, principal in bundles:
     require(info['CFBundleIdentifier'] == 'com.eolnmsuk.netshield' + suffix, 'Bundle ID mismatch')
     require(info['CFBundleExecutable'] == binary, 'Executable mismatch')
     require(info['MinimumOSVersion'] == '15.0', 'Deployment mismatch')
-    require(info.get('CFBundleShortVersionString') == metadata['Version'],
-            f'{directory}: bundle release version must match the package version')
-    require(info.get('CFBundleVersion') == engine_version,
-            f'{directory}/Resources/Info.plist: CFBundleVersion is '
-            f'{info.get("CFBundleVersion")!r}; expected "{engine_version}" for {metadata["Version"]}. '
-            'All app and provider bundle versions must match.')
+    require('CFBundleShortVersionString' not in info and 'CFBundleVersion' not in info,
+            f'{directory}: source plist must omit generated version fields')
+    bundle_metadata(source / 'Resources/Info.plist', metadata)
     if point:
         require(info['NSExtension'] == dict(NSExtensionPointIdentifier=point, NSExtensionPrincipalClass=principal), 'Bad extension registration metadata')
     ent = plist(source / 'Entitlements.plist')
@@ -80,6 +76,8 @@ for directory, binary, suffix, point, principal in bundles:
     require(ent['com.apple.security.application-groups'] == ['group.com.eolnmsuk.netshield'], 'App group mismatch')
     require('com.apple.private.security.no-sandbox' not in ent, 'Do not remove provider isolation')
     make = (source / 'Makefile').read_text()
+    require('include ../scripts/bundle_metadata.mk' in make,
+            f'{directory}: missing bundle metadata build hook')
     signing = re.search(rf'^{binary}_CODESIGN_FLAGS = (.+)$', make, re.M)
     require(signing is not None and
             '-SEntitlements.plist' in signing.group(1).split() and
@@ -113,7 +111,11 @@ if args.stage:
                     f'Maintainer script must be executable (0755): {name}')
     for directory, binary, suffix, point, principal in bundles:
         bundle = app if directory == 'App' else app / f'PlugIns/{binary}.appex'
-        require(plist(bundle / 'Info.plist') == plist(ROOT / directory / 'Resources/Info.plist'), f'Bad staged metadata: {binary}')
+        require(plist(bundle / 'Info.plist') == bundle_metadata(ROOT / directory / 'Resources/Info.plist', metadata),
+                f'Bad staged metadata: {binary}')
+        if os.name == 'posix':
+            require((bundle / 'Info.plist').stat().st_mode & 0o444 == 0o444,
+                    f'Bundle metadata must be readable by iOS: {binary}')
         executable = bundle / binary
         require(executable.is_file(), f'Missing executable {executable}')
         if os.name == 'posix':

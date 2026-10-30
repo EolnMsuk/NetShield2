@@ -41,6 +41,8 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 @property(nonatomic) BOOL clearingSection;
 @property(nonatomic, copy) NSArray<NSString *> *identities;
 @property(nonatomic, copy) NSArray<NSString *> *systemIdentities;
+@property(nonatomic, weak) NSRuleActionController *ruleEditor;
+@property(nonatomic, copy) NSString *editingRuleIdentity;
 @property(nonatomic, copy) NSArray<NSString *> *globalRuleKeys;
 @property(nonatomic, copy) NSString *message;
 @property(nonatomic, strong) NSTimer *timer;

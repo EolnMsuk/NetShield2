@@ -4,6 +4,9 @@
 
 @interface NSRuleActionController ()
 @property(nonatomic, strong) NSMutableArray<NSDictionary *> *choices;
+@property(nonatomic, strong) NSTimer *clipboardFeedbackTimer;
+@property(nonatomic, weak) UITableViewCell *clipboardFeedbackCell;
+@property(nonatomic, strong) UILabel *clipboardFeedbackLabel;
 @end
 
 @implementation NSRuleActionController
@@ -53,10 +56,32 @@
     return UIModalPresentationNone;
 }
 - (NSInteger)logicalSection:(NSInteger)section {
-    return self.connectionLayout ? [@[ @1, @0, @3, @2 ][section] integerValue] : section;
+    return [self sectionOrder][section].integerValue;
+}
+- (NSArray<NSNumber *> *)sectionOrder {
+    NSMutableArray *sections = [NSMutableArray new];
+    if (self.connectionLayout) {
+        [sections addObject:@1];
+        if (self.clipboardText) {
+            [sections addObject:@3];
+        }
+        [sections addObject:@0];
+        if (self.detailRows.count) {
+            [sections addObject:@2];
+        }
+    } else {
+        [sections addObjectsFromArray:@[ @0, @1 ]];
+        if (self.detailRows.count) {
+            [sections addObject:@2];
+        }
+        if (self.clipboardText) {
+            [sections addObject:@3];
+        }
+    }
+    return sections;
 }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
-    return self.clipboardText ? 4 : self.detailRows.count ? 3 : 2;
+    return self.sectionOrder.count;
 }
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     section = [self logicalSection:section];
@@ -83,7 +108,7 @@
     cell.textLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
     cell.detailTextLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
     if (path.section == 3) {
-        cell.textLabel.text = @"Copy details";
+        cell.textLabel.text = @"Copy all details";
         cell.textLabel.textColor = UIColor.systemBlueColor;
         cell.textLabel.textAlignment = NSTextAlignmentCenter;
         cell.accessibilityTraits |= UIAccessibilityTraitButton;
@@ -123,6 +148,11 @@
             cell.textLabel.textColor = UIColor.secondaryLabelColor;
             cell.detailTextLabel.text = detail[1];
             cell.detailTextLabel.textColor = UIColor.labelColor;
+            if (self.connectionLayout) {
+                cell.selectionStyle = UITableViewCellSelectionStyleDefault;
+                cell.accessibilityTraits |= UIAccessibilityTraitButton;
+                cell.accessibilityHint = @"Copies only this value";
+            }
         }
     } else {
         NSDictionary *choice = self.choices[path.row];
@@ -176,18 +206,52 @@
     }
     return cell;
 }
+- (void)clearCopyFeedback {
+    [self.clipboardFeedbackTimer invalidate];
+    self.clipboardFeedbackTimer = nil;
+    if (self.clipboardFeedbackCell.accessoryView == self.clipboardFeedbackLabel) {
+        self.clipboardFeedbackCell.accessoryView = nil;
+    }
+    self.clipboardFeedbackCell = nil;
+    self.clipboardFeedbackLabel = nil;
+}
+- (void)showCopyFeedbackAtPath:(NSIndexPath *)path {
+    [self clearCopyFeedback];
+    UITableViewCell *cell = [self.tableView cellForRowAtIndexPath:path];
+    UILabel *label = [UILabel new];
+    label.text = @"Copied";
+    label.font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1];
+    label.adjustsFontForContentSizeCategory = YES;
+    label.textColor = UIColor.secondaryLabelColor;
+    [label sizeToFit];
+    cell.accessoryView = label;
+    self.clipboardFeedbackCell = cell;
+    self.clipboardFeedbackLabel = label;
+    UIAccessibilityPostNotification(UIAccessibilityAnnouncementNotification, @"Copied to clipboard");
+    __weak typeof(self) weakSelf = self;
+    self.clipboardFeedbackTimer = [NSTimer scheduledTimerWithTimeInterval:1
+                                                                  repeats:NO
+                                                                    block:^(NSTimer *timer) {
+                                                                        [weakSelf clearCopyFeedback];
+                                                                    }];
+    [NSRunLoop.mainRunLoop addTimer:self.clipboardFeedbackTimer forMode:NSRunLoopCommonModes];
+}
+- (void)viewDidDisappear:(BOOL)animated {
+    [super viewDidDisappear:animated];
+    [self clearCopyFeedback];
+}
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)path {
     [tableView deselectRowAtIndexPath:path animated:YES];
     NSIndexPath *visiblePath = path;
     path = [NSIndexPath indexPathForRow:path.row inSection:[self logicalSection:path.section]];
     if (path.section == 3) {
         UIPasteboard.generalPasteboard.string = self.clipboardText;
-        UITableViewCell *cell = [tableView cellForRowAtIndexPath:visiblePath];
-        cell.textLabel.text = @"Copied";
-        UIAccessibilityPostNotification(UIAccessibilityAnnouncementNotification, @"Copied to clipboard");
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-            cell.textLabel.text = @"Copy details";
-        });
+        [self showCopyFeedbackAtPath:visiblePath];
+        return;
+    }
+    if (self.connectionLayout && path.section == 2) {
+        UIPasteboard.generalPasteboard.string = self.detailRows[path.row][1];
+        [self showCopyFeedbackAtPath:visiblePath];
         return;
     }
     if (path.section != 1) {
@@ -195,13 +259,14 @@
     }
     NSString *rule = self.choices[path.row][@"rule"];
     if (self.keepsRuleSelectionsOpen && [NSDirectionRuleValues() containsObject:rule]) {
-        if ([self.selectedRules containsObject:rule]) {
+        if (!self.allowsRuleDeselection && [self.selectedRules containsObject:rule]) {
             return;
         }
         void (^save)(void) = self.choices[path.row][@"handler"];
         tableView.userInteractionEnabled = NO;
         save();
         tableView.userInteractionEnabled = YES;
+        [self clearCopyFeedback];
         [tableView reloadData];
         return;
     }

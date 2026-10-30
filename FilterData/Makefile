@@ -7,3 +7,4 @@ NetShield2Data_CFLAGS = -fobjc-arc -Wall -Wextra -Wno-unused-parameter -Werror=u
 NetShield2Data_CODESIGN_FLAGS = -SEntitlements.plist -Icom.eolnmsuk.netshield.data
 NetShield2Data_INSTALL_PATH = /Applications/NetShield2.app/PlugIns
 include $(THEOS_MAKE_PATH)/appex.mk
+include ../scripts/bundle_metadata.mk

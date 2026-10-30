@@ -108,10 +108,8 @@ static inline NSArray<NSDictionary *> *NSGroupedActivity(NSArray<NSDictionary *>
 // One ordered source for connection sheets, search values, and clipboard output.
 static inline NSArray<NSArray<NSString *> *> *NSActivityDetailRows(NSDictionary *connection) {
     NSString *identity = connection[@"identity"];
-    NSMutableArray *details = [NSMutableArray arrayWithArray:@[
-        @[ @"Process identity", identity.length ? identity : @"Unavailable from iOS" ],
-        @[ @"Process name", identity.length ? identity : @"Unavailable from iOS" ]
-    ]];
+    NSMutableArray *details = [NSMutableArray
+        arrayWithArray:@[ @[ @"Process name", identity.length ? identity : @"Unavailable from iOS" ] ]];
     [details
         addObjectsFromArray:NSConnectionDetailRows(connection[@"destination"], connection[@"direction"])];
     if (connection[@"connections"]) {

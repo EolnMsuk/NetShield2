@@ -8,3 +8,4 @@ NetShield2Control_CODESIGN_FLAGS = -SEntitlements.plist -Icom.eolnmsuk.netshield
 NetShield2Control_INSTALL_PATH = /Applications/NetShield2.app/PlugIns
 # DNSService APIs are supplied by the automatically linked libSystem on iOS.
 include $(THEOS_MAKE_PATH)/appex.mk
+include ../scripts/bundle_metadata.mk
