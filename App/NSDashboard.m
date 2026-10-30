@@ -140,6 +140,9 @@
 }
 - (void)configurationChanged:(NSNotification *)notification {
     dispatch_async(dispatch_get_main_queue(), ^{
+        if (self.recoverySuspended) {
+            return;
+        }
         [self refreshNotificationSettings];
         NSWriteDocument(@{@"revision" : NSUUID.UUID.UUIDString}, NSNotificationRetryFile, NULL);
         [self loadConfiguration];

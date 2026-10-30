@@ -113,7 +113,7 @@
             return;
         }
         self.manager.providerConfiguration = configuration;
-        self.manager.localizedDescription = self.restoring ? self.previousDescription : @"Firewall Active";
+        self.manager.localizedDescription = self.restoring ? self.previousDescription : @"Active Firewall";
         self.manager.enabled = YES;
         self.touchedPreferences = YES;
         NSUInteger saveGeneration = self.generation;

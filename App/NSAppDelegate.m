@@ -1,11 +1,16 @@
 #import "NSAppDelegate.h"
 #import "NSDashboard.h"
 #import "../Shared/NSNotifications.h"
+#import "NSRecoveryViewController.h"
+#import "NSRecoveryDiagnostics.h"
+#import "NSDashboard+Internal.h"
 
 @implementation NSAppDelegate
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)options {
-    NSRegisterPermissionActions();
-    UNUserNotificationCenter.currentNotificationCenter.delegate = self;
+    if (!NSRecoveryIsPlainPoC()) {
+        NSRegisterPermissionActions();
+        UNUserNotificationCenter.currentNotificationCenter.delegate = self;
+    }
     if (application.applicationState != UIApplicationStateBackground) {
         [self createInterface];
     }
@@ -16,10 +21,41 @@
         return;
     }
     self.window = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
-    self.dashboard = [[NSDashboard alloc] initWithStyle:UITableViewStyleInsetGrouped];
-    self.window.rootViewController =
-        [[UINavigationController alloc] initWithRootViewController:self.dashboard];
+    NSRecoveryViewController *recovery =
+        [[NSRecoveryViewController alloc] initWithStyle:UITableViewStyleInsetGrouped];
+    __weak typeof(self) weakSelf = self;
+    recovery.openDashboard = ^{
+        [weakSelf openDashboard];
+    };
+    self.window.rootViewController = [[UINavigationController alloc] initWithRootViewController:recovery];
     [self.window makeKeyAndVisible];
+}
+- (void)openDashboard {
+    if (NSRecoveryIsPlainPoC() || NSRecoveryService().busy || self.dashboard) {
+        return;
+    }
+    NSRegisterPermissionActions();
+    UNUserNotificationCenter.currentNotificationCenter.delegate = self;
+    self.dashboard = [[NSDashboard alloc] initWithStyle:UITableViewStyleInsetGrouped];
+    self.dashboard.navigationItem.leftBarButtonItem =
+        [[UIBarButtonItem alloc] initWithTitle:@"Recovery"
+                                         style:UIBarButtonItemStylePlain
+                                        target:self
+                                        action:@selector(closeDashboard)];
+    UINavigationController *navigation =
+        [[UINavigationController alloc] initWithRootViewController:self.dashboard];
+    navigation.modalPresentationStyle = UIModalPresentationFullScreen;
+    [self.window.rootViewController presentViewController:navigation animated:YES completion:nil];
+}
+- (void)closeDashboard {
+    if (self.dashboard.busy) {
+        return;
+    }
+    self.dashboard.recoverySuspended = YES;
+    [self.window.rootViewController dismissViewControllerAnimated:YES
+                                                       completion:^{
+                                                           self.dashboard = nil;
+                                                       }];
 }
 - (void)applicationDidBecomeActive:(UIApplication *)application {
     [self createInterface];
@@ -36,6 +72,10 @@
     didReceiveNotificationResponse:(UNNotificationResponse *)response
              withCompletionHandler:(void (^)(void))completionHandler {
     dispatch_async(dispatch_get_main_queue(), ^{
+        if (NSRecoveryIsPlainPoC()) {
+            completionHandler();
+            return;
+        }
         NSDictionary *request = response.notification.request.content.userInfo;
         if (NSIsPermissionCategory(response.notification.request.content.categoryIdentifier) &&
             [request[@"token"] isKindOfClass:NSString.class] &&

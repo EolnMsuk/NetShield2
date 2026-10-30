@@ -1,3 +1,7 @@
+# 2.5.6
+
+- 1st attempt at tipa version to enable remove filter/disable firewall from non jailbroken state (to fix no internet issue if firewall left on).
+
 # 2.5.5
 
 - Fixed searchbar keyboard predictive text from covering the input field.

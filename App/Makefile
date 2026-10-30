@@ -1,9 +1,11 @@
 include $(THEOS)/makefiles/common.mk
 APPLICATION_NAME = NetShield2
-NetShield2_FILES = main.m NSFilterRemoval.m NSFilterRestart.m NSAppDelegate.m NSDashboard.m NSGlobalRuleEditor.m NSRuleActionController.m NSDashboard+Table.m NSDashboard+Configuration.m NSDashboard+Notifications.m NSDashboard+Updates.m ../Shared/NSPolicy.m ../Shared/NSStore.m ../Shared/NSStoreLock.m ../Shared/NSPolicyCache.m
-NetShield2_FRAMEWORKS = UIKit Foundation NetworkExtension UserNotifications
+NetShield2_FILES = main.m NSFilterRemoval.m NSFilterRecovery.m NSRecoveryDiagnostics.m NSRecoveryViewController.m NSFilterRestart.m NSAppDelegate.m NSDashboard.m NSGlobalRuleEditor.m NSRuleActionController.m NSDashboard+Table.m NSDashboard+Configuration.m NSDashboard+Notifications.m NSDashboard+Updates.m ../Shared/NSPolicy.m ../Shared/NSStore.m ../Shared/NSStoreLock.m ../Shared/NSPolicyCache.m
+NetShield2_FRAMEWORKS = UIKit Foundation NetworkExtension UserNotifications UniformTypeIdentifiers
 NetShield2_CFLAGS = -fobjc-arc -Wall -Wextra -Wno-unused-parameter -Werror=unguarded-availability
-ifeq ($(THEOS_PACKAGE_SCHEME),roothide)
+ifeq ($(NETSHIELD_PLAIN_POC),1)
+NetShield2_CFLAGS += -DNS_RECOVERY_POC=1 -DNS_JAILBREAK_TYPE=\"trollstore-poc\"
+else ifeq ($(THEOS_PACKAGE_SCHEME),roothide)
 NetShield2_CFLAGS += -DNS_JAILBREAK_TYPE=\"roothide\"
 else ifeq ($(THEOS_PACKAGE_SCHEME),rootless)
 NetShield2_CFLAGS += -DNS_JAILBREAK_TYPE=\"rootless\"

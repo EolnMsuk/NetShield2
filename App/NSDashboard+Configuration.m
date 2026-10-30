@@ -1,6 +1,7 @@
 #import "NSDashboard+Internal.h"
 #include <errno.h>
 #import "../Shared/NSProviderHealth.h"
+#import "NSRecoveryDiagnostics.h"
 
 @implementation NSDashboard (Configuration)
 - (void)socketFilteringChanged:(UISwitch *)sender {
@@ -28,7 +29,7 @@
     }
 }
 - (void)loadConfiguration {
-    if (self.busy) {
+    if (self.busy || self.recoverySuspended) {
         return;
     }
     self.busy = YES;
@@ -56,6 +57,14 @@
     }];
 }
 - (void)changeConfiguration:(NSConfigurationOperation)operation {
+    if (self.recoverySuspended) {
+        return;
+    }
+    if (operation == NSConfigurationEnable && NSRecoveryIsPlainPoC()) {
+        self.message = @"Enable/restart is gated in the Phase 0 plain payload pending device proof.";
+        [self refreshTableKeepingPosition];
+        return;
+    }
     if (self.busy) {
         return;
     }

@@ -3,6 +3,16 @@ export TARGET = iphone:clang:16.5:15.0
 export THEOS_PACKAGE_SCHEME ?= rootless
 export FINALPACKAGE ?= 1
 
+# Phase 0 is an untransformed stage/archive experiment, never an app-in-deb.
+ifeq ($(NETSHIELD_PLAIN_POC),1)
+ifneq ($(strip $(THEOS_PACKAGE_SCHEME)),)
+$(error Plain PoC requires the standard Theos with THEOS_PACKAGE_SCHEME=)
+endif
+ifneq ($(filter package,$(MAKECMDGOALS)),)
+$(error Plain PoC is stage-only; use scripts/build_tipa.py after stage)
+endif
+endif
+
 # Theos uses an empty scheme for rootful; our packaging tools use its name.
 NETSHIELD_PACKAGE_VARIANT := $(if $(strip $(THEOS_PACKAGE_SCHEME)),$(THEOS_PACKAGE_SCHEME),rootful)
 

@@ -58,6 +58,7 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 @property(nonatomic, weak) UIViewController *permissionAlert;
 @property(nonatomic, copy) NSDictionary *presentedRequest;
 @property(nonatomic) BOOL busy;
+@property(nonatomic) BOOL recoverySuspended;
 @property(nonatomic) BOOL loaded;
 @property(nonatomic) BOOL attemptedProviderUpgrade;
 @property(nonatomic, strong) NSFilterRestart *restart;
