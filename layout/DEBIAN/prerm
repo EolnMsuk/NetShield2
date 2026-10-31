@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 case "${1:-}" in
-    remove|deconfigure)
+    remove|deconfigure|purge)
         # Capture startup output too: injected tweaks can log before main().
         # Successful cleanup is silent; retain our own diagnostics on failure.
         if cleanup_output=$(/var/jb/Applications/NetShield2.app/NetShield2 --remove-filter 2>&1); then
@@ -18,5 +18,34 @@ case "${1:-}" in
             exit 1
         fi
         /var/jb/usr/bin/uicache -u /var/jb/Applications/NetShield2.app >/dev/null 2>&1 || true
+
+        # Schedule automatic respring after package manager completes uninstall
+        reload=/var/jb/usr/bin/sbreload
+        if [ -x "$reload" ]; then
+            printf '%s\n' 'NetShield2: respring scheduled after uninstall finishes.'
+            installer_pid=$PPID
+            (
+                trap '' HUP
+                report_reload_failure() {
+                    if command -v logger >/dev/null 2>&1; then
+                        logger -t NetShield2 "$1 Respring manually using your jailbreak." || true
+                    fi
+                }
+                attempts=0
+                while kill -0 "$installer_pid" 2>/dev/null; do
+                    if [ "$attempts" -ge 600 ]; then
+                        report_reload_failure 'Automatic respring timed out waiting for package manager.'
+                        exit 0
+                    fi
+                    sleep 1
+                    attempts=$((attempts + 1))
+                done
+                if ! "$reload"; then
+                    report_reload_failure 'Automatic respring failed to start.'
+                fi
+            ) </dev/null >/dev/null 2>&1 &
+        else
+            printf '%s\n' 'NetShield2: automatic respring unavailable (missing sbreload). Please respring manually.' >&2
+        fi
         ;;
 esac
