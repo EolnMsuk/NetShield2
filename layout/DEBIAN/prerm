@@ -13,7 +13,7 @@ case "${1:-}" in
                     NetShield2:*) printf '%s\n' "$line" >&2 ;;
                 esac
             done
-            printf 'NetShield2: filter or saved-data cleanup failed (exit %s); uninstall cancelled.\n' "$cleanup_status" >&2
+            printf 'NetShield2: filter cleanup failed (exit %s); uninstall cancelled.\n' "$cleanup_status" >&2
             printf '%s\n' 'Open NetShield2 > Reset Settings > Reset Settings & Filter, then retry removal.' >&2
             exit 1
         fi
