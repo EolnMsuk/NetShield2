@@ -44,8 +44,6 @@ case "${1:-}" in
                     report_reload_failure 'Automatic respring failed to start.'
                 fi
             ) </dev/null >/dev/null 2>&1 &
-        else
-            printf '%s\n' 'NetShield2: automatic respring unavailable (missing sbreload). Please respring manually.' >&2
         fi
         ;;
 esac
