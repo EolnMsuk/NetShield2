@@ -1,0 +1,22 @@
+#!/bin/sh
+set -eu
+case "${1:-}" in
+    remove|deconfigure)
+        # Capture startup output too: injected tweaks can log before main().
+        # Successful cleanup is silent; retain our own diagnostics on failure.
+        if cleanup_output=$(/var/jb/Applications/NetShield2.app/NetShield2 --remove-filter 2>&1); then
+            :
+        else
+            cleanup_status=$?
+            printf '%s\n' "$cleanup_output" | while IFS= read -r line; do
+                case "$line" in
+                    NetShield2:*) printf '%s\n' "$line" >&2 ;;
+                esac
+            done
+            printf 'NetShield2: filter cleanup failed (exit %s); uninstall cancelled.\n' "$cleanup_status" >&2
+            printf '%s\n' 'Open NetShield2 > Reset Settings > Reset Settings & Filter, then retry removal.' >&2
+            exit 1
+        fi
+        /var/jb/usr/bin/uicache -u /var/jb/Applications/NetShield2.app >/dev/null 2>&1 || true
+        ;;
+esac

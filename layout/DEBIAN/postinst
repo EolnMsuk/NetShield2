@@ -1,0 +1,51 @@
+#!/bin/sh
+set -eu
+case "${1:-}" in
+    configure)
+        if [ -n "${2:-}" ]; then
+            if [ -d /var/jb/Applications/NetShield.app ]; then
+                /var/jb/usr/bin/uicache -u /var/jb/Applications/NetShield.app || true
+            fi
+        fi
+        /var/jb/usr/bin/uicache -p /var/jb/Applications/NetShield2.app
+        printf '%s\n' 'Using Do Not Disturb? Allow NetShield2 in Settings > Focus > Do Not Disturb > Apps.'
+        printf '%s\n' 'When upgrading v1, reboot and re-jailbreak to unload old socket hooks from running processes.'
+        printf '%s\n' 'NetShield2: open the app after the automatic respring and turn on Firewall.'
+        reload=/var/jb/usr/bin/sbreload
+        query=/var/jb/usr/bin/dpkg-query
+        if [ ! -x "$reload" ] || [ ! -x "$query" ]; then
+            printf '%s\n' 'NetShield2: automatic respring unavailable (missing sbreload or dpkg-query). Installation is configured; respring manually using your jailbreak, then open NetShield2.' >&2
+            exit 0
+        fi
+        printf '%s\n' 'NetShield2: respring scheduled after dpkg finishes. If it does not occur, respring manually using your jailbreak. Rules and settings are preserved.'
+        installer_pid=$PPID
+        # dpkg records successful configuration only after this script returns.
+        # Detach all install descriptors so package managers can finish normally.
+        (
+            trap '' HUP
+            report_reload_failure() {
+                if command -v logger >/dev/null 2>&1; then
+                    logger -t NetShield2 "$1 Respring manually using your jailbreak, then open NetShield2." || true
+                fi
+            }
+            attempts=0
+            while kill -0 "$installer_pid" 2>/dev/null; do
+                if [ "$attempts" -ge 600 ]; then
+                    report_reload_failure 'Automatic respring timed out waiting for dpkg.'
+                    exit 0
+                fi
+                sleep 1
+                attempts=$((attempts + 1))
+            done
+            if [ "$("$query" -W -f='${Status}' com.eolnmsuk.netshield 2>/dev/null)" != 'install ok installed' ]; then
+                report_reload_failure 'Automatic respring skipped: package configuration is incomplete.'
+                exit 0
+            fi
+            if ! "$reload"; then
+                report_reload_failure 'Automatic respring failed to start.'
+            fi
+        ) </dev/null >/dev/null 2>&1 &
+        # Reload failures do not make dpkg retry an otherwise configured install.
+        exit 0
+        ;;
+esac
