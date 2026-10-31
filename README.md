@@ -6,7 +6,7 @@ A customizable firewall & live network monitor with actionable notifications for
 
 ## Get started
 
-## **Warning:** A serious bug exists for semi-untethered jailbreaks: Until 2.5.6 is released, if you leave the firewall ON and reboot into a non jailbroken state, you will have no internet access until the firewall is disabled while in a jailbroken state. The content filter cannot be removed while in a non jailbroken state, but is harmless if the firewall was disabled before reboot. If you wish to remove the content filter (for any reason), use the Reset All Settings & Filter option while jailbroken (inside NetShield2 configuration options), which happens automatically when NetShield2 is uninstalled (Sileo/Zebra).
+### **Warning:** A serious bug exists for semi-untethered jailbreaks: if you leave the firewall ON and reboot into a non jailbroken state, you will have no internet access until the firewall is disabled while in a jailbroken state. The content filter (also) cannot be removed while in a non jailbroken state, harmless if the firewall was disabled before reboot. While jailbroken, if you wish to remove the content filter (for any reason), use the Reset All Settings & Filter option (inside NetShield2 configuration section). Uninstalling NetShield2 using Sileo / Zebra will also remove the content filter safely.
 
 1. Download the (rootless or roothide or rootful) deb from the [latest release](https://github.com/EolnMsuk/NetShield2/releases/latest) page, open / install with Sileo or Zebra.
 2. Open NetShield2 from the homescreen and switch on the main **Firewall** toggle, accept the iOS Notification and allow **Filter Network Content**, enter passcode.

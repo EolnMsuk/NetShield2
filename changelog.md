@@ -1,3 +1,11 @@
+# 2.5.6
+
+- Renamed the iOS content filter to **Firewall & Monitor** and migrate enabled existing filters safely.
+- Preserve Recent Activity when the firewall or control provider restarts, while retaining explicit activity clears.
+- Show Clear only for non-empty Global Rules, App Rules, System Rules, and Recent Activity sections.
+- Let the top-right refresh control finish its normal refresh before optionally respringing SpringBoard.
+- Remove the system filter and all saved NetShield2 settings, rules, requests, and activity on package uninstall.
+
 # 2.5.5
 
 - Fixed searchbar keyboard predictive text from covering the input field.

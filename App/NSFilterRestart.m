@@ -1,5 +1,7 @@
 #import "NSFilterRestart.h"
 
+NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
+
 @interface NSFilterRestart ()
 @property(nonatomic, copy) void (^completion)(NSError *);
 @property(nonatomic, strong) id previous;
@@ -113,7 +115,8 @@
             return;
         }
         self.manager.providerConfiguration = configuration;
-        self.manager.localizedDescription = self.restoring ? self.previousDescription : @"Firewall Active";
+        self.manager.localizedDescription =
+            self.restoring ? self.previousDescription : NSFilterLocalizedDescription;
         self.manager.enabled = YES;
         self.touchedPreferences = YES;
         NSUInteger saveGeneration = self.generation;

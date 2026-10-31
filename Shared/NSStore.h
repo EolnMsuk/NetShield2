@@ -26,6 +26,8 @@ FOUNDATION_EXPORT NSArray<NSString *> *_Nullable NSClearIdentityRules(NSMutableD
                                                                       BOOL system, NSArray *events,
                                                                       NSError **error);
 FOUNDATION_EXPORT NSStoreLock *_Nullable NSAcquireProviderLock(NSError **error);
+// Call only after Network Extension preference removal has been verified.
+FOUNDATION_EXPORT BOOL NSRemoveSharedStateAfterFilterRemoval(NSError **error);
 FOUNDATION_EXPORT BOOL NSResetSharedState(BOOL legacyProviderMayBeRunning, NSError **error);
 FOUNDATION_EXPORT BOOL NSResetSharedStateWithOptions(BOOL legacyProviderMayBeRunning, BOOL preserveSettings,
                                                      NSError **error);

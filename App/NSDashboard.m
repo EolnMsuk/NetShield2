@@ -102,7 +102,7 @@
     self.navigationItem.rightBarButtonItem =
         [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemRefresh
                                                       target:self
-                                                      action:@selector(loadConfiguration)];
+                                                      action:@selector(refreshThenOfferRespring:)];
     self.tableView.rowHeight = UITableViewAutomaticDimension;
     self.tableView.estimatedRowHeight = 64;
     self.tableView.keyboardDismissMode = UIScrollViewKeyboardDismissModeOnDrag;

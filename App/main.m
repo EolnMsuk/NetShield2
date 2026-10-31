@@ -1,7 +1,9 @@
 #import <UIKit/UIKit.h>
 #import "NSAppDelegate.h"
 #import "NSFilterRemoval.h"
+#import "../Shared/NSStore.h"
 #import <NetworkExtension/NetworkExtension.h>
+#import <UserNotifications/UserNotifications.h>
 #include <grp.h>
 #include <pwd.h>
 #include <stdio.h>
@@ -45,8 +47,15 @@ static int NSUninstallFilter(void) {
         if (error) {
             fprintf(stderr, "NetShield2: filter removal failed: %s (%s %ld).\n",
                     error.localizedDescription.UTF8String, error.domain.UTF8String, (long)error.code);
+        } else if (!NSRemoveSharedStateAfterFilterRemoval(&error)) {
+            fprintf(stderr, "NetShield2: saved-state cleanup failed: %s (%s %ld).\n",
+                    error.localizedDescription.UTF8String, error.domain.UTF8String, (long)error.code);
         } else {
-            fprintf(stdout, "NetShield2: verified system filter is removed.\n");
+            [NSUserDefaults.standardUserDefaults
+                removePersistentDomainForName:NSBundle.mainBundle.bundleIdentifier];
+            [UNUserNotificationCenter.currentNotificationCenter removeAllPendingNotificationRequests];
+            [UNUserNotificationCenter.currentNotificationCenter removeAllDeliveredNotifications];
+            fprintf(stdout, "NetShield2: verified system filter and saved state are removed.\n");
             status = EXIT_SUCCESS;
         }
         finished = YES;

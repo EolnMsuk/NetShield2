@@ -1,4 +1,5 @@
 #import "NSDashboard+Internal.h"
+#import "NSRespring.h"
 #include <errno.h>
 #import "../Shared/NSProviderHealth.h"
 
@@ -28,6 +29,9 @@
     }
 }
 - (void)loadConfiguration {
+    [self loadConfigurationWithCompletion:nil];
+}
+- (void)loadConfigurationWithCompletion:(void (^)(void))completion {
     if (self.busy) {
         return;
     }
@@ -40,22 +44,29 @@
                 [self showError:error operation:@"Load filter configuration"];
             }
             NEFilterManager *manager = NEFilterManager.sharedManager;
+            NSPolicy *policy = NSReadPolicy(NULL);
             NSInteger configuredEngine =
                 [manager.providerConfiguration.vendorConfiguration[@"engine"] integerValue];
-            if (!error && manager.enabled && !self.attemptedProviderUpgrade &&
+            if (!error && manager.enabled && !self.attemptedProviderUpgrade && policy &&
                 (configuredEngine < NSEngineVersion ||
                  manager.providerConfiguration.filterSockets !=
-                     [NSReadPolicy(NULL).document[@"filterSockets"] boolValue]) &&
-                NSReadPolicy(NULL)) {
+                     [policy.document[@"filterSockets"] boolValue] ||
+                 ![manager.localizedDescription isEqual:NSFilterLocalizedDescription])) {
                 self.attemptedProviderUpgrade = YES;
-                [self changeConfiguration:NSConfigurationEnable];
+                [self changeConfiguration:NSConfigurationEnable completion:completion];
                 return;
             }
             [self reloadMonitor];
+            if (completion) {
+                completion();
+            }
         });
     }];
 }
 - (void)changeConfiguration:(NSConfigurationOperation)operation {
+    [self changeConfiguration:operation completion:nil];
+}
+- (void)changeConfiguration:(NSConfigurationOperation)operation completion:(void (^)(void))completion {
     if (self.busy) {
         return;
     }
@@ -115,7 +126,7 @@
             } else {
                 self.message = @"Filter configuration saved and control provider verified.";
             }
-            [self loadConfiguration];
+            [self loadConfigurationWithCompletion:completion];
         }];
         return;
     }
@@ -124,6 +135,9 @@
             self.busy = NO;
             self.loaded = NO;
             [self showError:loadError operation:@"Load before configuration change"];
+            if (completion) {
+                completion();
+            }
             return;
         }
         void (^finished)(NSError *) = ^(NSError *error) {
@@ -135,7 +149,7 @@
                                    ? @"System filter removed. You can now uninstall NetShield2."
                                    : @"Firewall is off. Your rules are saved.";
             }
-            [self loadConfiguration];
+            [self loadConfigurationWithCompletion:completion];
         };
         if (operation == NSConfigurationRemove) {
             [manager removeFromPreferencesWithCompletionHandler:finished];
@@ -143,6 +157,33 @@
             manager.enabled = NO;
             [manager saveToPreferencesWithCompletionHandler:finished];
         }
+    }];
+}
+- (void)refreshThenOfferRespring:(UIBarButtonItem *)sender {
+    if (self.busy || self.respringPromptPending) {
+        return;
+    }
+    self.respringPromptPending = YES;
+    [self loadConfigurationWithCompletion:^{
+        UIAlertController *alert = [UIAlertController
+            alertControllerWithTitle:@"Respring SpringBoard?"
+                             message:@"Respringing reloads SpringBoard and can interrupt other apps."
+                      preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"Cancel"
+                                                  style:UIAlertActionStyleCancel
+                                                handler:^(UIAlertAction *action) {
+                                                    self.respringPromptPending = NO;
+                                                }]];
+        [alert addAction:[UIAlertAction actionWithTitle:@"Respring"
+                                                  style:UIAlertActionStyleDestructive
+                                                handler:^(UIAlertAction *action) {
+                                                    self.respringPromptPending = NO;
+                                                    NSError *error = nil;
+                                                    if (!NSRespring(&error)) {
+                                                        [self showError:error operation:@"Respring"];
+                                                    }
+                                                }]];
+        [self presentViewController:alert animated:YES completion:nil];
     }];
 }
 - (void)finishResetWhenStopped:(NSUInteger)attempt {

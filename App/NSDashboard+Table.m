@@ -119,6 +119,18 @@
 - (NSArray<NSString *> *)identitiesForSection:(NSInteger)section {
     return section == NSDashboardSectionSystemRules ? self.systemIdentities : self.identities;
 }
+- (NSUInteger)itemCountForClearSection:(NSInteger)section {
+    if (section == NSDashboardSectionActivity) {
+        return [self.monitor[@"events"] count];
+    }
+    if (section == NSDashboardSectionAddGlobalRule) {
+        return self.globalRuleKeys.count;
+    }
+    if (section == NSDashboardSectionRules || section == NSDashboardSectionSystemRules) {
+        return [self identitiesForSection:section].count;
+    }
+    return 0;
+}
 - (id)rowKey:(NSIndexPath *)path {
     if (path.section == NSDashboardSectionGlobalRules) {
         return self.globalRuleKeys[path.row];
@@ -332,15 +344,17 @@
                   (section == NSDashboardSectionSystemRules && [self showsSystemRules]);
     NSString *heading = [self tableView:tableView titleForHeaderInSection:section];
     if (heading.length) {
-        NSUInteger count = section == NSDashboardSectionActivity ? [self.monitor[@"events"] count]
-                           : section == NSDashboardSectionAddGlobalRule
-                               ? self.globalRuleKeys.count
-                               : [self identitiesForSection:section].count;
-        BOOL canClear = count > 0 && !self.busy && !self.clearingSection &&
+        NSUInteger count = [self itemCountForClearSection:section];
+        BOOL hasItems = count > 0;
+        BOOL canClear = hasItems && !self.busy && !self.clearingSection &&
                         (section == NSDashboardSectionActivity || self.policy != nil);
         if (section == NSDashboardSectionActivity && self.activityHeader) {
-            self.activityClearButton.enabled = canClear;
-            return self.activityHeader;
+            if (self.activityHeaderHasClear == hasItems) {
+                self.activityClearButton.enabled = canClear;
+                return self.activityHeader;
+            }
+            self.activityHeader = nil;
+            self.activityClearButton = nil;
         }
         NSDashboardSectionHeader *header = [NSDashboardSectionHeader new];
         header.insetsLayoutMarginsFromSafeArea = NO;
@@ -367,52 +381,63 @@
             ]];
             return header;
         }
-        UIButton *clear = [NSDashboardClearButton buttonWithType:UIButtonTypeSystem];
-        clear.translatesAutoresizingMaskIntoConstraints = NO;
-        [clear setTitle:@"Clear" forState:UIControlStateNormal];
-        UIColor *clearTextColor = [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *traits) {
-            return traits.userInterfaceStyle == UIUserInterfaceStyleDark ? UIColor.blackColor
-                                                                         : UIColor.darkGrayColor;
-        }];
-        [clear setTitleColor:clearTextColor forState:UIControlStateNormal];
-        [clear setTitleColor:clearTextColor forState:UIControlStateDisabled];
-        clear.backgroundColor = [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *traits) {
-            return traits.userInterfaceStyle == UIUserInterfaceStyleDark ? UIColor.grayColor
-                                                                         : UIColor.whiteColor;
-        }];
-        clear.layer.cornerRadius = 8;
-        clear.titleLabel.adjustsFontForContentSizeCategory = YES;
-        UIButtonConfiguration *configuration = [UIButtonConfiguration plainButtonConfiguration];
-        configuration.contentInsets = NSDirectionalEdgeInsetsMake(4, 12, 4, 12);
-        configuration.baseForegroundColor = clearTextColor;
-        configuration.titleTextAttributesTransformer = ^NSDictionary *(NSDictionary *incoming) {
-            NSMutableDictionary *attributes = [incoming mutableCopy];
-            UIFont *font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
-            attributes[NSFontAttributeName] = [font fontWithSize:font.pointSize * 1.25];
-            attributes[NSForegroundColorAttributeName] = clearTextColor;
-            return attributes;
-        };
-        clear.configuration = configuration;
-        clear.tag = section;
-        clear.accessibilityLabel = [@"Clear " stringByAppendingString:title.text];
-        clear.enabled = canClear;
-        [clear addTarget:self
-                      action:@selector(clearSectionTapped:)
-            forControlEvents:UIControlEventTouchUpInside];
-        [header addSubview:clear];
-        [NSLayoutConstraint activateConstraints:@[
-            [title.leadingAnchor constraintEqualToAnchor:margins.leadingAnchor],
-            [title.trailingAnchor constraintLessThanOrEqualToAnchor:clear.leadingAnchor constant:-12],
-            [title.topAnchor constraintGreaterThanOrEqualToAnchor:margins.topAnchor],
+        UIButton *clear = nil;
+        if (hasItems) {
+            clear = [NSDashboardClearButton buttonWithType:UIButtonTypeSystem];
+            clear.translatesAutoresizingMaskIntoConstraints = NO;
+            [clear setTitle:@"Clear" forState:UIControlStateNormal];
+            UIColor *clearTextColor =
+                [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *traits) {
+                    return traits.userInterfaceStyle == UIUserInterfaceStyleDark ? UIColor.blackColor
+                                                                                 : UIColor.darkGrayColor;
+                }];
+            [clear setTitleColor:clearTextColor forState:UIControlStateNormal];
+            [clear setTitleColor:clearTextColor forState:UIControlStateDisabled];
+            clear.backgroundColor = [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *traits) {
+                return traits.userInterfaceStyle == UIUserInterfaceStyleDark ? UIColor.grayColor
+                                                                             : UIColor.whiteColor;
+            }];
+            clear.layer.cornerRadius = 8;
+            clear.titleLabel.adjustsFontForContentSizeCategory = YES;
+            UIButtonConfiguration *configuration = [UIButtonConfiguration plainButtonConfiguration];
+            configuration.contentInsets = NSDirectionalEdgeInsetsMake(4, 12, 4, 12);
+            configuration.baseForegroundColor = clearTextColor;
+            configuration.titleTextAttributesTransformer = ^NSDictionary *(NSDictionary *incoming) {
+                NSMutableDictionary *attributes = [incoming mutableCopy];
+                UIFont *font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+                attributes[NSFontAttributeName] = [font fontWithSize:font.pointSize * 1.25];
+                attributes[NSForegroundColorAttributeName] = clearTextColor;
+                return attributes;
+            };
+            clear.configuration = configuration;
+            clear.tag = section;
+            clear.accessibilityLabel = [@"Clear " stringByAppendingString:title.text];
+            clear.enabled = canClear;
+            [clear addTarget:self
+                          action:@selector(clearSectionTapped:)
+                forControlEvents:UIControlEventTouchUpInside];
+            [header addSubview:clear];
+            [NSLayoutConstraint activateConstraints:@[
+                [title.leadingAnchor constraintEqualToAnchor:margins.leadingAnchor],
+                [title.trailingAnchor constraintLessThanOrEqualToAnchor:clear.leadingAnchor constant:-12],
+                [title.topAnchor constraintGreaterThanOrEqualToAnchor:margins.topAnchor],
 
-            [clear.trailingAnchor constraintEqualToAnchor:margins.trailingAnchor],
-            [clear.topAnchor constraintEqualToAnchor:margins.topAnchor],
-            [title.bottomAnchor constraintEqualToAnchor:clear.bottomAnchor],
-            [clear.heightAnchor constraintGreaterThanOrEqualToConstant:33],
-            [clear.widthAnchor constraintGreaterThanOrEqualToConstant:64]
-        ]];
+                [clear.trailingAnchor constraintEqualToAnchor:margins.trailingAnchor],
+                [clear.topAnchor constraintEqualToAnchor:margins.topAnchor],
+                [title.bottomAnchor constraintEqualToAnchor:clear.bottomAnchor],
+                [clear.heightAnchor constraintGreaterThanOrEqualToConstant:33],
+                [clear.widthAnchor constraintGreaterThanOrEqualToConstant:64]
+            ]];
+        } else {
+            [NSLayoutConstraint activateConstraints:@[
+                [title.leadingAnchor constraintEqualToAnchor:margins.leadingAnchor],
+                [title.trailingAnchor constraintEqualToAnchor:margins.trailingAnchor],
+                [title.topAnchor constraintEqualToAnchor:margins.topAnchor]
+            ]];
+        }
         if (section == NSDashboardSectionActivity) {
             self.activityHeader = header;
+            self.activityHeaderHasClear = hasItems;
             self.activityClearButton = clear;
             if (!self.activitySearchBar) {
                 self.activitySearchBar = [NSActivitySearchBar new];
@@ -442,13 +467,16 @@
             search.translatesAutoresizingMaskIntoConstraints = NO;
             [header addSubview:search];
             [NSLayoutConstraint activateConstraints:@[
-                [search.topAnchor constraintEqualToAnchor:clear.bottomAnchor constant:4],
+                [search.topAnchor constraintEqualToAnchor:(clear ? clear.bottomAnchor : title.bottomAnchor)
+                                                 constant:4],
                 [search.leadingAnchor constraintEqualToAnchor:header.cardLayoutGuide.leadingAnchor],
                 [search.trailingAnchor constraintEqualToAnchor:header.cardLayoutGuide.trailingAnchor],
                 [search.bottomAnchor constraintEqualToAnchor:margins.bottomAnchor]
             ]];
-        } else {
+        } else if (clear) {
             [clear.bottomAnchor constraintEqualToAnchor:margins.bottomAnchor].active = YES;
+        } else {
+            [title.bottomAnchor constraintEqualToAnchor:margins.bottomAnchor].active = YES;
         }
         return header;
     }

@@ -36,6 +36,7 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 @property(nonatomic, copy) NSString *activityQuery;
 @property(nonatomic, strong) UISearchBar *activitySearchBar;
 @property(nonatomic, strong) UIView *activityHeader;
+@property(nonatomic) BOOL activityHeaderHasClear;
 @property(nonatomic, strong) UITapGestureRecognizer *navigationKeyboardDismissGesture;
 @property(nonatomic, weak) UIButton *activityClearButton;
 @property(nonatomic) BOOL clearingSection;
@@ -64,6 +65,7 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 @property(nonatomic) BOOL resetRequiresLegacyStop;
 @property(nonatomic) BOOL resetAllSettings;
 @property(nonatomic) BOOL restoreFirewallAfterReset;
+@property(nonatomic) BOOL respringPromptPending;
 @property(nonatomic, strong) NSMutableSet<NSString *> *deferredRequests;
 @property(nonatomic, copy) NSString *notificationStatus;
 - (BOOL)updatePolicy:(BOOL (^)(NSMutableDictionary *, NSError **))mutation;
@@ -95,7 +97,10 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 
 @interface NSDashboard (Configuration)
 - (void)loadConfiguration;
+- (void)loadConfigurationWithCompletion:(void (^)(void))completion;
 - (void)changeConfiguration:(NSConfigurationOperation)operation;
+- (void)changeConfiguration:(NSConfigurationOperation)operation completion:(void (^)(void))completion;
+- (void)refreshThenOfferRespring:(UIBarButtonItem *)sender;
 - (void)resetNetShield2;
 - (void)socketFilteringChanged:(UISwitch *)sender;
 @end

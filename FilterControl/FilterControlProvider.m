@@ -156,7 +156,13 @@
             completionHandler(error);
             return;
         }
-        self.events = [NSMutableArray new];
+        // A new provider session deliberately drops pending requests, but Recent
+        // Activity belongs to the persisted monitor snapshot. Apply the clear
+        // boundary again so a stale pre-clear snapshot cannot return on restart.
+        self.events = [NSActivityAfterClear(NSReadMonitor()[@"events"] ?: @[]) mutableCopy];
+        if (self.events.count > NSMaximumEvents) {
+            [self.events removeObjectsInRange:NSMakeRange(0, self.events.count - NSMaximumEvents)];
+        }
         self.lastReport = nil;
         self.revision = nil;
         self.permissions = [NSPermissionQueue new];

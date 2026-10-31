@@ -121,6 +121,58 @@ static NSStoreLock *NSAcquireLock(NSString *name, NSError **error) {
 NSStoreLock *NSAcquireProviderLock(NSError **error) {
     return NSAcquireLock(@"provider.lock", error);
 }
+BOOL NSRemoveSharedStateAfterFilterRemoval(NSError **error) {
+    // This order matches reset: provider first prevents a control provider from
+    // publishing while policy and activity documents are removed.
+    __attribute__((objc_precise_lifetime)) NSStoreLock *provider = NSAcquireProviderLock(error);
+    if (!provider) {
+        return NO;
+    }
+    @try {
+        __attribute__((objc_precise_lifetime)) NSStoreLock *policy = NSAcquireLock(@"policy.lock", error);
+        if (!policy) {
+            return NO;
+        }
+        @try {
+            __attribute__((objc_precise_lifetime)) NSStoreLock *activity =
+                NSAcquireLock(@"activity.lock", error);
+            if (!activity) {
+                return NO;
+            }
+            @try {
+                for (NSString *name in
+                     @[ NSPolicyFile, NSMonitorFile, NSNotificationRetryFile, NSActivityClearFile ]) {
+                    NSError *removeError = nil;
+                    NSURL *url = NSSharedURL(name);
+                    if (!url) {
+                        if (error) {
+                            *error = NSStorageError(@"The shared app-group container is unavailable.");
+                        }
+                        return NO;
+                    }
+                    if (![NSFileManager.defaultManager removeItemAtURL:url error:&removeError] &&
+                        !([removeError.domain isEqual:NSCocoaErrorDomain] &&
+                          removeError.code == NSFileNoSuchFileError)) {
+                        if (error) {
+                            *error = NSStorageError(
+                                [NSString stringWithFormat:@"Could not remove saved %@: %@", name,
+                                                           removeError.localizedDescription]);
+                        }
+                        return NO;
+                    }
+                }
+                return YES;
+            } @finally {
+                [activity unlock];
+            }
+        } @finally {
+            [policy unlock];
+        }
+    } @finally {
+        [provider unlock];
+        NSInvalidatePolicyCache();
+    }
+}
 static NSDictionary *NSReadActivityBoundary(NSError **error) {
     NSError *readError = nil;
     NSDictionary *boundary = NSReadDocument(NSActivityClearFile, &readError);

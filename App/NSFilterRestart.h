@@ -8,6 +8,8 @@
 - (void)saveToPreferencesWithCompletionHandler:(void (^)(NSError *))completion;
 @end
 
+FOUNDATION_EXPORT NSString *const NSFilterLocalizedDescription;
+
 // All state and callbacks belong to the main queue. Dependencies are injectable
 // so preference errors and provider handoff can be tested without NetworkExtension.
 @interface NSFilterRestart : NSObject
