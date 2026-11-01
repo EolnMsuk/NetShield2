@@ -1,6 +1,12 @@
+# 2.5.8
+
+- You MUST uninstall the previous version of NetShield2 and (userspace) reboot before installing this update.
+- Added a sandbox exemption to the main app only, should fix in app respring feature.
+- If you fail to uninstall the old version, the new vesrion will not be able to fix respring in app feature.
+
 # 2.5.7
 
-- Fixed app-initiated and successful-uninstall resprings across rootful, rootless, and RootHide layouts.
+- Fixed successful-uninstall resprings.
 - Replaced reset choices with **Reset Settings** and **Remove Filter & Settings**; both clear rules/history and restore defaults with Firewall off, while the latter also removes the content filter.
 - Simplified App/System Rule descriptions, put System Rules before App Rules, and moved Global Rules clearing above saved global rules.
 - Recent Activity action sheets open at half height and place Copy all details after connection details.

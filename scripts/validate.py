@@ -74,7 +74,12 @@ for directory, binary, suffix, point, principal in bundles:
         require(ent.get('get-task-allow') is True, 'Deployment requires the existing configuration entitlement')
     require(ent['com.apple.developer.networking.networkextension'] == ['content-filter-provider'], 'Missing NE entitlement')
     require(ent['com.apple.security.application-groups'] == ['group.com.eolnmsuk.netshield'], 'App group mismatch')
-    require('com.apple.private.security.no-sandbox' not in ent, 'Do not remove provider isolation')
+    if directory == 'App':
+        require(ent.get('com.apple.private.security.no-sandbox') is True,
+                'The main app needs its sandbox exemption to launch the jailbreak respring tool')
+    else:
+        require('com.apple.private.security.no-sandbox' not in ent,
+                'Do not remove provider isolation')
     make = (source / 'Makefile').read_text()
     require('include ../scripts/bundle_metadata.mk' in make,
             f'{directory}: missing bundle metadata build hook')

@@ -2,7 +2,6 @@
 #include <errno.h>
 #include <spawn.h>
 #include <string.h>
-#include <unistd.h>
 
 extern char **environ;
 
@@ -16,6 +15,40 @@ static NSError *NSRespringError(NSArray<NSString *> *attempts, int code) {
                                NSUnderlyingErrorKey : underlying
                            }];
 }
+
+static BOOL NSRespringTryPaths(NSArray<NSString *> *paths, int (^launcher)(NSString *), NSError **error) {
+    NSMutableArray<NSString *> *attempts = [NSMutableArray new];
+    for (NSString *path in paths) {
+        // access(X_OK) can be denied separately by the app's sandbox/RootHide
+        // policy. Let the actual spawn decide whether this executable can run.
+        int result = launcher(path);
+        if (result == 0) {
+            return YES;
+        }
+        NSError *underlying = [NSError errorWithDomain:NSPOSIXErrorDomain code:result userInfo:nil];
+        [attempts
+            addObject:[NSString stringWithFormat:@"Launch %@: %@", path, underlying.localizedDescription]];
+        // A missing executable (or parent directory) permits the compatible
+        // fallback. A policy/permission denial must remain visible to the user.
+        if ((result == ENOENT || result == ENOTDIR) && ![path isEqual:paths.lastObject]) {
+            continue;
+        }
+        if (error) {
+            *error = NSRespringError(attempts, result);
+        }
+        return NO;
+    }
+    if (error) {
+        *error = NSRespringError(@[ @"No sbreload executable paths were configured." ], ENOENT);
+    }
+    return NO;
+}
+
+#ifdef NS_TESTING
+BOOL NSRespringUsingLauncher(NSArray<NSString *> *paths, int (^launcher)(NSString *), NSError **error) {
+    return NSRespringTryPaths(paths, launcher, error);
+}
+#endif
 
 BOOL NSRespring(NSError **error) {
     NSString *preferred = @"/usr/bin/sbreload";
@@ -35,37 +68,13 @@ BOOL NSRespring(NSError **error) {
     }
     NSArray<NSString *> *paths =
         fallback && ![fallback isEqual:preferred] ? @[ preferred, fallback ] : @[ preferred ];
-    NSMutableArray<NSString *> *attempts = [NSMutableArray new];
-    for (NSString *path in paths) {
-        if (access(path.fileSystemRepresentation, X_OK) != 0) {
-            int code = errno;
-            NSError *underlying = [NSError errorWithDomain:NSPOSIXErrorDomain code:code userInfo:nil];
-            [attempts addObject:[NSString stringWithFormat:@"Access %@: %@", path,
-                                                           underlying.localizedDescription]];
-            // Fall back only for an absent path, never for a present but
-            // inaccessible executable.
-            if ((code == ENOENT || code == ENOTDIR) && ![path isEqual:paths.lastObject]) {
-                continue;
-            }
-            if (error) {
-                *error = NSRespringError(attempts, code);
-            }
-            return NO;
-        }
-        const char *executable = path.fileSystemRepresentation;
-        char *const arguments[] = {(char *)executable, NULL};
-        pid_t process = 0;
-        int result = posix_spawn(&process, executable, NULL, NULL, arguments, environ);
-        if (result != 0) {
-            NSError *underlying = [NSError errorWithDomain:NSPOSIXErrorDomain code:result userInfo:nil];
-            [attempts addObject:[NSString stringWithFormat:@"Launch %@: %@", path,
-                                                           underlying.localizedDescription]];
-            if (error) {
-                *error = NSRespringError(attempts, result);
-            }
-            return NO;
-        }
-        return YES;
-    }
-    return NO;
+    return NSRespringTryPaths(
+        paths,
+        ^int(NSString *path) {
+            const char *executable = path.fileSystemRepresentation;
+            char *const arguments[] = {(char *)executable, NULL};
+            pid_t process = 0;
+            return posix_spawn(&process, executable, NULL, NULL, arguments, environ);
+        },
+        error);
 }

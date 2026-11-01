@@ -32,3 +32,7 @@ with tempfile.TemporaryDirectory(prefix="netshield-tests-") as directory:
         *sources, "-o", str(executable),
     ], cwd=ROOT, check=True)
     subprocess.run([str(executable)], cwd=ROOT, check=True)
+
+# Keep the isolated launch tests in the normal native suite as well as runnable
+# on their own. Their injected launcher never executes the device respring tool.
+subprocess.run([sys.executable, str(ROOT / "scripts/test_respring.py")], cwd=ROOT, check=True)
