@@ -819,11 +819,10 @@
             BOOL removeFilter = path.row == 2;
             UIAlertController *alert = [UIAlertController
                 alertControllerWithTitle:removeFilter ? @"Remove Filter & Settings?" : @"Reset Settings?"
-                                 message:removeFilter
-                                             ? @"Removes the content filter, rules and "
-                                               @"history, then resets settings."
-                                             : @"Removes rules and history, resets settings, "
-                                               @"and removes the installed content filter."
+                                 message:removeFilter ? @"Removes the content filter, rules and "
+                                                        @"history, then resets settings."
+                                                      : @"Removes rules and history, resets settings, "
+                                                        @"and removes the installed content filter."
                           preferredStyle:UIAlertControllerStyleAlert];
             [alert addAction:[UIAlertAction actionWithTitle:removeFilter ? @"Remove Filter & Settings"
                                                                          : @"Reset Settings"
