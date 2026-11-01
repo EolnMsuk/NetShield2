@@ -1,3 +1,9 @@
+# 2.5.9
+
+- Matched the Updates prompt's style, text size, and action spacing to other native alerts such as Support the Developer.
+- Open Unidentified and Default Rule sheets at half-screen height.
+- Added / updated update-check controls with daily-on-launch checks by default.
+
 # 2.5.8
 
 - You MUST uninstall the previous version of NetShield2 and (userspace) reboot before installing this update.
@@ -10,7 +16,6 @@
 - Replaced reset choices with **Reset Settings** and **Remove Filter & Settings**; both clear rules/history and restore defaults with Firewall off, while the latter also removes the content filter.
 - Simplified App/System Rule descriptions, put System Rules before App Rules, and moved Global Rules clearing above saved global rules.
 - Recent Activity action sheets open at half height and place Copy all details after connection details.
-- Added native update-check controls with daily-on-launch checks by default.
 
 # 2.5.6
 

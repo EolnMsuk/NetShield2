@@ -315,15 +315,16 @@
     }
     return @[
         @"FIREWALL", @"WAITING FOR YOUR DECISION", @"NOTIFICATIONS", @"CONFIGURATION", @"", @"GLOBAL RULES",
-        @"SAVED GLOBAL RULES", @"SYSTEM RULES", @"APP RULES", @"RECENT ACTIVITY"
+        @"", @"SYSTEM RULES", @"APP RULES", @"RECENT ACTIVITY"
     ][section];
 }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     if (section == NSDashboardSectionSystemRules) {
         return [self showsSystemRules] ? @"Tap a system identity to change its rule." : nil;
     }
-    if (section == NSDashboardSectionAddGlobalRule) {
-        return @"Overrides app rules and the iOS system traffic allowance.";
+    if ((section == NSDashboardSectionAddGlobalRule && !self.globalRuleKeys.count) ||
+        (section == NSDashboardSectionGlobalRules && self.globalRuleKeys.count)) {
+        return @"Overrides app & system rules.";
     }
     if (section == NSDashboardSectionFirewall) {
         return @"Rules are saved when firewall is turned off.";
@@ -347,7 +348,8 @@
                   section == NSDashboardSectionGlobalRules ||
                   (section == NSDashboardSectionSystemRules && [self showsSystemRules]);
     NSString *heading = [self tableView:tableView titleForHeaderInSection:section];
-    if (heading.length) {
+    BOOL globalRulesHeader = section == NSDashboardSectionGlobalRules && self.globalRuleKeys.count;
+    if (heading.length || globalRulesHeader) {
         NSUInteger count = [self itemCountForClearSection:section];
         BOOL hasItems = count > 0;
         BOOL canClear = hasItems && !self.busy && !self.clearingSection &&
@@ -415,7 +417,8 @@
             };
             clear.configuration = configuration;
             clear.tag = section;
-            clear.accessibilityLabel = [@"Clear " stringByAppendingString:title.text];
+            clear.accessibilityLabel =
+                globalRulesHeader ? @"Clear Global Rules" : [@"Clear " stringByAppendingString:title.text];
             clear.enabled = canClear;
             [clear addTarget:self
                           action:@selector(clearSectionTapped:)
@@ -525,6 +528,9 @@
                : UITableViewAutomaticDimension;
 }
 - (CGFloat)tableView:(UITableView *)tableView heightForFooterInSection:(NSInteger)section {
+    if (section == NSDashboardSectionAddGlobalRule && self.globalRuleKeys.count) {
+        return CGFLOAT_MIN;
+    }
     if (section == NSDashboardSectionGlobalRules && !self.globalRuleKeys.count) {
         return CGFLOAT_MIN;
     }

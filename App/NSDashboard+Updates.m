@@ -17,10 +17,10 @@
     [self refreshTableKeepingPosition];
 }
 - (void)presentUpdateOptions {
-    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"Updates"
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Updates"
                                                                    message:[self updateCheckSubtitle]
-                                                            preferredStyle:UIAlertControllerStyleActionSheet];
-    [sheet addAction:[UIAlertAction actionWithTitle:@"Check Now"
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Check Now"
                                               style:UIAlertActionStyleDefault
                                             handler:^(UIAlertAction *action) {
                                                 [self checkForUpdateManually:YES];
@@ -34,20 +34,14 @@
     for (NSArray<NSString *> *choice in modes) {
         NSString *title =
             [choice[1] isEqual:mode] ? [choice[0] stringByAppendingString:@" (Selected)"] : choice[0];
-        [sheet addAction:[UIAlertAction actionWithTitle:title
+        [alert addAction:[UIAlertAction actionWithTitle:title
                                                   style:UIAlertActionStyleDefault
                                                 handler:^(UIAlertAction *action) {
                                                     [self setUpdateCheckMode:choice[1]];
                                                 }]];
     }
-    [sheet addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
-    UIPopoverPresentationController *popover = sheet.popoverPresentationController;
-    if (popover) {
-        popover.sourceView = self.tableView;
-        popover.sourceRect = [self.tableView
-            rectForRowAtIndexPath:[NSIndexPath indexPathForRow:0 inSection:NSDashboardSectionSupport]];
-    }
-    [self presentViewController:sheet animated:YES completion:nil];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
 }
 - (void)checkForUpdateManually:(BOOL)manual {
     if (self.updateTask) {

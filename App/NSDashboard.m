@@ -454,10 +454,11 @@
         alert.detailRows = NSActivityDetailRows(connection);
         alert.clipboardText = NSActivityClipboardLine(connection);
         alert.connectionLayout = YES;
-        alert.opensAtMediumDetent = YES;
     }
     alert.centersTitle = !key;
-    alert.opensExpanded = !connection;
+    alert.opensAtMediumDetent =
+        connection != nil || [key isEqual:@"default"] || [key isEqual:@"unattributed"];
+    alert.opensExpanded = !alert.opensAtMediumDetent;
     alert.selectedRule = key ? self.policy.document[key] : nil;
     alert.selectedRules = key ? @[] : NSAppRuleSelections(self.policy.document[@"rules"][identity ?: @""]);
     alert.keepsRuleSelectionsOpen = !key && !connection;
