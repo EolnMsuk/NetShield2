@@ -36,6 +36,9 @@
         if (self.opensExpanded) {
             self.sheetPresentationController.selectedDetentIdentifier =
                 UISheetPresentationControllerDetentIdentifierLarge;
+        } else if (self.opensAtMediumDetent) {
+            self.sheetPresentationController.selectedDetentIdentifier =
+                UISheetPresentationControllerDetentIdentifierMedium;
         }
         self.sheetPresentationController.prefersGrabberVisible = YES;
     }
@@ -62,9 +65,6 @@
     NSMutableArray *sections = [NSMutableArray new];
     if (self.connectionLayout) {
         [sections addObject:@1];
-        if (self.clipboardText) {
-            [sections addObject:@3];
-        }
         // Process name already appears in connection details; retain the heading
         // when no details are available, including ordinary app/system editors.
         if (!self.detailRows.count) {
@@ -72,6 +72,9 @@
         }
         if (self.detailRows.count) {
             [sections addObject:@2];
+        }
+        if (self.clipboardText) {
+            [sections addObject:@3];
         }
     } else {
         [sections addObjectsFromArray:@[ @0, @1 ]];

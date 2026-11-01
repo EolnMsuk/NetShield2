@@ -1429,13 +1429,27 @@ static void TestSocketSettingsAndDestinations(void) {
     CHECK(NSUpdatePolicy(
         ^BOOL(NSMutableDictionary *current, NSError **error) {
             current[@"filterSockets"] = @NO;
+            current[@"rules"] = @{@"reset.app" : NSAppRuleRecord(@"block")};
+            current[@"ruleDestinations"] = @{@"reset.app" : @{@"port" : @443}};
+            current[@"globalRules"] = @{@"domain:reset.example" : @"block"};
+            current[@"globalDomainAddresses"] =
+                @{@"domain:reset.example" : @[ @"ip:192.0.2.1" ]};
+            current[@"globalDomainExpirations"] =
+                @{@"domain:reset.example" : [NSDate dateWithTimeIntervalSinceNow:60]};
+            current[@"askGenerations"] = @{@"reset.app" : @1};
             return YES;
         },
         NULL));
     CHECK(NSResetSharedState(NO, NULL));
-    CHECK([NSReadPolicy(NULL).document[@"filterSockets"] boolValue]);
-    CHECK([NSReadPolicy(NULL).document[@"allowAppleSystemProcesses"] boolValue]);
-    CHECK([NSReadPolicy(NULL).document[@"unattributed"] isEqual:@"allow"]);
+    NSDictionary *reset = NSReadPolicy(NULL).document;
+    CHECK([reset[@"filterSockets"] boolValue]);
+    CHECK([reset[@"allowAppleSystemProcesses"] boolValue]);
+    CHECK([reset[@"unattributed"] isEqual:@"allow"]);
+    CHECK([reset[@"default"] isEqual:@"ask"]);
+    CHECK([reset[@"rules"] count] == 0 && [reset[@"globalRules"] count] == 0);
+    CHECK([reset[@"ruleDestinations"] count] == 0 && [reset[@"globalDomainAddresses"] count] == 0 &&
+          [reset[@"globalDomainExpirations"] count] == 0 && [reset[@"askGenerations"] count] == 0);
+    CHECK(NSReadMonitor().count == 0);
 }
 
 @interface FakeNotificationCenter : NSObject <NSPermissionNotificationCenter>

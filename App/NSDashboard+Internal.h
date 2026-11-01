@@ -21,8 +21,8 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
     NSDashboardSectionSupport,
     NSDashboardSectionAddGlobalRule,
     NSDashboardSectionGlobalRules,
-    NSDashboardSectionRules,
     NSDashboardSectionSystemRules,
+    NSDashboardSectionRules,
     NSDashboardSectionActivity,
     NSDashboardSectionCount,
 };
@@ -48,7 +48,6 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 @property(nonatomic, copy) NSString *message;
 @property(nonatomic, strong) NSTimer *timer;
 @property(nonatomic, strong) NSURLSessionDataTask *updateTask;
-@property(nonatomic) BOOL checkedForUpdateOnLaunch;
 @property(nonatomic) BOOL updateCheckWasManual;
 @property(nonatomic, copy) NSDictionary *pendingUpdateResult;
 @property(nonatomic, strong) UITableViewCell *firewallCell;
@@ -63,8 +62,7 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 @property(nonatomic) BOOL attemptedProviderUpgrade;
 @property(nonatomic, strong) NSFilterRestart *restart;
 @property(nonatomic) BOOL resetRequiresLegacyStop;
-@property(nonatomic) BOOL resetAllSettings;
-@property(nonatomic) BOOL restoreFirewallAfterReset;
+@property(nonatomic) BOOL removeFilterAfterReset;
 @property(nonatomic) BOOL respringPromptPending;
 @property(nonatomic, strong) NSMutableSet<NSString *> *deferredRequests;
 @property(nonatomic, copy) NSString *notificationStatus;
@@ -122,5 +120,7 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 
 @interface NSDashboard (Updates)
 - (void)checkForUpdateManually:(BOOL)manual;
+- (void)presentUpdateOptions;
+- (NSString *)updateCheckSubtitle;
 - (void)presentPendingUpdateResult;
 @end

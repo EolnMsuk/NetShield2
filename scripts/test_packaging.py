@@ -218,6 +218,8 @@ with tempfile.TemporaryDirectory(prefix='netshield-packaging-') as directory:
             if name == 'postinst':
                 for command in ('sbreload', 'dpkg-query'):
                     assert f'/{prefix}usr/bin/{command}'.encode() in content
+            if name == 'prerm':
+                assert f'/{prefix}usr/bin/sbreload'.encode() in content
             if not prefix:
                 assert b'/var/jb/' not in content
             else:

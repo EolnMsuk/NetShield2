@@ -188,7 +188,7 @@
 }
 - (void)finishResetWhenStopped:(NSUInteger)attempt {
     NSError *error = nil;
-    if (!NSResetSharedStateWithOptions(self.resetRequiresLegacyStop, !self.resetAllSettings, &error)) {
+    if (!NSResetSharedState(self.resetRequiresLegacyStop, &error)) {
         BOOL busy = [error.domain isEqual:NSPOSIXErrorDomain] &&
                     (error.code == EWOULDBLOCK || error.code == EAGAIN || error.code == EBUSY);
         if (busy && attempt < 60) {
@@ -212,19 +212,12 @@
     self.identities = @[];
     self.loaded = YES;
     self.busy = NO;
-    self.message = self.resetAllSettings ? @"All NetShield2 settings, rules and history reset. System filter "
-                                           @"removed. iOS notification authorization is managed in Settings."
-                                         : @"Rules and history reset. Other settings kept.";
-    if (self.resetAllSettings) {
-        [NSUserDefaults.standardUserDefaults
-            removePersistentDomainForName:NSBundle.mainBundle.bundleIdentifier];
-    }
+    [NSUserDefaults.standardUserDefaults removePersistentDomainForName:NSBundle.mainBundle.bundleIdentifier];
+    self.message = self.removeFilterAfterReset
+                       ? @"Filter, settings, rules and history removed. Firewall is off. iOS notification "
+                         @"authorization is managed in Settings."
+                       : @"Settings, rules and history reset. The installed filter is disabled; Firewall is off.";
     [self clearActivitySearch];
-    if (self.restoreFirewallAfterReset) {
-        self.restoreFirewallAfterReset = NO;
-        [self changeConfiguration:NSConfigurationEnable];
-        return;
-    }
     [self refreshTableKeepingPosition];
     [self loadConfiguration];
 }
@@ -233,8 +226,8 @@
         return;
     }
     self.busy = YES;
-    self.message = self.resetAllSettings ? @"Removing system filter before resetting all settings..."
-                                         : @"Stopping filtering before resetting rules and history...";
+    self.message = self.removeFilterAfterReset ? @"Removing the system filter before resetting settings..."
+                                               : @"Disabling the firewall before resetting settings...";
     [self refreshTableKeepingPosition];
     NEFilterManager *manager = NEFilterManager.sharedManager;
     [manager loadFromPreferencesWithCompletionHandler:^(NSError *error) {
@@ -242,11 +235,6 @@
             if (error) {
                 self.busy = NO;
                 [self showError:error operation:@"Load before reset"];
-                return;
-            }
-            self.restoreFirewallAfterReset = !self.resetAllSettings && manager.enabled;
-            if (!manager.providerConfiguration) {
-                [self finishResetWhenStopped:0];
                 return;
             }
             self.resetRequiresLegacyStop =
@@ -262,7 +250,7 @@
                     [self finishResetWhenStopped:0];
                 });
             };
-            if (self.resetAllSettings) {
+            if (self.removeFilterAfterReset) {
                 [manager removeFromPreferencesWithCompletionHandler:stopped];
             } else if (manager.enabled) {
                 manager.enabled = NO;

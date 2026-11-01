@@ -14,9 +14,40 @@ case "${1:-}" in
                 esac
             done
             printf 'NetShield2: filter cleanup failed (exit %s); uninstall cancelled.\n' "$cleanup_status" >&2
-            printf '%s\n' 'Open NetShield2 > Reset Settings > Reset Settings & Filter, then retry removal.' >&2
+            printf '%s\n' 'Open NetShield2 > Reset Settings > Remove Filter & Settings, then retry removal.' >&2
             exit 1
         fi
-        /var/jb/usr/bin/uicache -u /var/jb/Applications/NetShield2.app >/dev/null 2>&1 || true
+        if /var/jb/usr/bin/uicache -u /var/jb/Applications/NetShield2.app >/dev/null 2>&1; then
+            reload=/var/jb/usr/bin/sbreload
+            if [ -x "$reload" ]; then
+                package_manager_pid=$PPID
+                # Wait outside dpkg so a successful removal is never retried just because
+                # SpringBoard could not be reloaded. All descriptors are detached.
+                (
+                    trap '' HUP
+                    report_reload_failure() {
+                        if command -v logger >/dev/null 2>&1; then
+                            logger -t NetShield2 "$1 Respring manually using your jailbreak." || true
+                        fi
+                    }
+                    attempts=0
+                    while kill -0 "$package_manager_pid" 2>/dev/null; do
+                        if [ "$attempts" -ge 600 ]; then
+                            report_reload_failure 'Uninstall respring timed out waiting for the package manager.'
+                            exit 0
+                        fi
+                        sleep 1
+                        attempts=$((attempts + 1))
+                    done
+                    if ! "$reload"; then
+                        report_reload_failure 'Uninstall respring failed to start.'
+                    fi
+                ) </dev/null >/dev/null 2>&1 &
+            elif command -v logger >/dev/null 2>&1; then
+                logger -t NetShield2 'Uninstall completed, but sbreload is unavailable; respring manually.' || true
+            fi
+        elif command -v logger >/dev/null 2>&1; then
+            logger -t NetShield2 'Uninstall completed, but icon-cache invalidation failed; respring was not scheduled.' || true
+        fi
         ;;
 esac

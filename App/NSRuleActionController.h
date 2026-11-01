@@ -8,6 +8,7 @@
 @property(nonatomic) BOOL keepsRuleSelectionsOpen;
 @property(nonatomic) BOOL allowsRuleDeselection;
 @property(nonatomic) BOOL connectionLayout;
+@property(nonatomic) BOOL opensAtMediumDetent;
 @property(nonatomic, copy) NSArray<NSArray<NSString *> *> *detailRows;
 @property(nonatomic) BOOL opensExpanded;
 @property(nonatomic) BOOL centersActions;

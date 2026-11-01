@@ -163,9 +163,7 @@
 }
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
-    if (!self.checkedForUpdateOnLaunch) {
-        [self checkForUpdateManually:NO];
-    }
+    [self checkForUpdateManually:NO];
     [self presentPendingUpdateResult];
 }
 - (void)viewWillDisappear:(BOOL)animated {
@@ -343,7 +341,7 @@
     }
     NSInteger section = sender.tag;
     BOOL activity = section == NSDashboardSectionActivity;
-    BOOL global = section == NSDashboardSectionAddGlobalRule;
+    BOOL global = section == NSDashboardSectionGlobalRules;
     BOOL system = section == NSDashboardSectionSystemRules;
     NSString *name = activity ? @"Recent Activity"
                      : global ? @"Global Rules"
@@ -451,9 +449,10 @@
         alert.detailRows = NSActivityDetailRows(connection);
         alert.clipboardText = NSActivityClipboardLine(connection);
         alert.connectionLayout = YES;
+        alert.opensAtMediumDetent = YES;
     }
     alert.centersTitle = !key;
-    alert.opensExpanded = YES;
+    alert.opensExpanded = !connection;
     alert.selectedRule = key ? self.policy.document[key] : nil;
     alert.selectedRules = key ? @[] : NSAppRuleSelections(self.policy.document[@"rules"][identity ?: @""]);
     alert.keepsRuleSelectionsOpen = !key && !connection;

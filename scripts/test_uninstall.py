@@ -6,6 +6,7 @@ import shlex
 import shutil
 import subprocess
 import tempfile
+import time
 from prepare_package import PACKAGE_ARCHITECTURES, maintainer_script
 
 parser = argparse.ArgumentParser()
@@ -24,6 +25,7 @@ with tempfile.TemporaryDirectory(prefix="netshield-uninstall-") as directory:
     log = temporary / "calls"
     app = temporary / "app"
     cache = temporary / "uicache"
+    reload = temporary / "sbreload"
     app.write_text(
         '#!/bin/sh\nprintf "app:%s\\n" "$*" >> "$TEST_LOG"\n'
         'printf "%s\\n" "LYNX DEBUG startup noise"\n'
@@ -37,29 +39,38 @@ with tempfile.TemporaryDirectory(prefix="netshield-uninstall-") as directory:
         '#!/bin/sh\nprintf "cache:%s\\n" "$*" >> "$TEST_LOG"\n'
         'printf "%s\\n" "Icon cache noise"\n'
         'printf "%s\\n" "Icon cache stderr noise" >&2\nexit "$CACHE_STATUS"\n')
+    reload.write_text('#!/bin/sh\nprintf "reload\\n" >> "$TEST_LOG"\nexit "$RELOAD_STATUS"\n')
     app.chmod(0o755)
     cache.chmod(0o755)
+    reload.chmod(0o755)
     script = temporary / "prerm"
     script.write_text(source.replace(f"{prefix}/Applications/NetShield2.app/NetShield2", shlex.quote(str(app)))
-                     .replace(f"{prefix}/usr/bin/uicache", shlex.quote(str(cache))))
+                     .replace(f"{prefix}/usr/bin/uicache", shlex.quote(str(cache)))
+                     .replace(f"{prefix}/usr/bin/sbreload", shlex.quote(str(reload)))
+                     .replace("package_manager_pid=$PPID", "package_manager_pid=999999"))
     subprocess.run([shell, "-n", str(script)], check=True)
-    for action, app_status, cache_status, expected_status, expected_calls in [
-        ("remove", 0, 0, 0, 2),
-        ("deconfigure", 0, 0, 0, 2),
-        ("remove", 1, 0, 1, 1),
-        ("remove", 137, 0, 1, 1),
-        ("deconfigure", 1, 0, 1, 1),
-        ("remove", 0, 1, 0, 2),
-        ("upgrade", 0, 0, 0, 0),
-        ("failed-upgrade", 0, 0, 0, 0),
-        ("", 0, 0, 0, 0),
+    for action, app_status, cache_status, reload_status, expected_status, expected_calls in [
+        ("remove", 0, 0, 0, 0, 3),
+        ("deconfigure", 0, 0, 0, 0, 3),
+        ("remove", 1, 0, 0, 1, 1),
+        ("remove", 137, 0, 0, 1, 1),
+        ("deconfigure", 1, 0, 0, 1, 1),
+        ("remove", 0, 1, 0, 0, 2),
+        ("remove", 0, 0, 1, 0, 3),
+        ("upgrade", 0, 0, 0, 0, 0),
+        ("failed-upgrade", 0, 0, 0, 0, 0),
+        ("", 0, 0, 0, 0, 0),
     ]:
         log.write_text("")
         environment = dict(os.environ, TEST_LOG=str(log), APP_STATUS=str(app_status),
-                           CACHE_STATUS=str(cache_status))
+                           CACHE_STATUS=str(cache_status), RELOAD_STATUS=str(reload_status))
         result = subprocess.run([shell, str(script), action], env=environment,
                                 capture_output=True, text=True, timeout=5)
+        deadline = time.monotonic() + 3
         calls = log.read_text().splitlines()
+        while len(calls) < expected_calls and time.monotonic() < deadline:
+            time.sleep(0.01)
+            calls = log.read_text().splitlines()
         assert result.returncode == expected_status, (action, result.stderr)
         assert len(calls) == expected_calls, (action, calls)
         if calls:
@@ -68,18 +79,21 @@ with tempfile.TemporaryDirectory(prefix="netshield-uninstall-") as directory:
         assert "LYNX" not in result.stderr and "SnowBoard" not in result.stderr
         assert "Icon cache" not in result.stderr
         if expected_status:
-            assert "Reset Settings & Filter" in result.stderr
+            assert "Remove Filter & Settings" in result.stderr
             assert "NetShield2: filter removal failed: mock error." in result.stderr
             assert f"exit {app_status}" in result.stderr
         else:
             assert result.stderr == "", (action, result.stderr)
         if len(calls) == 2:
             assert calls[1] == f"cache:-u {prefix}/Applications/NetShield2.app", calls
+        if len(calls) == 3:
+            assert calls[1] == f"cache:-u {prefix}/Applications/NetShield2.app", calls
+            assert calls[2] == "reload", calls
     app.unlink()
     log.write_text("")
     result = subprocess.run([shell, str(script), "remove"], env=environment,
                             capture_output=True, text=True, timeout=5)
     assert result.returncode != 0 and not log.read_text(), "Missing helper must stop removal"
     assert result.stdout == "" and "filter cleanup failed" in result.stderr
-    assert "Reset Settings & Filter" in result.stderr
-print("Passed uninstall hook checks: cleanup ordering, failures, missing helper and upgrade preservation")
+    assert "Remove Filter & Settings" in result.stderr
+print("Passed uninstall hook checks: cleanup ordering, detached respring, failures, missing helper and upgrade preservation")

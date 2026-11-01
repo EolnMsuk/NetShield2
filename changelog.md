@@ -1,10 +1,17 @@
+# 2.5.7
+
+- Fixed app-initiated and successful-uninstall resprings across rootful, rootless, and RootHide layouts.
+- Replaced reset choices with **Reset Settings** and **Remove Filter & Settings**; both clear rules/history and restore defaults with Firewall off, while the latter also removes the content filter.
+- Simplified App/System Rule descriptions, put System Rules before App Rules, and moved Global Rules clearing above saved global rules.
+- Recent Activity action sheets open at half height and place Copy all details after connection details.
+- Added native update-check controls with daily-on-launch checks by default.
+
 # 2.5.6
 
-- Renamed the iOS content filter to **Firewall & Monitor** and migrate enabled existing filters safely.
-- Preserve Recent Activity when the firewall or control provider restarts, while retaining explicit activity clears.
-- Show Clear only for non-empty Global Rules, App Rules, System Rules, and Recent Activity sections.
-- Let the top-right refresh control finish its normal refresh before optionally respringing SpringBoard.
-- Remove the system filter and all saved NetShield2 settings, rules, requests, and activity on package uninstall.
+- Renamed the iOS content filter to **Firewall & Monitor**.
+- Recent Activity will no longer clear when the firewall is turned on.
+- Only shows Clear buttons for non-empty sections.
+- All settings are now removed (along with filter) on un-installation.
 
 # 2.5.5
 

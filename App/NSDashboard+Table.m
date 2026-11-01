@@ -123,7 +123,7 @@
     if (section == NSDashboardSectionActivity) {
         return [self.monitor[@"events"] count];
     }
-    if (section == NSDashboardSectionAddGlobalRule) {
+    if (section == NSDashboardSectionGlobalRules) {
         return self.globalRuleKeys.count;
     }
     if (section == NSDashboardSectionRules || section == NSDashboardSectionSystemRules) {
@@ -311,7 +311,7 @@
     }
     return @[
         @"FIREWALL", @"WAITING FOR YOUR DECISION", @"NOTIFICATIONS", @"CONFIGURATION", @"", @"GLOBAL RULES",
-        @"", @"APP RULES", @"SYSTEM RULES", @"RECENT ACTIVITY"
+        @"SAVED GLOBAL RULES", @"SYSTEM RULES", @"APP RULES", @"RECENT ACTIVITY"
     ][section];
 }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
@@ -340,7 +340,7 @@
 }
 - (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section {
     BOOL scoped = section == NSDashboardSectionActivity || section == NSDashboardSectionRules ||
-                  section == NSDashboardSectionAddGlobalRule ||
+                   section == NSDashboardSectionGlobalRules ||
                   (section == NSDashboardSectionSystemRules && [self showsSystemRules]);
     NSString *heading = [self tableView:tableView titleForHeaderInSection:section];
     if (heading.length) {
@@ -514,7 +514,7 @@
 }
 - (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section {
     if (section == NSDashboardSectionGlobalRules) {
-        return self.globalRuleKeys.count ? 16 : CGFLOAT_MIN;
+        return self.globalRuleKeys.count ? UITableViewAutomaticDimension : CGFLOAT_MIN;
     }
     return section == NSDashboardSectionSystemRules && ![self showsSystemRules]
                ? CGFLOAT_MIN
@@ -705,12 +705,6 @@
                                     @"Allowed by iOS setting unless a global rule matches. Saved rule: %@",
                                     NSAppRuleSummary(self.policy.document[@"rules"][identity])]
                     : NSAppRuleSummary(self.policy.document[@"rules"][identity]);
-            NSDictionary *destination = self.policy.document[@"ruleDestinations"][identity];
-            if (destination) {
-                cell.detailTextLabel.text = [cell.detailTextLabel.text
-                    stringByAppendingFormat:@"\nFirst requested peer: %@ (rule applies to the app)",
-                                            NSDestinationSummary(destination)];
-            }
         }
     } else if (path.section == NSDashboardSectionNotifications) {
         cell.textLabel.text = path.row == 0 ? @"Notification Settings" : @"Banners & Do Not Disturb";
@@ -750,19 +744,18 @@
                 stringByAppendingFormat:@"\n%@", NSDestinationSummary(event[@"destination"])];
         }
     } else if (path.section == NSDashboardSectionSupport) {
-        cell.textLabel.text = @[ @"Check for Updates", @"GitHub Link", @"Support the Developer" ][path.row];
+        cell.textLabel.text = @[ @"Updates", @"GitHub Link", @"Support the Developer" ][path.row];
         cell.detailTextLabel.text = @[
-            @"Checks GitHub for a newer version", @"Source code, releases and issues",
+            [self updateCheckSubtitle], @"Source code, releases and issues",
             @"Choose Venmo or Crypto"
         ][path.row];
         cell.textLabel.textColor = UIColor.systemBlueColor;
     } else {
         cell.textLabel.text =
-            @[ @"Export Rules and Recent Activity", @"Reset Rules & History",
-               @"Reset Settings & Filter" ][path.row];
+            @[ @"Export Rules and Recent Activity", @"Reset Settings", @"Remove Filter & Settings" ][path.row];
         cell.detailTextLabel.text = @[
-            @"Share rules and recent activity as a JSON file", @"Reset rules and history only",
-            @"Removes all rules, permissions and filters."
+            @"Share rules and recent activity as a JSON file", @"Removes rules, history and resets settings.",
+            @"Removes content filter, rules, history and resets settings."
         ][path.row];
         cell.textLabel.textColor = path.row == 0 ? UIColor.systemBlueColor : UIColor.systemRedColor;
     }
@@ -803,7 +796,7 @@
         [self chooseActionForIdentity:nil defaultKey:@"unattributed"];
     } else if (path.section == NSDashboardSectionSupport) {
         if (path.row == 0) {
-            [self checkForUpdateManually:YES];
+            [self presentUpdateOptions];
         } else if (path.row == 1) {
             [self openSupportURL:[NSURL URLWithString:@"https://github.com/EolnMsuk/NetShield2/"]];
         } else if (path.row == 2) {
@@ -813,23 +806,20 @@
         if (path.row == 0) {
             [self exportRulesAndRecentActivityFromRow:path];
         } else {
-            BOOL reset = path.row == 1;
+            BOOL removeFilter = path.row == 2;
             UIAlertController *alert = [UIAlertController
-                alertControllerWithTitle:reset ? @"Reset Rules & History?" : @"Reset Settings & Filter?"
-                                 message:reset ? @"Deletes app and global rules, pending requests and "
-                                                 @"history only. "
-                                                 @"Keeps your settings and restores the firewall's previous "
-                                                 @"on/off state after stopping it to reset."
-                                               : @"Removes all NetShield2 rules, permissions and history, "
-                                                 @"restores default settings, and removes the system filter. "
-                                                 @"iOS notification authorization "
-                                                 @"must be managed in Settings."
+                alertControllerWithTitle:removeFilter ? @"Remove Filter & Settings?" : @"Reset Settings?"
+                                 message:removeFilter ? @"Removes the content filter, rules and history, then "
+                                                       @"resets settings. Firewall remains off. iOS notification "
+                                                       @"authorization is managed in Settings."
+                                                     : @"Removes rules and history, resets settings, and leaves "
+                                                       @"the installed content filter disabled. Firewall remains off."
                           preferredStyle:UIAlertControllerStyleAlert];
-            [alert addAction:[UIAlertAction actionWithTitle:reset ? @"Reset rules and history"
-                                                                  : @"Reset Settings & Filter"
+            [alert addAction:[UIAlertAction actionWithTitle:removeFilter ? @"Remove Filter & Settings"
+                                                                          : @"Reset Settings"
                                                       style:UIAlertActionStyleDestructive
                                                     handler:^(UIAlertAction *action) {
-                                                        self.resetAllSettings = !reset;
+                                                         self.removeFilterAfterReset = removeFilter;
                                                         [self resetNetShield2];
                                                     }]];
             [alert addAction:[UIAlertAction actionWithTitle:@"Cancel"
