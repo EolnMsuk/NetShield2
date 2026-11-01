@@ -754,7 +754,7 @@
                 stringByAppendingFormat:@"\n%@", NSDestinationSummary(event[@"destination"])];
         }
     } else if (path.section == NSDashboardSectionSupport) {
-        cell.textLabel.text = @[ @"Updates", @"GitHub Link", @"Support the Developer" ][path.row];
+        cell.textLabel.text = @[ @"Check for Updates", @"GitHub Link", @"Support the Developer" ][path.row];
         cell.detailTextLabel.text =
             @[ [self updateCheckSubtitle], @"Source code, releases and issues",
                @"Choose Venmo or Crypto" ][path.row];

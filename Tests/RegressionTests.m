@@ -1689,6 +1689,96 @@ static void TestFilterRemoval(void) {
     }
 }
 
+static NSError *WaitForSharedStateCleanup(NSTimeInterval timeout) {
+    NSTimeInterval deadline = NSProcessInfo.processInfo.systemUptime + timeout;
+    __block NSUInteger completions = 0;
+    __block NSError *result = nil;
+    NSRemoveSharedStateAfterFilterRemovalWithRetry(deadline, ^(NSError *error) {
+        CHECK(NSThread.isMainThread);
+        completions++;
+        result = error;
+    });
+    while (!completions && NSProcessInfo.processInfo.systemUptime < deadline + 1) {
+        [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
+    }
+    CHECK(completions == 1);
+    // Service the queue beyond a retry interval to catch duplicate completion.
+    [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.3]];
+    CHECK(completions == 1);
+    return result;
+}
+
+static void TestSharedStateCleanupRetries(void) {
+    NSArray<NSString *> *files =
+        @[ NSPolicyFile, NSMonitorFile, NSNotificationRetryFile, NSActivityClearFile ];
+    NSArray<NSString *> *locks = @[ @"provider.lock", @"policy.lock", @"activity.lock" ];
+    for (NSString *lockName in locks) {
+        for (NSNumber *releaseAfterDelay in @[ @YES, @NO ]) {
+            for (NSString *name in files) {
+                CHECK(NSWriteDocument([NSPolicy defaultDocument], name, NULL));
+            }
+            NSStoreLock *held = [NSStoreLock tryLockURL:NSSharedURL(lockName) error:NULL];
+            CHECK(held != nil);
+            if (releaseAfterDelay.boolValue) {
+                dispatch_after(
+                    dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC / 10), dispatch_get_main_queue(), ^{
+                        for (NSString *name in files) {
+                            CHECK([NSFileManager.defaultManager fileExistsAtPath:NSSharedURL(name).path]);
+                        }
+                        // Busy attempts must release every earlier lock while waiting.
+                        for (NSString *earlier in locks) {
+                            if ([earlier isEqual:lockName]) {
+                                break;
+                            }
+                            NSStoreLock *probe = [NSStoreLock tryLockURL:NSSharedURL(earlier) error:NULL];
+                            CHECK(probe != nil);
+                            [probe unlock];
+                        }
+                        [held unlock];
+                    });
+            }
+            NSTimeInterval started = NSProcessInfo.processInfo.systemUptime;
+            NSError *error = WaitForSharedStateCleanup(releaseAfterDelay.boolValue ? 2 : 0.35);
+            if (releaseAfterDelay.boolValue) {
+                CHECK(error == nil);
+                for (NSString *name in files) {
+                    CHECK(![NSFileManager.defaultManager fileExistsAtPath:NSSharedURL(name).path]);
+                }
+            } else {
+                CHECK([error.domain isEqual:@"NetShield2.Uninstall"] && error.code == ETIMEDOUT);
+                NSError *underlying = error.userInfo[NSUnderlyingErrorKey];
+                CHECK([underlying.domain isEqual:NSPOSIXErrorDomain]);
+                CHECK(underlying.code == EWOULDBLOCK || underlying.code == EAGAIN ||
+                      underlying.code == EBUSY);
+                CHECK([error.localizedDescription containsString:underlying.localizedDescription]);
+                NSTimeInterval elapsed = NSProcessInfo.processInfo.systemUptime - started;
+                CHECK(elapsed >= 0.35 && elapsed < 1.5);
+                for (NSString *name in files) {
+                    CHECK([NSFileManager.defaultManager fileExistsAtPath:NSSharedURL(name).path]);
+                }
+                [held unlock];
+            }
+            CHECK(NSRemoveSharedStateAfterFilterRemoval(NULL));
+            CHECK(NSRemoveSharedStateAfterFilterRemoval(NULL));
+            for (NSString *name in locks) {
+                CHECK([NSFileManager.defaultManager fileExistsAtPath:NSSharedURL(name).path]);
+            }
+        }
+    }
+    // A missing container fails at lock creation with ENOENT, without waiting
+    // for the two-second retry budget or touching the original saved state.
+    CHECK(NSWriteDocument([NSPolicy defaultDocument], NSPolicyFile, NULL));
+    NSURL *container = [NSSharedURL(NSPolicyFile) URLByDeletingLastPathComponent];
+    NSSetTestContainer([container URLByAppendingPathComponent:NSUUID.UUID.UUIDString isDirectory:YES]);
+    NSTimeInterval started = NSProcessInfo.processInfo.systemUptime;
+    NSError *error = WaitForSharedStateCleanup(2);
+    CHECK([error.domain isEqual:NSPOSIXErrorDomain] && error.code == ENOENT);
+    CHECK(NSProcessInfo.processInfo.systemUptime - started < 1);
+    NSSetTestContainer(container);
+    CHECK([NSFileManager.defaultManager fileExistsAtPath:NSSharedURL(NSPolicyFile).path]);
+    CHECK(NSRemoveSharedStateAfterFilterRemoval(NULL));
+}
+
 extern void NSRunRecoveryTests(void);
 
 int main(void) {
@@ -1725,6 +1815,7 @@ int main(void) {
         TestLateNotifications();
         TestDirectionalNotifications();
         TestFilterRemoval();
+        TestSharedStateCleanupRetries();
         NSRunRecoveryTests();
         CHECK([NSFileManager.defaultManager removeItemAtURL:root error:NULL]);
         NSLog(@"Passed %lu regression checks", (unsigned long)checks);

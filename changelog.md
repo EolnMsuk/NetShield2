@@ -1,3 +1,8 @@
+# 2.6.0
+
+- Fixed uninstall failing on the first attempt when Firewall was enabled by waiting for shared-state locks to become available after filter removal.
+- Edited some update labels and UI.
+
 # 2.5.9
 
 - Matched the Updates prompt's style, text size, and action spacing to other native alerts such as Support the Developer.

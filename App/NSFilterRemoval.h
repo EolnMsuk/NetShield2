@@ -11,3 +11,8 @@
 
 FOUNDATION_EXPORT void NSRemoveInstalledFilter(id<NSFilterRemovalManager> manager,
                                                void (^completion)(NSError *error));
+
+// Call only after verified preference removal. The deadline is absolute system
+// uptime; cleanup attempts and the single completion run on the main queue.
+FOUNDATION_EXPORT void NSRemoveSharedStateAfterFilterRemovalWithRetry(NSTimeInterval deadline,
+                                                                      void (^completion)(NSError *error));

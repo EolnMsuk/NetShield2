@@ -17,7 +17,7 @@
     [self refreshTableKeepingPosition];
 }
 - (void)presentUpdateOptions {
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Updates"
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Check for Updates"
                                                                    message:[self updateCheckSubtitle]
                                                             preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"Check Now"
@@ -26,16 +26,16 @@
                                                 [self checkForUpdateManually:YES];
                                             }]];
     NSArray<NSArray<NSString *> *> *modes = @[
-        @[ @"Check Daily on Launch", NSUpdateCheckDaily ],
-        @[ @"Check on Every Launch", NSUpdateCheckEveryLaunch ],
-        @[ @"Turn Off Automatic Checks", NSUpdateCheckOff ]
+        @[ @"Check at Launch", NSUpdateCheckEveryLaunch ], @[ @"Check Daily", NSUpdateCheckDaily ],
+        @[ @"Disable Updates", NSUpdateCheckOff ]
     ];
     NSString *mode = NSUpdateCheckMode(NSUserDefaults.standardUserDefaults);
     for (NSArray<NSString *> *choice in modes) {
-        NSString *title =
-            [choice[1] isEqual:mode] ? [choice[0] stringByAppendingString:@" (Selected)"] : choice[0];
+        NSString *title = [choice[1] isEqual:mode] ? [@"✓ " stringByAppendingString:choice[0]] : choice[0];
+        UIAlertActionStyle style =
+            [choice[1] isEqual:NSUpdateCheckOff] ? UIAlertActionStyleDestructive : UIAlertActionStyleDefault;
         [alert addAction:[UIAlertAction actionWithTitle:title
-                                                  style:UIAlertActionStyleDefault
+                                                  style:style
                                                 handler:^(UIAlertAction *action) {
                                                     [self setUpdateCheckMode:choice[1]];
                                                 }]];
@@ -92,9 +92,11 @@
                   BOOL newer = comparison && comparison.integerValue == NSOrderedDescending;
                   if (newer) {
                       title = @"Update available";
-                      message =
-                          [NSString stringWithFormat:@"NetShield2 %@ is available. You have v%@ installed.",
-                                                     latest, installed];
+                      message = [NSString
+                          stringWithFormat:@"NetShield2 %@ is available. You have v%@ installed.\n\n"
+                                           @"After downloading the update, turn off Firewall and uninstall "
+                                           @"this version before installing the new one.",
+                                           latest, installed];
                   } else if (report && comparison) {
                       title = @"You're up to date";
                       message =
