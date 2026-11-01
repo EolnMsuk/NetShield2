@@ -337,115 +337,7 @@ static void TestNotificationPublicationAndOrphans(void) {
     VERIFY([NSFileManager.defaultManager removeItemAtURL:monitorURL error:NULL]);
 }
 
-@interface RestartManager : NSObject <NSFilterRestartManager>
-@property(nonatomic, strong) id providerConfiguration;
-@property(nonatomic, getter=isEnabled) BOOL enabled;
-@property(nonatomic, copy) NSString *localizedDescription;
-@property(nonatomic, strong) id saved;
-@property(nonatomic) BOOL savedEnabled;
-@property(nonatomic) NSUInteger loads;
-@property(nonatomic) NSUInteger saves;
-@property(nonatomic) NSUInteger failingLoad;
-@property(nonatomic, copy) NSSet *failingSaves;
-@property(nonatomic, strong) NSMutableArray *callbacks;
-@end
-@implementation RestartManager
-- (instancetype)init {
-    if ((self = [super init])) {
-        _saved = @{@"name" : @"old"};
-        _savedEnabled = YES;
-        _callbacks = [NSMutableArray new];
-    }
-    return self;
-}
-- (NSError *)failure {
-    return [NSError errorWithDomain:@"test"
-                               code:1
-                           userInfo:@{NSLocalizedDescriptionKey : @"Injected failure"}];
-}
-- (void)loadFromPreferencesWithCompletionHandler:(void (^)(NSError *))completion {
-    self.loads++;
-    [self.callbacks addObject:[completion copy]];
-    self.providerConfiguration = self.saved;
-    self.enabled = self.savedEnabled;
-    completion(self.loads == self.failingLoad ? self.failure : nil);
-}
-- (void)saveToPreferencesWithCompletionHandler:(void (^)(NSError *))completion {
-    self.saves++;
-    [self.callbacks addObject:[completion copy]];
-    BOOL failed = [self.failingSaves containsObject:@(self.saves)];
-    if (!failed) {
-        self.saved = self.providerConfiguration;
-        self.savedEnabled = self.enabled;
-    }
-    completion(failed ? self.failure : nil);
-}
-@end
-
-static void TestRestartRecovery(void) {
-    for (NSUInteger scenario = 0; scenario < 8; scenario++) {
-        RestartManager *manager = [RestartManager new];
-        if (scenario == 7) {
-            manager.savedEnabled = NO;
-        }
-        if (scenario == 1 || scenario == 6) {
-            manager.failingSaves =
-                scenario == 6 ? [NSSet setWithArray:@[ @2, @3 ]] : [NSSet setWithObject:@2];
-        }
-        if (scenario == 2) {
-            manager.failingLoad = 2;
-        }
-        NSFilterRestart *restart = [NSFilterRestart new];
-        restart.manager = manager;
-        __block NSUInteger builds = 0;
-        restart.configuration = ^id(id previous, BOOL restoring, NSError **error) {
-            builds++;
-            if (scenario == 5 && builds == 2) {
-                if (error) {
-                    *error = manager.failure;
-                }
-                return nil;
-            }
-            return restoring ? previous : @{@"name" : @"new"};
-        };
-        __block NSUInteger stopChecks = 0;
-        restart.isStopped = ^BOOL(BOOL previouslyEnabled) {
-            return scenario != 4 && !manager.savedEnabled && ++stopChecks > 1;
-        };
-        restart.isRunning = ^BOOL(id configuration) {
-            return manager.savedEnabled && [manager.saved isEqual:configuration] &&
-                   !(scenario == 3 && [configuration[@"name"] isEqual:@"new"]);
-        };
-        NSMutableArray *scheduled = [NSMutableArray new];
-        restart.schedule = ^(NSTimeInterval delay, void (^work)(void)) {
-            [scheduled addObject:[work copy]];
-        };
-        __block NSUInteger completed = 0;
-        __block NSError *result = nil;
-        [restart start:^(NSError *error) {
-            completed++;
-            result = error;
-        }];
-        NSUInteger steps = 0;
-        while (scheduled.count) {
-            VERIFY(steps++ < 200);
-            void (^work)(void) = scheduled.firstObject;
-            [scheduled removeObjectAtIndex:0];
-            work();
-        }
-        VERIFY(completed == 1);
-        VERIFY((result == nil) == (scenario == 0 || scenario == 7));
-        if (scenario != 4 && scenario != 6) {
-            VERIFY(manager.savedEnabled);
-            VERIFY([manager.saved[@"name"] isEqual:scenario == 0 || scenario == 7 ? @"new" : @"old"]);
-        }
-        NSUInteger saves = manager.saves;
-        for (void (^callback)(NSError *) in manager.callbacks) {
-            callback(nil);
-        }
-        VERIFY(completed == 1 && saves == manager.saves);
-    }
-}
+void NSRunBootPolicyTests(void);
 
 static void TestDistinctFlowActivity(void) {
     NSDate *now = NSDate.date;
@@ -771,7 +663,7 @@ void NSRunRecoveryTests(void) {
     TestBoundedResolver();
     TestExplicitAskAgain();
     TestNotificationPublicationAndOrphans();
-    TestRestartRecovery();
+    NSRunBootPolicyTests();
     TestDistinctFlowActivity();
     TestGlobalDirectionStorage();
     TestScopedRuleClear();

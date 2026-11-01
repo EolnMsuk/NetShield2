@@ -186,6 +186,7 @@
         @(NEFilterManager.sharedManager.enabled),
         @(NEFilterManager.sharedManager.providerConfiguration.filterSockets),
         self.message ?: @"",
+        self.bootPolicyStatus ?: @"",
         self.notificationStatus ?: @"",
         self.policyReadError ?: @"",
         self.monitor[@"overflowCount"] ?: @0,
@@ -327,7 +328,8 @@
         return @"Overrides app & system rules.";
     }
     if (section == NSDashboardSectionFirewall) {
-        return @"Rules are saved when firewall is turned off.";
+        return [NSString stringWithFormat:@"Rules are saved when firewall is turned off. %@",
+                                          self.bootPolicyStatus ?: @"Stock-boot fallback unverified."];
     }
     if (section == NSDashboardSectionRequests) {
         return [NSString stringWithFormat:@"During this filter session: %@ connections rejected at queue "
@@ -596,7 +598,7 @@
         } else if (!enabled) {
             cell.textLabel.text = @"Off";
         } else {
-            cell.textLabel.text = healthy ? @"Active" : @"Needs attention";
+            cell.textLabel.text = healthy ? @"Control provider responding" : @"Needs attention";
         }
         cell.textLabel.textColor = healthy ? UIColor.systemGreenColor : UIColor.labelColor;
         NSString *detail =
@@ -604,10 +606,11 @@
         if (!enabled) {
             detail = @"Turn on Firewall to apply your rules.";
         } else if (healthy) {
-            detail = NEFilterManager.sharedManager.providerConfiguration.filterSockets
-                         ? @"Browser and socket filtering active."
-                         : @"Browser filtering only. Enable Filter System Sockets below Firewall for "
-                           @"other app connections.";
+            detail =
+                NEFilterManager.sharedManager.providerConfiguration.filterSockets
+                    ? @"Browser and socket filtering configured. Data enforcement requires connection tests."
+                    : @"Browser filtering configured. Enable Filter System Sockets below Firewall for "
+                      @"other app connections. Data enforcement requires connection tests.";
         }
         if (enabled && NEFilterManager.sharedManager.providerConfiguration.filterSockets !=
                            [self.policy.document[@"filterSockets"] boolValue]) {

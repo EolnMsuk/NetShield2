@@ -6,6 +6,7 @@
 #import "../Shared/NSIdentityDisplay.h"
 #import "../Shared/NSAppPreferences.h"
 #import "NSFilterRestart.h"
+#import "NSFilterBootPolicy.h"
 #import "NSRuleActionController.h"
 #import "NSRuleAppearance.h"
 
@@ -47,6 +48,7 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 @property(nonatomic, copy) NSString *editingRuleIdentity;
 @property(nonatomic, copy) NSArray<NSString *> *globalRuleKeys;
 @property(nonatomic, copy) NSString *message;
+@property(nonatomic, copy) NSString *bootPolicyStatus;
 @property(nonatomic, strong) NSTimer *timer;
 @property(nonatomic, strong) NSURLSessionDataTask *updateTask;
 @property(nonatomic) BOOL updateCheckWasManual;

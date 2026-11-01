@@ -1,11 +1,13 @@
+# 2.6.2
+
+- BETA FIX to FilterGate
+
 # 2.6.1
 
 - Modified update instructions
 
 # 2.6.0
 
-- You MUST uninstall the previous version of NetShield2 and (optional) userspace reboot before installing this update.
-- If you fail to uninstall the old version, the new version will not be able to fix respring in app feature (added fix a few unreleased versions back).
 - Fixed uninstall failing on the first attempt when Firewall was enabled by waiting for shared-state locks to become available after filter removal.
 - Edited some update labels and UI.
 

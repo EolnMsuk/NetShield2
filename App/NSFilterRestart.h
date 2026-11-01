@@ -10,6 +10,14 @@
 
 FOUNDATION_EXPORT NSString *const NSFilterLocalizedDescription;
 
+typedef NS_ENUM(NSInteger, NSFilterRestartState) {
+    NSFilterRestartUnchanged,
+    // Preferences and current control heartbeat only, never data enforcement.
+    NSFilterRestartEnabledVerified,
+    NSFilterRestartOffVerified,
+    NSFilterRestartUnknown,
+};
+
 // All state and callbacks belong to the main queue. Dependencies are injectable
 // so preference errors and provider handoff can be tested without NetworkExtension.
 @interface NSFilterRestart : NSObject
@@ -18,5 +26,8 @@ FOUNDATION_EXPORT NSString *const NSFilterLocalizedDescription;
 @property(nonatomic, copy) BOOL (^isStopped)(BOOL previouslyEnabled);
 @property(nonatomic, copy) BOOL (^isRunning)(id configuration);
 @property(nonatomic, copy) void (^schedule)(NSTimeInterval delay, void (^work)(void));
+@property(nonatomic) BOOL requiresBootPolicy;
+@property(nonatomic, copy) void (^report)(NSString *stage, id configuration, BOOL enabled);
+@property(nonatomic, readonly) NSFilterRestartState state;
 - (void)start:(void (^)(NSError *error))completion;
 @end

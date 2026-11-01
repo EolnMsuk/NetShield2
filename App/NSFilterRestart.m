@@ -1,16 +1,20 @@
 #import "NSFilterRestart.h"
+#import "NSFilterBootPolicy.h"
 
 NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
 
 @interface NSFilterRestart ()
 @property(nonatomic, copy) void (^completion)(NSError *);
 @property(nonatomic, strong) id previous;
+@property(nonatomic, strong) id candidate;
+@property(nonatomic, copy) NSDictionary *expectedFields;
 @property(nonatomic, copy) NSString *previousDescription;
 @property(nonatomic) BOOL wasEnabled;
 @property(nonatomic) BOOL touchedPreferences;
 @property(nonatomic) BOOL restoring;
 @property(nonatomic) NSUInteger generation;
 @property(nonatomic, strong) NSError *originalError;
+@property(nonatomic, readwrite) NSFilterRestartState state;
 @end
 
 @implementation NSFilterRestart
@@ -36,6 +40,67 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
         completion(error);
     }
 }
+- (void)record:(NSString *)stage {
+    if (self.report) {
+        self.report(stage, self.manager.providerConfiguration, self.manager.enabled);
+    }
+}
+// Every preference operation owns a generation and a deadline. Duplicate and
+// late callbacks cannot start a later phase. A timed-out write may still reach
+// the OS: do not race it with a cleanup write or claim a verified final state.
+- (void)preferences:(BOOL)save completion:(void (^)(NSError *))completion {
+    NSUInteger generation = ++self.generation;
+    self.schedule(10, ^{
+        if (generation == self.generation && self.completion) {
+            self.state = NSFilterRestartUnknown;
+            [self
+                finish:
+                    [self
+                        error:save ? @"Saving filter preferences timed out. A pending write may still "
+                                     @"complete; the saved state is unknown/unverified. Your rules are saved."
+                                   : @"Loading filter preferences timed out. The saved state is "
+                                     @"unknown/unverified. Your rules are saved."]];
+        }
+    });
+    void (^callback)(NSError *) = ^(NSError *error) {
+        void (^deliver)(void) = ^{
+            if (generation != self.generation || !self.completion) {
+                return;
+            }
+            self.generation++;
+            completion(error);
+        };
+        if (NSThread.isMainThread) {
+            deliver();
+        } else {
+            dispatch_async(dispatch_get_main_queue(), deliver);
+        }
+    };
+    if (save) {
+        [self.manager saveToPreferencesWithCompletionHandler:callback];
+    } else {
+        [self.manager loadFromPreferencesWithCompletionHandler:callback];
+    }
+}
+- (BOOL)constructCandidate:(BOOL)restoring error:(NSError **)error {
+    id candidate = self.configuration(self.previous, restoring, error);
+    if (!candidate) {
+        return NO;
+    }
+    // Capture fields before copying; a defective copy must not redefine what
+    // we expect to read back. Do this before touching the enabled preference.
+    NSDictionary *fields = NSFilterConfigurationFields(candidate);
+    id copy = NSFilterConfigurationCheckedCopy(candidate, self.requiresBootPolicy, error);
+    if (!copy || !NSFilterConfigurationValidate(copy, fields, self.requiresBootPolicy, error)) {
+        return NO;
+    }
+    self.candidate = copy;
+    self.expectedFields = fields;
+    if (self.report) {
+        self.report(restoring ? @"restore-copy-verified" : @"candidate-copy-verified", copy, NO);
+    }
+    return YES;
+}
 - (void)start:(void (^)(NSError *))completion {
     if (self.completion) {
         return;
@@ -43,47 +108,84 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
     self.completion = completion;
     self.restoring = NO;
     self.touchedPreferences = NO;
-    NSUInteger generation = ++self.generation;
-    [self.manager loadFromPreferencesWithCompletionHandler:^(NSError *error) {
-        if (generation != self.generation || !self.completion) {
-            return;
-        }
-        self.generation++;
-        if (error) {
-            [self finish:error];
-            return;
-        }
-        self.previous = [self.manager.providerConfiguration copy];
-        self.previousDescription = self.manager.localizedDescription;
-        self.wasEnabled = self.manager.enabled;
-        NSError *validationError = nil;
-        if (!self.configuration(nil, NO, &validationError)) {
-            [self finish:validationError ?: [self error:@"Policy unavailable; configuration unchanged."]];
-            return;
-        }
-        if (self.wasEnabled) {
-            self.manager.enabled = NO;
-            self.touchedPreferences = YES;
-            NSUInteger saveGeneration = self.generation;
-            [self.manager saveToPreferencesWithCompletionHandler:^(NSError *saveError) {
-                if (saveGeneration != self.generation || !self.completion) {
-                    return;
-                }
-                self.generation++;
-                if (saveError) {
-                    [self recover:saveError];
-                } else {
-                    [self waitForStop:0];
-                }
-            }];
-        } else {
-            [self waitForStop:0];
-        }
-    }];
+    self.originalError = nil;
+    self.state = NSFilterRestartUnchanged;
+    if (!self.manager || !self.configuration || !self.isStopped || !self.isRunning) {
+        [self finish:[self error:@"Filter restart dependencies are incomplete; configuration unchanged."]];
+        return;
+    }
+    [self
+        preferences:NO
+         completion:^(NSError *error) {
+             if (error) {
+                 [self finish:error];
+                 return;
+             }
+             self.previousDescription = self.manager.localizedDescription;
+             self.wasEnabled = self.manager.enabled;
+             // Preserve an actual policy already persisted by an experimental build,
+             // including when restarting with a normal build later.
+             BOOL hadBootPolicy = NO;
+             if (NSFilterBootPolicyRead(self.manager.providerConfiguration, &hadBootPolicy, NULL) &&
+                 hadBootPolicy) {
+                 self.requiresBootPolicy = YES;
+             }
+             if (self.manager.providerConfiguration) {
+                 NSError *copyError = nil;
+                 self.previous = NSFilterConfigurationCheckedCopy(self.manager.providerConfiguration,
+                                                                  hadBootPolicy, &copyError);
+                 if (!self.previous) {
+                     [self finish:[self error:[NSString
+                                                  stringWithFormat:@"%@ Previous configuration could not be "
+                                                                   @"retained; configuration unchanged.",
+                                                                   copyError.localizedDescription]]];
+                     return;
+                 }
+             } else {
+                 self.previous = nil;
+             }
+             NSError *buildError = nil;
+             if (![self constructCandidate:NO error:&buildError]) {
+                 [self
+                     finish:[self error:[NSString
+                                            stringWithFormat:@"%@ Migration did not occur; configuration "
+                                                             @"unchanged. Stock-boot fallback is unverified.",
+                                                             buildError.localizedDescription
+                                                                 ?: @"Policy unavailable."]]];
+                 return;
+             }
+             [self disableForStaging];
+         }];
+}
+- (void)disableForStaging {
+    if (!self.manager.enabled) {
+        [self waitForStop:0];
+        return;
+    }
+    self.manager.enabled = NO;
+    self.touchedPreferences = YES;
+    self.state = NSFilterRestartUnknown;
+    [self preferences:YES
+           completion:^(NSError *saveError) {
+               if (saveError) {
+                   [self recover:saveError];
+                   return;
+               }
+               [self preferences:NO
+                      completion:^(NSError *loadError) {
+                          if (loadError || self.manager.enabled) {
+                              [self recover:loadError ?: [self error:@"The old filter did not persist OFF."]];
+                              return;
+                          }
+                          self.state = NSFilterRestartOffVerified;
+                          [self record:@"old-off-reloaded"];
+                          [self waitForStop:0];
+                      }];
+           }];
 }
 - (void)waitForStop:(NSUInteger)attempt {
     if (self.isStopped(self.wasEnabled)) {
-        [self saveConfiguration];
+        [self stageConfiguration];
         return;
     }
     if (attempt >= 60) {
@@ -97,160 +199,181 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
         }
     });
 }
-- (void)saveConfiguration {
-    NSUInteger generation = ++self.generation;
-    [self.manager loadFromPreferencesWithCompletionHandler:^(NSError *error) {
-        if (generation != self.generation || !self.completion) {
-            return;
-        }
-        self.generation++;
+- (BOOL)validateReloadEnabled:(BOOL)enabled error:(NSError **)error {
+    NSString *description = self.restoring ? self.previousDescription : NSFilterLocalizedDescription;
+    BOOL sameDescription = self.manager.localizedDescription == description ||
+                           [self.manager.localizedDescription isEqual:description];
+    if (self.manager.enabled != enabled || !sameDescription) {
         if (error) {
-            [self recover:error];
-            return;
+            *error =
+                [self error:@"The saved filter enabled state or description did not match the transaction."];
         }
-        NSError *buildError = nil;
-        id configuration = self.configuration(self.previous, self.restoring, &buildError);
-        if (!configuration) {
-            [self recover:buildError ?: [self error:@"Unable to construct filter configuration."]];
-            return;
-        }
-        self.manager.providerConfiguration = configuration;
-        self.manager.localizedDescription =
-            self.restoring ? self.previousDescription : NSFilterLocalizedDescription;
-        self.manager.enabled = YES;
-        self.touchedPreferences = YES;
-        NSUInteger saveGeneration = self.generation;
-        [self.manager saveToPreferencesWithCompletionHandler:^(NSError *saveError) {
-            if (saveGeneration != self.generation || !self.completion) {
-                return;
-            }
-            self.generation++;
-            if (saveError) {
-                [self recover:saveError];
-            } else {
-                [self waitForStart:configuration attempt:0];
-            }
-        }];
-    }];
+        return NO;
+    }
+    return NSFilterConfigurationValidate(self.manager.providerConfiguration, self.expectedFields,
+                                         self.requiresBootPolicy, error);
 }
-- (void)waitForStart:(id)configuration attempt:(NSUInteger)attempt {
-    if (self.isRunning(configuration)) {
+- (void)stageConfiguration {
+    [self
+        preferences:NO
+         completion:^(NSError *loadError) {
+             if (loadError || self.manager.enabled) {
+                 [self recover:loadError
+                                   ?: [self error:@"The filter changed to enabled before disabled staging."]];
+                 return;
+             }
+             self.manager.providerConfiguration = self.candidate;
+             self.manager.localizedDescription =
+                 self.restoring ? self.previousDescription : NSFilterLocalizedDescription;
+             self.manager.enabled = NO;
+             self.touchedPreferences = YES;
+             self.state = NSFilterRestartUnknown;
+             [self preferences:YES
+                    completion:^(NSError *saveError) {
+                        if (saveError) {
+                            [self recover:saveError];
+                            return;
+                        }
+                        [self preferences:NO
+                               completion:^(NSError *reloadError) {
+                                   NSError *validationError = nil;
+                                   if (reloadError || ![self validateReloadEnabled:NO
+                                                                             error:&validationError]) {
+                                       [self recover:reloadError ?: validationError];
+                                       return;
+                                   }
+                                   self.state = NSFilterRestartOffVerified;
+                                   [self record:@"staged-off-reloaded-verified"];
+                                   [self enableStagedConfiguration];
+                               }];
+                    }];
+         }];
+}
+- (void)enableStagedConfiguration {
+    self.manager.enabled = YES;
+    self.state = NSFilterRestartUnknown;
+    [self preferences:YES
+           completion:^(NSError *saveError) {
+               if (saveError) {
+                   [self recover:saveError];
+                   return;
+               }
+               [self preferences:NO
+                      completion:^(NSError *loadError) {
+                          NSError *validationError = nil;
+                          if (loadError || ![self validateReloadEnabled:YES error:&validationError]) {
+                              [self recover:loadError ?: validationError];
+                              return;
+                          }
+                          [self record:@"enabled-reloaded-verified"];
+                          [self waitForStart:0];
+                      }];
+           }];
+}
+- (void)waitForStart:(NSUInteger)attempt {
+    if (self.isRunning(self.candidate)) {
+        self.state = NSFilterRestartEnabledVerified;
+        [self record:@"current-control-heartbeat"];
         [self
             finish:self.restoring
-                       ? [self error:[NSString stringWithFormat:@"%@ Previous filter configuration restored "
-                                                                @"and its control provider verified.",
-                                                                self.originalError.localizedDescription]]
+                       ? [self error:[NSString stringWithFormat:@"%@ Previous configuration restored and "
+                                                                @"read back%@; its current control provider "
+                                                                @"responded. Data enforcement and stock boot "
+                                                                @"are not established by this heartbeat.",
+                                                                self.originalError.localizedDescription,
+                                                                self.requiresBootPolicy
+                                                                    ? @" with the required boot policy"
+                                                                    : @""]]
                        : nil];
         return;
     }
     if (attempt >= 60) {
-        [self recover:[self error:@"The enabled filter did not report a healthy control provider within 15 "
-                                  @"seconds."]];
+        [self
+            recover:[self error:@"The enabled filter did not report its current activation's healthy control "
+                                @"provider within 15 seconds."]];
         return;
     }
     NSUInteger generation = self.generation;
     self.schedule(0.25, ^{
         if (self.completion && generation == self.generation) {
-            [self waitForStart:configuration attempt:attempt + 1];
+            [self waitForStart:attempt + 1];
         }
     });
 }
 - (void)recover:(NSError *)error {
+    if (!self.originalError) {
+        self.originalError = error;
+    }
     if (self.restoring || !self.wasEnabled || !self.touchedPreferences || !self.previous) {
-        if (self.touchedPreferences) {
-            [self disableFailedConfiguration:error];
-            return;
-        }
-        [self finish:[self error:[NSString stringWithFormat:@"%@ Filtering is not verified; check Firewall "
-                                                            @"status before relying on protection.",
-                                                            error.localizedDescription]]];
+        [self disableFailedConfiguration:error];
         return;
     }
-    self.originalError = error;
     self.restoring = YES;
-    NSUInteger generation = ++self.generation;
-    [self.manager loadFromPreferencesWithCompletionHandler:^(NSError *loadError) {
-        if (generation != self.generation || !self.completion) {
-            return;
-        }
-        self.generation++;
-        if (loadError) {
-            [self recover:loadError];
-            return;
-        }
-        self.manager.enabled = NO;
-        NSUInteger saveGeneration = self.generation;
-        [self.manager saveToPreferencesWithCompletionHandler:^(NSError *saveError) {
-            if (saveGeneration != self.generation || !self.completion) {
-                return;
-            }
-            self.generation++;
-            if (saveError) {
-                [self recover:saveError];
-            } else {
-                [self waitForStop:0];
-            }
-        }];
-    }];
+    NSError *buildError = nil;
+    if (![self constructCandidate:YES error:&buildError]) {
+        [self disableFailedConfiguration:buildError
+                                             ?: [self error:@"No safe restoration could be constructed."]];
+        return;
+    }
+    [self preferences:NO
+           completion:^(NSError *loadError) {
+               if (loadError) {
+                   [self disableFailedConfiguration:loadError];
+                   return;
+               }
+               [self disableForStaging];
+           }];
 }
 - (void)finishDisabledConfiguration:(NSError *)startupError {
-    [self finish:[self error:[NSString stringWithFormat:@"%@ Firewall is off because startup could not be "
-                                                        @"verified. Traffic is no longer protected by "
-                                                        @"NetShield2. Your rules are saved.",
-                                                        startupError.localizedDescription]]];
+    self.state = NSFilterRestartOffVerified;
+    [self record:@"recovery-off-reloaded-verified"];
+    [self finish:[self error:[NSString
+                                 stringWithFormat:@"%@ %@ Firewall preference is verified off. Your rules "
+                                                  @"are saved. NetShield2 protection is off; network "
+                                                  @"recovery requires a connection test.",
+                                                  self.originalError.localizedDescription ?: @"",
+                                                  startupError.localizedDescription]]];
 }
 - (void)disableFailedConfiguration:(NSError *)startupError {
-    // An enabled configuration whose providers never start can hold all traffic.
-    // After a failed first activation or failed rollback, persist OFF and verify it.
-    // Never claim that a failed preference write restored connectivity.
-    NSUInteger generation = ++self.generation;
+    // A fresh load must establish OFF, including after denied initial permission.
     void (^failed)(NSError *) = ^(NSError *cleanupError) {
+        self.state = NSFilterRestartUnknown;
         [self finish:[self error:[NSString
-                                     stringWithFormat:@"%@ Automatic disable failed: %@. Turn Firewall off "
-                                                      @"in Settings > General > VPN & Device Management > "
-                                                      @"Content Filter. Filtering is not verified.",
+                                     stringWithFormat:@"%@ %@ Automatic OFF recovery failed: %@. The saved "
+                                                      @"state is unknown/unverified. Your rules are saved. "
+                                                      @"Check Settings > General > VPN & Device Management "
+                                                      @" > Content Filter before relying on its state.",
+                                                      self.originalError.localizedDescription ?: @"",
                                                       startupError.localizedDescription,
                                                       cleanupError.localizedDescription]]];
     };
-    [self.manager loadFromPreferencesWithCompletionHandler:^(NSError *loadError) {
-        if (generation != self.generation || !self.completion) {
-            return;
-        }
-        self.generation++;
-        if (loadError) {
-            failed(loadError);
-            return;
-        }
-        if (!self.manager.enabled) {
-            // Do not create/save a configuration after the user denies the
-            // initial content-filter permission prompt.
-            [self finishDisabledConfiguration:startupError];
-            return;
-        }
-        self.manager.enabled = NO;
-        NSUInteger saveGeneration = self.generation;
-        [self.manager saveToPreferencesWithCompletionHandler:^(NSError *saveError) {
-            if (saveGeneration != self.generation || !self.completion) {
-                return;
-            }
-            self.generation++;
-            if (saveError) {
-                failed(saveError);
-                return;
-            }
-            NSUInteger verifyGeneration = self.generation;
-            [self.manager loadFromPreferencesWithCompletionHandler:^(NSError *verifyError) {
-                if (verifyGeneration != self.generation || !self.completion) {
-                    return;
-                }
-                self.generation++;
-                if (verifyError || self.manager.enabled) {
-                    failed(verifyError ?: [self error:@"The saved filter is still enabled."]);
-                    return;
-                }
-                [self finishDisabledConfiguration:startupError];
-            }];
-        }];
-    }];
+    [self preferences:NO
+           completion:^(NSError *loadError) {
+               if (loadError) {
+                   failed(loadError);
+                   return;
+               }
+               if (!self.manager.enabled) {
+                   [self finishDisabledConfiguration:startupError];
+                   return;
+               }
+               self.manager.enabled = NO;
+               [self preferences:YES
+                      completion:^(NSError *saveError) {
+                          if (saveError) {
+                              failed(saveError);
+                              return;
+                          }
+                          [self preferences:NO
+                                 completion:^(NSError *verifyError) {
+                                     if (verifyError || self.manager.enabled) {
+                                         failed(verifyError
+                                                    ?: [self error:@"The saved filter is still enabled."]);
+                                         return;
+                                     }
+                                     [self finishDisabledConfiguration:startupError];
+                                 }];
+                      }];
+           }];
 }
 @end
