@@ -1,11 +1,6 @@
 name: Build NetShield2
 on:
   workflow_dispatch:
-    inputs:
-      boot_policy_experiment:
-        description: Build the unqualified stock-boot experiment
-        type: boolean
-        default: false
   push:
   pull_request:
 
@@ -14,12 +9,14 @@ permissions:
 
 jobs:
   build:
-    name: Build ${{ matrix.scheme }}
+    name: Build ${{ matrix.scheme }} (experiment=${{ matrix.boot_policy_experiment }})
     runs-on: macos-15
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
+        scheme: [rootless, roothide, rootful]
+        boot_policy_experiment: ['0', '1']
         include:
           - scheme: rootless
             theos_scheme: rootless
@@ -46,7 +43,8 @@ jobs:
       THEOS_PACKAGE_SCHEME: ${{ matrix.theos_scheme }}
       PACKAGE_ARCH: ${{ matrix.package_arch }}
       APP_PATH: ${{ matrix.app_path }}
-      NS_BOOT_POLICY_EXPERIMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.boot_policy_experiment && '1' || '0' }}
+      NS_BOOT_POLICY_EXPERIMENT: ${{ matrix.boot_policy_experiment }}
+      PACKAGE_SUFFIX: ${{ matrix.boot_policy_experiment == '1' && '-boot-policy-experiment' || '' }}
       SDK_SHA256: 5e0fd3f01266cce4ce012d4a99b38eb56578fca40d09edc81cd83dee958202fb
     steps:
       - uses: actions/checkout@v4
@@ -99,7 +97,7 @@ jobs:
           gmake clean
           gmake package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME="$THEOS_PACKAGE_SCHEME" NS_BOOT_POLICY_EXPERIMENT="$NS_BOOT_POLICY_EXPERIMENT"
           source="packages/${PACKAGE_ID}_${PACKAGE_VERSION}_${PACKAGE_ARCH}.deb"
-          destination="packages/${PACKAGE_ID}_${PACKAGE_VERSION}_${PACKAGE_VARIANT}.deb"
+          destination="packages/${PACKAGE_ID}_${PACKAGE_VERSION}_${PACKAGE_VARIANT}${PACKAGE_SUFFIX}.deb"
           test -f "$source"
           mv "$source" "$destination"
           test -f "$destination"
@@ -107,7 +105,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          dpkg-deb --raw-extract "packages/${PACKAGE_ID}_${PACKAGE_VERSION}_${PACKAGE_VARIANT}.deb" "$RUNNER_TEMP/netshield-package"
+          dpkg-deb --raw-extract "packages/${PACKAGE_ID}_${PACKAGE_VERSION}_${PACKAGE_VARIANT}${PACKAGE_SUFFIX}.deb" "$RUNNER_TEMP/netshield-package"
           python3 scripts/validate.py --stage "$RUNNER_TEMP/netshield-package" --scheme "$PACKAGE_VARIANT"
       - name: Verify signing identities and entitlements
         shell: bash
@@ -122,8 +120,8 @@ jobs:
       - name: Upload validated deb
         uses: actions/upload-artifact@v4
         with:
-          name: NetShield2-${{ env.PACKAGE_VERSION }}-iOS15-18-${{ matrix.scheme }}${{ env.NS_BOOT_POLICY_EXPERIMENT == '1' && '-boot-policy-experiment' || '' }}
-          path: packages/${{ env.PACKAGE_ID }}_${{ env.PACKAGE_VERSION }}_${{ matrix.scheme }}.deb
+          name: NetShield2-${{ env.PACKAGE_VERSION }}-iOS15-18-${{ matrix.scheme }}-${{ matrix.boot_policy_experiment == '1' && 'boot-policy-experiment' || 'baseline' }}
+          path: packages/${{ env.PACKAGE_ID }}_${{ env.PACKAGE_VERSION }}_${{ matrix.scheme }}${{ env.PACKAGE_SUFFIX }}.deb
           if-no-files-found: error
 
   release:
@@ -143,7 +141,7 @@ jobs:
       - name: Download all three release packages
         uses: actions/download-artifact@v4
         with:
-          pattern: NetShield2-${{ env.PACKAGE_VERSION }}-iOS15-18-*
+          pattern: NetShield2-${{ env.PACKAGE_VERSION }}-iOS15-18-*-baseline
           path: release-assets
           merge-multiple: true
       - name: Prepare the current version as a draft with deb assets
