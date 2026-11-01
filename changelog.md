@@ -1,19 +1,22 @@
+# 2.6.1
+
+- Modified update instructions
+
 # 2.6.0
 
+- You MUST uninstall the previous version of NetShield2 and (optional) userspace reboot before installing this update.
+- If you fail to uninstall the old version, the new version will not be able to fix respring in app feature (added fix a few unreleased versions back).
 - Fixed uninstall failing on the first attempt when Firewall was enabled by waiting for shared-state locks to become available after filter removal.
 - Edited some update labels and UI.
 
 # 2.5.9
 
-- Matched the Updates prompt's style, text size, and action spacing to other native alerts such as Support the Developer.
 - Open Unidentified and Default Rule sheets at half-screen height.
 - Added / updated update-check controls with daily-on-launch checks by default.
 
 # 2.5.8
 
-- You MUST uninstall the previous version of NetShield2 and (userspace) reboot before installing this update.
 - Added a sandbox exemption to the main app only, should fix in app respring feature.
-- If you fail to uninstall the old version, the new vesrion will not be able to fix respring in app feature.
 
 # 2.5.7
 

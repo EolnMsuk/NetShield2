@@ -93,7 +93,7 @@
                   if (newer) {
                       title = @"Update available";
                       message = [NSString
-                          stringWithFormat:@"NetShield2 %@ is available. You have v%@ installed.\n\n"
+                          stringWithFormat:@"NetShield2 %@ is available!\n\n"
                                            @"After downloading the update, turn off Firewall and uninstall "
                                            @"this version before installing the new one.",
                                            latest, installed];
