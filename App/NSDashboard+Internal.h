@@ -4,6 +4,7 @@
 #import "../Shared/NSNotifications.h"
 #import "../Shared/NSDestination.h"
 #import "../Shared/NSIdentityDisplay.h"
+#import "../Shared/NSAppPreferences.h"
 #import "NSFilterRestart.h"
 #import "NSRuleActionController.h"
 #import "NSRuleAppearance.h"

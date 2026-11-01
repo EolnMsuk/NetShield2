@@ -14,10 +14,14 @@ case "${1:-}" in
                 esac
             done
             printf 'NetShield2: filter cleanup failed (exit %s); uninstall cancelled.\n' "$cleanup_status" >&2
-            printf '%s\n' 'Open NetShield2 > Reset Settings > Remove Filter & Settings, then retry removal.' >&2
+            printf '%s\n' 'Open NetShield2 > Configuration > Remove Filter & Settings, then retry removal.' >&2
             exit 1
         fi
         if /var/jb/usr/bin/uicache -u /var/jb/Applications/NetShield2.app >/dev/null 2>&1; then
+            # Deconfiguration can precede replacement, rather than removal.
+            if [ "${1:-}" != remove ]; then
+                exit 0
+            fi
             reload=/var/jb/usr/bin/sbreload
             if [ -x "$reload" ]; then
                 package_manager_pid=$PPID

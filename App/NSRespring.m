@@ -6,59 +6,66 @@
 
 extern char **environ;
 
-static NSError *NSRespringError(NSString *message, NSInteger code) {
+static NSError *NSRespringError(NSArray<NSString *> *attempts, int code) {
+    NSError *underlying = [NSError errorWithDomain:NSPOSIXErrorDomain code:code userInfo:nil];
     return [NSError errorWithDomain:@"NetShield2.Respring"
                                code:code
-                           userInfo:@{NSLocalizedDescriptionKey : message}];
+                           userInfo:@{
+                               NSLocalizedDescriptionKey : [@"Could not respring. "
+                                   stringByAppendingString:[attempts componentsJoinedByString:@"; "]],
+                               NSUnderlyingErrorKey : underlying
+                           }];
 }
 
 BOOL NSRespring(NSError **error) {
-    // RootHide packages are relocated during staging, so their native tool path
-    // matches rootful. Keep its choice explicit: grouping it with rootful hid the
-    // fact that RootHide needs its own supported layout.
-    const char *preferred = strcmp(NS_JAILBREAK_TYPE, "rootless") == 0
-                                ? "/var/jb/usr/bin/sbreload"
-                                : strcmp(NS_JAILBREAK_TYPE, "roothide") == 0
-                                      ? "/usr/bin/sbreload"
-                                      : "/usr/bin/sbreload";
-    const char *fallback = strcmp(NS_JAILBREAK_TYPE, "rootless") == 0
-                               ? "/usr/bin/sbreload"
-                               : "/var/jb/usr/bin/sbreload";
-    const char *path = preferred;
-    int preferredError = 0;
-    if (access(path, X_OK) != 0) {
-        preferredError = errno;
-        if (access(fallback, X_OK) == 0) {
-            path = fallback;
-        } else {
-            int fallbackError = errno;
+    NSString *preferred = @"/usr/bin/sbreload";
+    NSString *fallback = nil;
+    if (strcmp(NS_JAILBREAK_TYPE, "rootless") == 0) {
+        preferred = @"/var/jb/usr/bin/sbreload";
+        fallback = @"/usr/bin/sbreload";
+    } else if (strcmp(NS_JAILBREAK_TYPE, "roothide") == 0) {
+        // Maintainer scripts run inside RootHide's relocated root. The app must
+        // resolve that same root from its installed bundle, not the stock /usr.
+        NSString *bundle = NSBundle.mainBundle.bundlePath.stringByResolvingSymlinksInPath;
+        if ([bundle hasSuffix:@"/Applications/NetShield2.app"]) {
+            NSString *root = bundle.stringByDeletingLastPathComponent.stringByDeletingLastPathComponent;
+            preferred = [root stringByAppendingPathComponent:@"usr/bin/sbreload"];
+        }
+        fallback = @"/usr/bin/sbreload";
+    }
+    NSArray<NSString *> *paths =
+        fallback && ![fallback isEqual:preferred] ? @[ preferred, fallback ] : @[ preferred ];
+    NSMutableArray<NSString *> *attempts = [NSMutableArray new];
+    for (NSString *path in paths) {
+        if (access(path.fileSystemRepresentation, X_OK) != 0) {
+            int code = errno;
+            NSError *underlying = [NSError errorWithDomain:NSPOSIXErrorDomain code:code userInfo:nil];
+            [attempts addObject:[NSString stringWithFormat:@"Access %@: %@", path,
+                                                           underlying.localizedDescription]];
+            // Fall back only for an absent path, never for a present but
+            // inaccessible executable.
+            if ((code == ENOENT || code == ENOTDIR) && ![path isEqual:paths.lastObject]) {
+                continue;
+            }
             if (error) {
-                *error = NSRespringError(
-                    [NSString stringWithFormat:@"sbreload is unavailable (tried %s: %@; %s: %@).", preferred,
-                                               [NSError errorWithDomain:NSPOSIXErrorDomain
-                                                                   code:preferredError
-                                                               userInfo:nil].localizedDescription,
-                                               fallback,
-                                               [NSError errorWithDomain:NSPOSIXErrorDomain
-                                                                   code:fallbackError
-                                                               userInfo:nil].localizedDescription],
-                    fallbackError);
+                *error = NSRespringError(attempts, code);
             }
             return NO;
         }
-    }
-    char *const arguments[] = {(char *)path, NULL};
-    pid_t process = 0;
-    int result = posix_spawn(&process, path, NULL, NULL, arguments, environ);
-    if (result != 0) {
-        if (error) {
-            *error = NSRespringError(
-                [NSString stringWithFormat:@"Could not launch sbreload at %s (preferred %s): %@", path, preferred,
-                                           [NSError errorWithDomain:NSPOSIXErrorDomain code:result userInfo:nil]
-                                               .localizedDescription],
-                result);
+        const char *executable = path.fileSystemRepresentation;
+        char *const arguments[] = {(char *)executable, NULL};
+        pid_t process = 0;
+        int result = posix_spawn(&process, executable, NULL, NULL, arguments, environ);
+        if (result != 0) {
+            NSError *underlying = [NSError errorWithDomain:NSPOSIXErrorDomain code:result userInfo:nil];
+            [attempts addObject:[NSString stringWithFormat:@"Launch %@: %@", path,
+                                                           underlying.localizedDescription]];
+            if (error) {
+                *error = NSRespringError(attempts, result);
+            }
+            return NO;
         }
-        return NO;
+        return YES;
     }
-    return YES;
+    return NO;
 }

@@ -191,6 +191,10 @@ with tempfile.TemporaryDirectory(prefix='netshield-packaging-') as directory:
     check_generated_metadata(pathlib.Path(directory))
     for scheme, architecture, prefix in VARIANTS:
         check_install_lifecycle(pathlib.Path(directory), scheme)
+        if shutil.which('sh'):
+            run('test_uninstall.py', '--scheme', scheme)
+        else:
+            print(f'Skipped {scheme} prerm execution: POSIX sh unavailable (macOS CI required)')
         stage = pathlib.Path(directory) / scheme
         debian = stage / 'DEBIAN'
         debian.mkdir(parents=True)

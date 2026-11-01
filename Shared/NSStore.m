@@ -357,7 +357,7 @@ BOOL NSUseDefaultRule(NSMutableDictionary *document, NSString *identity, NSError
     NSMutableDictionary *generations = [document[@"askGenerations"] mutableCopy] ?: [NSMutableDictionary new];
     if (!generations[identity] && generations.count >= NSMaximumRules) {
         if (error) {
-            *error = NSStorageError(@"The ask-again history is full. Reset Rules & History to clear it.");
+            *error = NSStorageError(@"The ask-again history is full. Use Reset Settings to clear it.");
         }
         return NO;
     }

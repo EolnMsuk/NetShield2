@@ -163,7 +163,12 @@
 }
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
-    [self checkForUpdateManually:NO];
+    // A returning sheet/editor is not another launch. Use one gate per process
+    // even if a dashboard is recreated; the persisted schedule handles relaunches.
+    static dispatch_once_t launchUpdateCheck;
+    dispatch_once(&launchUpdateCheck, ^{
+        [self checkForUpdateManually:NO];
+    });
     [self presentPendingUpdateResult];
 }
 - (void)viewWillDisappear:(BOOL)animated {

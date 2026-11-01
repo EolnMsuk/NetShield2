@@ -1,4 +1,4 @@
-"""Exercise the real prerm script with mock app/uicache commands (POSIX host)."""
+"""Exercise prerm cleanup and detached respring using mock commands (POSIX host)."""
 import argparse
 import os
 import pathlib
@@ -44,37 +44,77 @@ with tempfile.TemporaryDirectory(prefix="netshield-uninstall-") as directory:
     cache.chmod(0o755)
     reload.chmod(0o755)
     script = temporary / "prerm"
+    # Only liveness, waiting and diagnostics are stubbed; run the real worker.
+    worker_stubs = '''set -eu
+wait_checks=0
+kill() {
+    wait_checks=$((wait_checks + 1))
+    printf 'wait\\n' >> "$TEST_LOG"
+    [ "$WAIT_FOREVER" = 1 ] || [ "$wait_checks" -lt 3 ]
+}
+sleep() {
+    if [ "$HOLD_WORKER" = 1 ]; then
+        while [ ! -f "$RELEASE_WORKER" ]; do command sleep 0.01; done
+    fi
+}
+logger() { printf 'diagnostic:%s\\n' "$*" >> "$TEST_LOG"; }
+'''
     script.write_text(source.replace(f"{prefix}/Applications/NetShield2.app/NetShield2", shlex.quote(str(app)))
                      .replace(f"{prefix}/usr/bin/uicache", shlex.quote(str(cache)))
                      .replace(f"{prefix}/usr/bin/sbreload", shlex.quote(str(reload)))
-                     .replace("package_manager_pid=$PPID", "package_manager_pid=999999"))
+                     .replace("set -eu\n", worker_stubs), newline='\n')
     subprocess.run([shell, "-n", str(script)], check=True)
-    for action, app_status, cache_status, reload_status, expected_status, expected_calls in [
-        ("remove", 0, 0, 0, 0, 3),
-        ("deconfigure", 0, 0, 0, 0, 3),
-        ("remove", 1, 0, 0, 1, 1),
-        ("remove", 137, 0, 0, 1, 1),
-        ("deconfigure", 1, 0, 0, 1, 1),
-        ("remove", 0, 1, 0, 0, 2),
-        ("remove", 0, 0, 1, 0, 3),
-        ("upgrade", 0, 0, 0, 0, 0),
-        ("failed-upgrade", 0, 0, 0, 0, 0),
-        ("", 0, 0, 0, 0, 0),
-    ]:
+    cases = [
+        ("remove", 0, 0, 0, False),
+        ("deconfigure", 0, 0, 0, False),
+        ("remove", 1, 0, 0, False),
+        ("remove", 137, 0, 0, False),
+        ("deconfigure", 1, 0, 0, False),
+        ("remove", 0, 1, 0, False),
+        ("remove", 0, 0, 1, False),
+        ("remove", 0, 0, 0, True),
+    ]
+    cases += [(action, 0, 0, 0, False) for action in (
+        'upgrade', 'failed-upgrade', 'abort-upgrade', 'abort-remove', 'abort-deconfigure', '')]
+    release = temporary / 'release-worker'
+    for index, (action, app_status, cache_status, reload_status, wait_forever) in enumerate(cases):
         log.write_text("")
         environment = dict(os.environ, TEST_LOG=str(log), APP_STATUS=str(app_status),
-                           CACHE_STATUS=str(cache_status), RELOAD_STATUS=str(reload_status))
-        result = subprocess.run([shell, str(script), action], env=environment,
-                                capture_output=True, text=True, timeout=5)
+                           CACHE_STATUS=str(cache_status), RELOAD_STATUS=str(reload_status),
+                           WAIT_FOREVER=str(int(wait_forever)), HOLD_WORKER=str(int(index == 0)),
+                           RELEASE_WORKER=str(release))
+        # Completion with captured pipes proves the worker detached its descriptors.
+        try:
+            result = subprocess.run([shell, str(script), action], env=environment,
+                                    capture_output=True, text=True, timeout=5)
+            if index == 0:
+                assert 'reload' not in log.read_text().splitlines()
+        finally:
+            release.touch()
+        cleanup = action in ('remove', 'deconfigure')
+        worker = action == 'remove' and not app_status and not cache_status
+        diagnostic = cleanup and not app_status and (cache_status or (worker and (wait_forever or reload_status)))
         deadline = time.monotonic() + 3
         calls = log.read_text().splitlines()
-        while len(calls) < expected_calls and time.monotonic() < deadline:
+        while worker and time.monotonic() < deadline:
+            if (diagnostic and any(call.startswith('diagnostic:') for call in calls)) or (
+                    not diagnostic and 'reload' in calls):
+                break
             time.sleep(0.01)
             calls = log.read_text().splitlines()
+        expected_status = int(cleanup and app_status != 0)
         assert result.returncode == expected_status, (action, result.stderr)
-        assert len(calls) == expected_calls, (action, calls)
-        if calls:
-            assert calls[0] == "app:--remove-filter", calls
+        operations = [call for call in calls if call != 'wait' and not call.startswith('diagnostic:')]
+        expected = ['app:--remove-filter'] if cleanup else []
+        if cleanup and not app_status:
+            expected.append(f'cache:-u {prefix}/Applications/NetShield2.app')
+        if worker and not wait_forever:
+            expected.append('reload')
+        assert operations == expected, (action, calls)
+        assert any(call.startswith('diagnostic:') for call in calls) == bool(diagnostic), calls
+        assert calls.count('wait') == (601 if wait_forever else 3) * int(worker), calls
+        if worker:
+            assert calls.index('wait') > calls.index(expected[1]), calls
         assert result.stdout == "", (action, result.stdout)
         assert "LYNX" not in result.stderr and "SnowBoard" not in result.stderr
         assert "Icon cache" not in result.stderr
@@ -84,11 +124,14 @@ with tempfile.TemporaryDirectory(prefix="netshield-uninstall-") as directory:
             assert f"exit {app_status}" in result.stderr
         else:
             assert result.stderr == "", (action, result.stderr)
-        if len(calls) == 2:
-            assert calls[1] == f"cache:-u {prefix}/Applications/NetShield2.app", calls
-        if len(calls) == 3:
-            assert calls[1] == f"cache:-u {prefix}/Applications/NetShield2.app", calls
-            assert calls[2] == "reload", calls
+    reload.unlink()
+    log.write_text('')
+    result = subprocess.run([shell, str(script), 'remove'], env=environment,
+                            capture_output=True, text=True, timeout=5)
+    calls = log.read_text().splitlines()
+    assert result.returncode == 0 and result.stdout == result.stderr == ''
+    assert any('sbreload is unavailable' in call for call in calls), calls
+    assert 'reload' not in calls and 'wait' not in calls, calls
     app.unlink()
     log.write_text("")
     result = subprocess.run([shell, str(script), "remove"], env=environment,
@@ -96,4 +139,4 @@ with tempfile.TemporaryDirectory(prefix="netshield-uninstall-") as directory:
     assert result.returncode != 0 and not log.read_text(), "Missing helper must stop removal"
     assert result.stdout == "" and "filter cleanup failed" in result.stderr
     assert "Remove Filter & Settings" in result.stderr
-print("Passed uninstall hook checks: cleanup ordering, detached respring, failures, missing helper and upgrade preservation")
+print(f"Passed {args.scheme} uninstall cleanup, deferred respring, timeout, missing tools and upgrade/abort checks")

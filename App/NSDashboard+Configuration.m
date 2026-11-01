@@ -169,20 +169,26 @@
             alertControllerWithTitle:@"Respring SpringBoard?"
                              message:@"Respringing reloads SpringBoard and can interrupt other apps."
                       preferredStyle:UIAlertControllerStyleAlert];
+        __weak UIAlertController *weakAlert = alert;
         [alert addAction:[UIAlertAction actionWithTitle:@"Cancel"
                                                   style:UIAlertActionStyleCancel
                                                 handler:^(UIAlertAction *action) {
                                                     self.respringPromptPending = NO;
                                                 }]];
-        [alert addAction:[UIAlertAction actionWithTitle:@"Respring"
-                                                  style:UIAlertActionStyleDestructive
-                                                handler:^(UIAlertAction *action) {
-                                                    self.respringPromptPending = NO;
-                                                    NSError *error = nil;
-                                                    if (!NSRespring(&error)) {
-                                                        [self showError:error operation:@"Respring"];
-                                                    }
-                                                }]];
+        [alert addAction:[UIAlertAction
+                             actionWithTitle:@"Respring"
+                                       style:UIAlertActionStyleDestructive
+                                     handler:^(UIAlertAction *action) {
+                                         [weakAlert dismissViewControllerAnimated:YES
+                                                                       completion:^{
+                                                                           self.respringPromptPending = NO;
+                                                                           NSError *error = nil;
+                                                                           if (!NSRespring(&error)) {
+                                                                               [self showError:error
+                                                                                     operation:@"Respring"];
+                                                                           }
+                                                                       }];
+                                     }]];
         [self presentViewController:alert animated:YES completion:nil];
     }];
 }
@@ -206,17 +212,19 @@
     [UNUserNotificationCenter.currentNotificationCenter removeAllDeliveredNotifications];
     self.resetRequiresLegacyStop = NO;
     [self.deferredRequests removeAllObjects];
-    [NSUserDefaults.standardUserDefaults removeObjectForKey:@"hiddenRuleIdentities"];
     self.policy = NSReadPolicy(NULL);
     self.monitor = @{};
     self.identities = @[];
+    self.systemIdentities = @[];
+    self.globalRuleKeys = @[];
     self.loaded = YES;
     self.busy = NO;
-    [NSUserDefaults.standardUserDefaults removePersistentDomainForName:NSBundle.mainBundle.bundleIdentifier];
-    self.message = self.removeFilterAfterReset
-                       ? @"Filter, settings, rules and history removed. Firewall is off. iOS notification "
-                         @"authorization is managed in Settings."
-                       : @"Settings, rules and history reset. The installed filter is disabled; Firewall is off.";
+    NSResetAppPreferences(NSUserDefaults.standardUserDefaults, NSBundle.mainBundle.bundleIdentifier);
+    self.message =
+        self.removeFilterAfterReset
+            ? @"Filter, settings, rules and history removed. Firewall is off. iOS notification "
+              @"authorization is managed in Settings."
+            : @"Settings, rules and history reset. The installed filter is disabled; Firewall is off.";
     [self clearActivitySearch];
     [self refreshTableKeepingPosition];
     [self loadConfiguration];

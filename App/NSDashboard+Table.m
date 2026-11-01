@@ -193,6 +193,7 @@
         self.identities ?: @[],
         self.systemIdentities ?: @[],
         self.activityQuery ?: @"",
+        NSUpdateCheckMode(NSUserDefaults.standardUserDefaults),
         @(self.clearingSection)
     ];
     if ([signature isEqual:self.displaySignature]) {
@@ -306,6 +307,9 @@
     return MAX((NSUInteger)1, self.filteredActivityGroups.count);
 }
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
+    if (section == NSDashboardSectionGlobalRules && !self.globalRuleKeys.count) {
+        return nil;
+    }
     if (section == NSDashboardSectionSystemRules && ![self showsSystemRules]) {
         return nil;
     }
@@ -340,7 +344,7 @@
 }
 - (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section {
     BOOL scoped = section == NSDashboardSectionActivity || section == NSDashboardSectionRules ||
-                   section == NSDashboardSectionGlobalRules ||
+                  section == NSDashboardSectionGlobalRules ||
                   (section == NSDashboardSectionSystemRules && [self showsSystemRules]);
     NSString *heading = [self tableView:tableView titleForHeaderInSection:section];
     if (heading.length) {
@@ -745,14 +749,14 @@
         }
     } else if (path.section == NSDashboardSectionSupport) {
         cell.textLabel.text = @[ @"Updates", @"GitHub Link", @"Support the Developer" ][path.row];
-        cell.detailTextLabel.text = @[
-            [self updateCheckSubtitle], @"Source code, releases and issues",
-            @"Choose Venmo or Crypto"
-        ][path.row];
+        cell.detailTextLabel.text =
+            @[ [self updateCheckSubtitle], @"Source code, releases and issues",
+               @"Choose Venmo or Crypto" ][path.row];
         cell.textLabel.textColor = UIColor.systemBlueColor;
     } else {
         cell.textLabel.text =
-            @[ @"Export Rules and Recent Activity", @"Reset Settings", @"Remove Filter & Settings" ][path.row];
+            @[ @"Export Rules and Recent Activity", @"Reset Settings",
+               @"Remove Filter & Settings" ][path.row];
         cell.detailTextLabel.text = @[
             @"Share rules and recent activity as a JSON file", @"Removes rules, history and resets settings.",
             @"Removes content filter, rules, history and resets settings."
@@ -809,17 +813,18 @@
             BOOL removeFilter = path.row == 2;
             UIAlertController *alert = [UIAlertController
                 alertControllerWithTitle:removeFilter ? @"Remove Filter & Settings?" : @"Reset Settings?"
-                                 message:removeFilter ? @"Removes the content filter, rules and history, then "
-                                                       @"resets settings. Firewall remains off. iOS notification "
-                                                       @"authorization is managed in Settings."
-                                                     : @"Removes rules and history, resets settings, and leaves "
-                                                       @"the installed content filter disabled. Firewall remains off."
+                                 message:removeFilter
+                                             ? @"Removes the content filter, rules and history, then "
+                                               @"resets settings. Firewall remains off. iOS notification "
+                                               @"authorization is managed in Settings."
+                                             : @"Removes rules and history, resets settings, and leaves "
+                                               @"the installed content filter disabled. Firewall remains off."
                           preferredStyle:UIAlertControllerStyleAlert];
             [alert addAction:[UIAlertAction actionWithTitle:removeFilter ? @"Remove Filter & Settings"
-                                                                          : @"Reset Settings"
+                                                                         : @"Reset Settings"
                                                       style:UIAlertActionStyleDestructive
                                                     handler:^(UIAlertAction *action) {
-                                                         self.removeFilterAfterReset = removeFilter;
+                                                        self.removeFilterAfterReset = removeFilter;
                                                         [self resetNetShield2];
                                                     }]];
             [alert addAction:[UIAlertAction actionWithTitle:@"Cancel"

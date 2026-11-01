@@ -1,21 +1,9 @@
 #import "NSDashboard+Internal.h"
 #import "../Shared/NSReleaseVersion.h"
 
-static NSString *const NSUpdateCheckModeKey = @"updateCheckMode";
-static NSString *const NSUpdateCheckLastAttemptKey = @"updateCheckLastAttempt";
-static NSString *const NSUpdateCheckDaily = @"daily";
-static NSString *const NSUpdateCheckEveryLaunch = @"everyLaunch";
-static NSString *const NSUpdateCheckOff = @"off";
-
 @implementation NSDashboard (Updates)
-- (NSString *)updateCheckMode {
-    NSString *mode = [NSUserDefaults.standardUserDefaults stringForKey:NSUpdateCheckModeKey];
-    return [@[ NSUpdateCheckDaily, NSUpdateCheckEveryLaunch, NSUpdateCheckOff ] containsObject:mode]
-               ? mode
-               : NSUpdateCheckDaily;
-}
 - (NSString *)updateCheckSubtitle {
-    NSString *mode = [self updateCheckMode];
+    NSString *mode = NSUpdateCheckMode(NSUserDefaults.standardUserDefaults);
     if ([mode isEqual:NSUpdateCheckEveryLaunch]) {
         return @"Checks GitHub on every launch";
     }
@@ -27,18 +15,6 @@ static NSString *const NSUpdateCheckOff = @"off";
 - (void)setUpdateCheckMode:(NSString *)mode {
     [NSUserDefaults.standardUserDefaults setObject:mode forKey:NSUpdateCheckModeKey];
     [self refreshTableKeepingPosition];
-}
-- (BOOL)shouldCheckForUpdatesAutomatically {
-    NSString *mode = [self updateCheckMode];
-    if ([mode isEqual:NSUpdateCheckOff]) {
-        return NO;
-    }
-    if ([mode isEqual:NSUpdateCheckEveryLaunch]) {
-        return YES;
-    }
-    NSDate *lastAttempt = [NSUserDefaults.standardUserDefaults objectForKey:NSUpdateCheckLastAttemptKey];
-    return ![lastAttempt isKindOfClass:NSDate.class] ||
-           -[lastAttempt timeIntervalSinceNow] >= 24 * 60 * 60;
 }
 - (void)presentUpdateOptions {
     UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"Updates"
@@ -54,8 +30,11 @@ static NSString *const NSUpdateCheckOff = @"off";
         @[ @"Check on Every Launch", NSUpdateCheckEveryLaunch ],
         @[ @"Turn Off Automatic Checks", NSUpdateCheckOff ]
     ];
+    NSString *mode = NSUpdateCheckMode(NSUserDefaults.standardUserDefaults);
     for (NSArray<NSString *> *choice in modes) {
-        [sheet addAction:[UIAlertAction actionWithTitle:choice[0]
+        NSString *title =
+            [choice[1] isEqual:mode] ? [choice[0] stringByAppendingString:@" (Selected)"] : choice[0];
+        [sheet addAction:[UIAlertAction actionWithTitle:title
                                                   style:UIAlertActionStyleDefault
                                                 handler:^(UIAlertAction *action) {
                                                     [self setUpdateCheckMode:choice[1]];
@@ -65,8 +44,8 @@ static NSString *const NSUpdateCheckOff = @"off";
     UIPopoverPresentationController *popover = sheet.popoverPresentationController;
     if (popover) {
         popover.sourceView = self.tableView;
-        popover.sourceRect = [self.tableView rectForRowAtIndexPath:
-                                      [NSIndexPath indexPathForRow:0 inSection:NSDashboardSectionSupport]];
+        popover.sourceRect = [self.tableView
+            rectForRowAtIndexPath:[NSIndexPath indexPathForRow:0 inSection:NSDashboardSectionSupport]];
     }
     [self presentViewController:sheet animated:YES completion:nil];
 }
@@ -75,14 +54,13 @@ static NSString *const NSUpdateCheckOff = @"off";
         self.updateCheckWasManual |= manual;
         return;
     }
-    if (!manual && ![self shouldCheckForUpdatesAutomatically]) {
+    NSDate *now = NSDate.date;
+    if (!manual && !NSAutomaticUpdateCheckDue(NSUserDefaults.standardUserDefaults, now)) {
         return;
     }
     // Record before the request so failures and repeated launches cannot bypass
     // the rolling daily automatic-check limit.
-    if (!manual) {
-        [NSUserDefaults.standardUserDefaults setObject:NSDate.date forKey:NSUpdateCheckLastAttemptKey];
-    }
+    [NSUserDefaults.standardUserDefaults setObject:now forKey:NSUpdateCheckLastAttemptKey];
     self.updateCheckWasManual |= manual;
     if (manual) {
         self.message = @"Checking for updates...";

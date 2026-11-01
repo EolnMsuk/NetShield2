@@ -6,6 +6,7 @@
 #import "../Shared/NSExport.h"
 #import "../Shared/NSGlobalRule.h"
 #import "../Shared/NSReleaseVersion.h"
+#import "../Shared/NSAppPreferences.h"
 #import "../Shared/NSIdentityDisplay.h"
 #import "../Shared/NSDNSCache.h"
 #import "../App/NSFilterRemoval.h"
@@ -1432,14 +1433,17 @@ static void TestSocketSettingsAndDestinations(void) {
             current[@"rules"] = @{@"reset.app" : NSAppRuleRecord(@"block")};
             current[@"ruleDestinations"] = @{@"reset.app" : @{@"port" : @443}};
             current[@"globalRules"] = @{@"domain:reset.example" : @"block"};
-            current[@"globalDomainAddresses"] =
-                @{@"domain:reset.example" : @[ @"ip:192.0.2.1" ]};
+            current[@"globalDomainAddresses"] = @{@"domain:reset.example" : @[ @"ip:192.0.2.1" ]};
             current[@"globalDomainExpirations"] =
                 @{@"domain:reset.example" : [NSDate dateWithTimeIntervalSinceNow:60]};
-            current[@"askGenerations"] = @{@"reset.app" : @1};
+            current[@"askGenerations"] = @{@"reset.app" : NSUUID.UUID.UUIDString};
+            current[@"default"] = @"block";
             return YES;
         },
         NULL));
+    CHECK(NSWriteDocument(Monitor(@[], NO, NSEngineVersion, NSDate.date), NSMonitorFile, NULL));
+    CHECK(NSWriteDocument(@{@"revision" : @"retry"}, NSNotificationRetryFile, NULL));
+    CHECK(NSClearActivity(NULL));
     CHECK(NSResetSharedState(NO, NULL));
     NSDictionary *reset = NSReadPolicy(NULL).document;
     CHECK([reset[@"filterSockets"] boolValue]);
@@ -1450,6 +1454,40 @@ static void TestSocketSettingsAndDestinations(void) {
     CHECK([reset[@"ruleDestinations"] count] == 0 && [reset[@"globalDomainAddresses"] count] == 0 &&
           [reset[@"globalDomainExpirations"] count] == 0 && [reset[@"askGenerations"] count] == 0);
     CHECK(NSReadMonitor().count == 0);
+    for (NSString *name in @[ NSMonitorFile, NSNotificationRetryFile, NSActivityClearFile ]) {
+        CHECK(![NSFileManager.defaultManager fileExistsAtPath:NSSharedURL(name).path]);
+    }
+}
+
+static void TestAppPreferences(void) {
+    NSString *domain = [@"NetShield2.Tests." stringByAppendingString:NSUUID.UUID.UUIDString];
+    NSUserDefaults *defaults = [[NSUserDefaults alloc] initWithSuiteName:domain];
+    NSDate *now = [NSDate dateWithTimeIntervalSince1970:1000000];
+    CHECK([NSUpdateCheckMode(defaults) isEqual:NSUpdateCheckDaily]);
+    CHECK(NSAutomaticUpdateCheckDue(defaults, now));
+    [defaults setObject:now forKey:NSUpdateCheckLastAttemptKey];
+    CHECK(!NSAutomaticUpdateCheckDue(defaults, now));
+    CHECK(!NSAutomaticUpdateCheckDue([[NSUserDefaults alloc] initWithSuiteName:domain],
+                                     [now dateByAddingTimeInterval:1]));
+    CHECK(!NSAutomaticUpdateCheckDue(defaults, [now dateByAddingTimeInterval:86399]));
+    CHECK(NSAutomaticUpdateCheckDue(defaults, [now dateByAddingTimeInterval:86400]));
+    CHECK(!NSAutomaticUpdateCheckDue(defaults, [now dateByAddingTimeInterval:-1]));
+    [defaults setObject:NSUpdateCheckEveryLaunch forKey:NSUpdateCheckModeKey];
+    CHECK(NSAutomaticUpdateCheckDue(defaults, now));
+    [defaults setObject:NSUpdateCheckOff forKey:NSUpdateCheckModeKey];
+    CHECK(!NSAutomaticUpdateCheckDue(defaults, [now dateByAddingTimeInterval:86400]));
+    [defaults setObject:@42 forKey:NSUpdateCheckModeKey];
+    [defaults setObject:@"invalid date" forKey:NSUpdateCheckLastAttemptKey];
+    CHECK([NSUpdateCheckMode(defaults) isEqual:NSUpdateCheckDaily]);
+    CHECK(NSAutomaticUpdateCheckDue(defaults, now));
+    [defaults setObject:@[ @"hidden.app" ] forKey:@"hiddenRuleIdentities"];
+    NSResetAppPreferences(defaults, domain);
+    CHECK([defaults persistentDomainForName:domain].count == 0);
+    NSUserDefaults *reloaded = [[NSUserDefaults alloc] initWithSuiteName:domain];
+    CHECK(![reloaded objectForKey:@"hiddenRuleIdentities"]);
+    CHECK(![reloaded objectForKey:NSUpdateCheckLastAttemptKey]);
+    CHECK([NSUpdateCheckMode(reloaded) isEqual:NSUpdateCheckDaily]);
+    CHECK(NSAutomaticUpdateCheckDue(reloaded, now));
 }
 
 @interface FakeNotificationCenter : NSObject <NSPermissionNotificationCenter>
@@ -1683,6 +1721,7 @@ int main(void) {
         TestDirectionalAppAllows();
         TestAnswersAndReset();
         TestSocketSettingsAndDestinations();
+        TestAppPreferences();
         TestLateNotifications();
         TestDirectionalNotifications();
         TestFilterRemoval();
