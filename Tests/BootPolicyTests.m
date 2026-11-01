@@ -1,4 +1,5 @@
 #import "../App/NSFilterBootPolicy.h"
+#import "../App/NSFilterRemoval.h"
 #import "../App/NSFilterRestart.h"
 #import "../Shared/NSProviderHealth.h"
 
@@ -99,7 +100,7 @@ static BootConfiguration *BootConfig(NSString *activation, BOOL sockets) {
     return configuration;
 }
 
-@interface BootManager : NSObject <NSFilterRestartManager>
+@interface BootManager : NSObject <NSFilterRestartManager, NSFilterRemovalManager>
 @property(nonatomic, strong) id providerConfiguration;
 @property(nonatomic, getter=isEnabled) BOOL enabled;
 @property(nonatomic, copy) NSString *localizedDescription;
@@ -108,6 +109,7 @@ static BootConfiguration *BootConfig(NSString *activation, BOOL sockets) {
 @property(nonatomic, copy) NSString *savedDescription;
 @property(nonatomic) NSUInteger loads;
 @property(nonatomic) NSUInteger saves;
+@property(nonatomic) NSUInteger removals;
 @property(nonatomic, copy) NSSet *failingLoads;
 @property(nonatomic, copy) NSSet *failingSaves;
 @property(nonatomic, copy) NSSet *errorsAfterWrite;
@@ -134,6 +136,13 @@ static BootConfiguration *BootConfig(NSString *activation, BOOL sockets) {
     return [NSError errorWithDomain:@"injected"
                                code:1
                            userInfo:@{NSLocalizedDescriptionKey : @"Injected preference failure"}];
+}
+- (void)removeFromPreferencesWithCompletionHandler:(void (^)(NSError *))completion {
+    self.removals++;
+    self.saved = nil;
+    self.savedEnabled = NO;
+    self.savedDescription = nil;
+    completion(nil);
 }
 - (void)loadFromPreferencesWithCompletionHandler:(void (^)(NSError *))completion {
     self.loads++;
@@ -641,6 +650,36 @@ static void TestBootTimeouts(void) {
 }
 @end
 
+static void TestBootRemoval(void) {
+    // Removing the entire configuration also removes a saved true policy. This
+    // must work while disabled and without usable private-property methods.
+    for (NSUInteger scenario = 0; scenario < 4; scenario++) {
+        BootManager *manager = [BootManager new];
+        manager.saved.bootPolicy = YES;
+        manager.savedEnabled = scenario != 1;
+        manager.saved.missingGetter = scenario == 2;
+        manager.saved.missingSetter = scenario == 2;
+        manager.saved.throwGetter = scenario == 3;
+        manager.saved.throwSetter = scenario == 3;
+        __block BootConfiguration *removed = nil;
+        manager.afterLoad = ^(BootManager *loaded) {
+            if (loaded.loads == 1) {
+                removed = loaded.providerConfiguration;
+            }
+        };
+        __block NSUInteger completions = 0;
+        __block NSError *result = nil;
+        NSRemoveInstalledFilter(manager, ^(NSError *error) {
+            completions++;
+            result = error;
+        });
+        CHECK(completions == 1 && !result);
+        CHECK(manager.removals == 1 && manager.loads == 2 && manager.saves == 0);
+        CHECK(!manager.saved && !manager.savedEnabled && !manager.providerConfiguration && !manager.enabled);
+        CHECK(removed.bootPolicy && removed.reads == 0 && removed.writes == 0);
+    }
+}
+
 static void TestBootMigrationRetries(void) {
     BootDefaults *defaults = [BootDefaults new];
     CHECK(NSFilterBootPolicyClaimMigration(defaults, @"build/sockets-on", NULL));
@@ -674,7 +713,8 @@ void NSRunBootPolicyTests(void) {
     TestBootSerializationFailures();
     TestBootCleanupFailures();
     TestBootTimeouts();
+    TestBootRemoval();
     TestBootMigrationRetries();
-    NSLog(
-        @"Passed injected boot-policy adapter, transaction, recovery and migration checks (no device proof)");
+    NSLog(@"Passed injected boot-policy adapter, transaction, recovery, removal and migration checks (no "
+          @"device proof)");
 }

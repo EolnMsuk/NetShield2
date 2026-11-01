@@ -136,7 +136,7 @@ NSDictionary *NSFilterBootPolicyReport(id configuration) {
     BOOL readable = NSFilterBootPolicyRead(configuration, &value, &error);
     return @{
         @"os" : NSProcessInfo.processInfo.operatingSystemVersionString,
-        @"channel" : @"beta",
+        @"channel" : @"stable",
         @"capability" : readable ? @"typed-access-supported" : error.localizedDescription,
         @"disableDefaultDrop" : readable ? (id) @(value) : @"unknown",
         @"fields" : NSFilterConfigurationFields(configuration) ?: @{}
@@ -145,21 +145,21 @@ NSDictionary *NSFilterBootPolicyReport(id configuration) {
 
 NSString *NSFilterBootPolicyStatus(id configuration, BOOL loaded) {
     if (!loaded) {
-        return @"Beta fallback policy unverified; the saved filter state could not be read.";
+        return @"Fallback policy unverified; the saved filter state could not be read.";
     }
     if (!configuration) {
-        return @"Beta fallback policy will be configured when Firewall is enabled.";
+        return @"Fallback policy will be configured when Firewall is enabled.";
     }
     BOOL value = NO;
     if (!NSFilterBootPolicyRead(configuration, &value, NULL)) {
-        return @"Beta fallback policy unavailable or unreadable on this runtime. Leaving Firewall on may "
+        return @"Fallback policy unavailable or unreadable on this runtime. Leaving Firewall on may "
                @"prevent networking after a stock reboot.";
     }
     if (!value) {
-        return @"The saved filter has not migrated to the beta fallback policy. "
+        return @"The saved filter has not migrated to the fallback policy. "
                @"Leaving Firewall on may prevent networking after a stock reboot.";
     }
-    return @"Beta fallback policy read back from preferences. When providers cannot run, the intended "
+    return @"Fallback policy read back from preferences. When providers cannot run, the intended "
            @"fallback permits traffic without NetShield2 blocking or monitoring. Compatibility varies.";
 }
 

@@ -3,6 +3,7 @@
 #import "NSGlobalRule.h"
 #import "NSPolicyCache.h"
 #import "NSRuleChoices.h"
+#import "NSExport.h"
 #include <errno.h>
 
 NSString *const NSGroupIdentifier = @"group.com.eolnmsuk.netshield";
@@ -140,13 +141,18 @@ BOOL NSRemoveSharedStateAfterFilterRemoval(NSError **error) {
                 return NO;
             }
             @try {
-                for (NSString *name in
-                     @[ NSPolicyFile, NSMonitorFile, NSNotificationRetryFile, NSActivityClearFile ]) {
+                for (NSString *name in @[
+                         NSPolicyFile, NSMonitorFile, NSNotificationRetryFile, NSActivityClearFile,
+                         NSExportCacheDirectory
+                     ]) {
                     NSError *removeError = nil;
-                    NSURL *url = NSSharedURL(name);
+                    NSURL *url = [name isEqual:NSExportCacheDirectory]
+                                     ? NSExportCacheURL(NSSharedURL(@""), NO, &removeError)
+                                     : NSSharedURL(name);
                     if (!url) {
                         if (error) {
-                            *error = NSStorageError(@"The shared app-group container is unavailable.");
+                            *error = NSStorageError(removeError.localizedDescription
+                                                        ?: @"The shared app-group container is unavailable.");
                         }
                         return NO;
                     }
@@ -456,9 +462,13 @@ BOOL NSResetSharedStateWithOptions(BOOL legacyProviderMayBeRunning, BOOL preserv
             if (!NSWriteDocument(replacement, NSPolicyFile, error)) {
                 return NO;
             }
-            for (NSString *name in @[ NSMonitorFile, NSNotificationRetryFile, NSActivityClearFile ]) {
+            for (NSString *name in
+                 @[ NSMonitorFile, NSNotificationRetryFile, NSActivityClearFile, NSExportCacheDirectory ]) {
                 NSError *removeError = nil;
-                if (![NSFileManager.defaultManager removeItemAtURL:NSSharedURL(name) error:&removeError] &&
+                NSURL *url = [name isEqual:NSExportCacheDirectory]
+                                 ? NSExportCacheURL(NSSharedURL(@""), NO, &removeError)
+                                 : NSSharedURL(name);
+                if ((!url || ![NSFileManager.defaultManager removeItemAtURL:url error:&removeError]) &&
                     !([removeError.domain isEqual:NSCocoaErrorDomain] &&
                       removeError.code == NSFileNoSuchFileError)) {
                     if (error) {

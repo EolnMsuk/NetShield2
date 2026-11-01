@@ -273,42 +273,58 @@
         [self showError:error operation:@"Export"];
         return;
     }
-    NSURL *directory = [NSURL
-        fileURLWithPath:[NSTemporaryDirectory()
-                            stringByAppendingPathComponent:[@"NetShield2-Export-"
-                                                               stringByAppendingString:NSUUID.UUID
-                                                                                           .UUIDString]]
-            isDirectory:YES];
-    NSFileManager *files = NSFileManager.defaultManager;
-    if (![files createDirectoryAtURL:directory withIntermediateDirectories:YES attributes:nil error:&error]) {
+    NSURL *container = NSSharedURL(@"");
+    NSURL *url = NSStageRulesAndActivityExport(data, container, &error);
+    if (!url) {
         [self showError:error operation:@"Export"];
         return;
     }
-    NSURL *url = [directory URLByAppendingPathComponent:@"NetShield2-Rules-and-Recent-Activity.json"];
-    if (![data writeToURL:url options:NSDataWritingAtomic error:&error]) {
-        [files removeItemAtURL:directory error:NULL];
-        [self showError:error operation:@"Export"];
-        return;
-    }
-    UIActivityViewController *share = [[UIActivityViewController alloc] initWithActivityItems:@[ url ]
-                                                                        applicationActivities:nil];
-    share.popoverPresentationController.sourceView = self.tableView;
-    share.popoverPresentationController.sourceRect = [self.tableView rectForRowAtIndexPath:path];
-    __weak typeof(self) weakSelf = self;
-    share.completionWithItemsHandler =
-        ^(UIActivityType activityType, BOOL completed, NSArray *returnedItems, NSError *activityError) {
-            [files removeItemAtURL:directory error:NULL];
-            if (activityError) {
+    NSError *presentationError = nil;
+    @try {
+        UIActivityViewController *share = [[UIActivityViewController alloc] initWithActivityItems:@[ url ]
+                                                                            applicationActivities:nil];
+        share.popoverPresentationController.sourceView = self.tableView;
+        share.popoverPresentationController.sourceRect = [self.tableView rectForRowAtIndexPath:path];
+        __weak typeof(self) weakSelf = self;
+        share.completionWithItemsHandler =
+            ^(UIActivityType activityType, BOOL completed, NSArray *returnedItems, NSError *activityError) {
+                NSError *cleanupError = nil;
+                NSRemoveStagedExport(container, url, &cleanupError);
+                NSError *resultError = activityError ?: cleanupError;
                 dispatch_async(dispatch_get_main_queue(), ^{
-                    [weakSelf showError:activityError operation:@"Export"];
+                    if (resultError) {
+                        [weakSelf showError:resultError operation:@"Export"];
+                    } else if (completed && [weakSelf.message hasPrefix:@"Export: "]) {
+                        weakSelf.message = @"";
+                        [weakSelf refreshTableKeepingPosition];
+                    }
                 });
-            }
-        };
-    [self presentViewController:share animated:YES completion:nil];
+            };
+        if (self.view.window && !self.presentedViewController && !self.isBeingDismissed) {
+            [self presentViewController:share animated:YES completion:nil];
+        }
+        if (!share.presentingViewController) {
+            presentationError = NSExportError(@"The share sheet could not open. Return to NetShield2 and "
+                                              @"retry Export.");
+        }
+    } @catch (NSException *exception) {
+        presentationError = NSExportError(
+            [NSString stringWithFormat:@"The share sheet could not open: %@", exception.reason]);
+    }
+    if (presentationError) {
+        NSRemoveStagedExport(container, url, NULL);
+        [self showError:presentationError operation:@"Export"];
+    }
 }
 - (void)showError:(NSError *)error operation:(NSString *)operation {
     self.message = [NSString stringWithFormat:@"%@: %@ (%@ %ld).", operation, error.localizedDescription,
                                               error.domain, (long)error.code];
+    NSError *underlying = error.userInfo[NSUnderlyingErrorKey];
+    if ([operation isEqual:@"Export"] && underlying) {
+        self.message = [self.message stringByAppendingFormat:@" Underlying: %@ (%@ %ld).",
+                                                             underlying.localizedDescription,
+                                                             underlying.domain, (long)underlying.code];
+    }
     [self refreshTableKeepingPosition];
 }
 - (BOOL)updatePolicy:(BOOL (^)(NSMutableDictionary *, NSError **))mutation {
