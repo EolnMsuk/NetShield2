@@ -63,6 +63,8 @@ static inline BOOL NSIsExportDirectoryName(NSString *name) {
 
 // Only the app stages exports. Keep active shares even if they remain open for
 // more than a day; a terminated process leaves no active share to protect.
+// Use the unique folder name within the validated cache: filesystem enumeration
+// can return a different spelling of the container path than staging used.
 static inline NSMutableSet<NSString *> *NSActiveExportDirectories(void) {
     static NSMutableSet<NSString *> *active;
     static dispatch_once_t once;
@@ -84,7 +86,8 @@ static inline void NSPruneAbandonedExports(NSURL *cache, NSSet<NSString *> *acti
         if (!entry) {
             break;
         }
-        if (!NSIsExportDirectoryName(entry.lastPathComponent) || [active containsObject:entry.path]) {
+        if (!NSIsExportDirectoryName(entry.lastPathComponent) ||
+            [active containsObject:entry.lastPathComponent]) {
             continue;
         }
         NSDictionary *attributes = [files attributesOfItemAtPath:entry.path error:NULL];
@@ -122,7 +125,7 @@ static inline NSURL *NSStageRulesAndActivityExport(NSData *data, NSURL *containe
             [files removeItemAtURL:directory error:NULL];
             return nil;
         }
-        [active addObject:directory.path];
+        [active addObject:directory.lastPathComponent];
         return url;
     }
 }
@@ -133,8 +136,8 @@ static inline BOOL NSRemoveStagedExport(NSURL *container, NSURL *url, NSError **
         NSURL *directory = url.URLByDeletingLastPathComponent;
         NSURL *cache = NSExportCacheURL(container, NO, error);
         if (!cache) {
-            if (directory.path) {
-                [active removeObject:directory.path];
+            if (directory.lastPathComponent) {
+                [active removeObject:directory.lastPathComponent];
             }
             return NO;
         }
@@ -147,7 +150,7 @@ static inline BOOL NSRemoveStagedExport(NSURL *container, NSURL *url, NSError **
         }
         NSError *removeError = nil;
         BOOL removed = [NSFileManager.defaultManager removeItemAtURL:directory error:&removeError];
-        [active removeObject:directory.path];
+        [active removeObject:directory.lastPathComponent];
         if (!removed &&
             !([removeError.domain isEqual:NSCocoaErrorDomain] && removeError.code == NSFileNoSuchFileError)) {
             if (error) {

@@ -147,6 +147,17 @@ static void TestRulesAndActivityExport(void) {
     CHECK(!NSRemoveStagedExport(container, sentinel, NULL));
     CHECK([files fileExistsAtPath:sentinel.path]);
 
+    // The same container can have multiple path spellings (e.g. /var and
+    // /private/var). Stage through a parent alias, then prune via the original.
+    NSURL *parentAlias = [container URLByAppendingPathComponent:@"export-parent-alias"];
+    CHECK([files createSymbolicLinkAtPath:parentAlias.path
+                      withDestinationPath:container.URLByDeletingLastPathComponent.path
+                                    error:NULL]);
+    NSURL *aliasedContainer = [parentAlias URLByAppendingPathComponent:container.lastPathComponent
+                                                           isDirectory:YES];
+    NSURL *aliased = NSStageRulesAndActivityExport(empty, aliasedContainer, NULL);
+    CHECK(aliased != nil);
+
     NSURL *cache = NSExportCacheURL(container, NO, NULL);
     NSURL *abandoned = [cache
         URLByAppendingPathComponent:[@"NetShield2-Export-" stringByAppendingString:NSUUID.UUID.UUIDString]];
@@ -157,13 +168,18 @@ static void TestRulesAndActivityExport(void) {
     NSDictionary *old = @{NSFileModificationDate : [NSDate dateWithTimeIntervalSinceNow:-2 * 24 * 60 * 60]};
     CHECK([files setAttributes:old ofItemAtPath:abandoned.path error:NULL]);
     CHECK([files setAttributes:old ofItemAtPath:second.URLByDeletingLastPathComponent.path error:NULL]);
+    CHECK([files setAttributes:old ofItemAtPath:aliased.URLByDeletingLastPathComponent.path error:NULL]);
     NSURL *third = NSStageRulesAndActivityExport(empty, container, NULL);
     CHECK(third != nil);
     CHECK(![files fileExistsAtPath:abandoned.path]);
-    CHECK([files fileExistsAtPath:second.path] && [files fileExistsAtPath:sentinel.path]);
+    CHECK([files fileExistsAtPath:second.path]);
+    CHECK([files fileExistsAtPath:aliased.path]);
+    CHECK([files fileExistsAtPath:sentinel.path]);
     CHECK([[files attributesOfItemAtPath:link.path error:NULL][NSFileType] isEqual:NSFileTypeSymbolicLink]);
     CHECK(NSRemoveStagedExport(container, second, NULL));
+    CHECK(NSRemoveStagedExport(aliasedContainer, aliased, NULL));
     CHECK(NSRemoveStagedExport(container, third, NULL));
+    CHECK([files removeItemAtURL:parentAlias error:NULL]);
     CHECK([files removeItemAtURL:link error:NULL]);
     CHECK([files removeItemAtURL:cache error:NULL]);
 
