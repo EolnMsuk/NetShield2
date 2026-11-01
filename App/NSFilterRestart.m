@@ -90,8 +90,8 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
     // Capture fields before copying; a defective copy must not redefine what
     // we expect to read back. Do this before touching the enabled preference.
     NSDictionary *fields = NSFilterConfigurationFields(candidate);
-    id copy = NSFilterConfigurationCheckedCopy(candidate, self.requiresBootPolicy, error);
-    if (!copy || !NSFilterConfigurationValidate(copy, fields, self.requiresBootPolicy, error)) {
+    id copy = NSFilterConfigurationCheckedCopy(candidate, YES, error);
+    if (!copy || !NSFilterConfigurationValidate(copy, fields, YES, error)) {
         return NO;
     }
     self.candidate = copy;
@@ -123,13 +123,10 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
              }
              self.previousDescription = self.manager.localizedDescription;
              self.wasEnabled = self.manager.enabled;
-             // Preserve an actual policy already persisted by an experimental build,
-             // including when restarting with a normal build later.
+             // Snapshot old false/missing policy for migration, but never lose an
+             // already readable true policy while retaining that snapshot.
              BOOL hadBootPolicy = NO;
-             if (NSFilterBootPolicyRead(self.manager.providerConfiguration, &hadBootPolicy, NULL) &&
-                 hadBootPolicy) {
-                 self.requiresBootPolicy = YES;
-             }
+             NSFilterBootPolicyRead(self.manager.providerConfiguration, &hadBootPolicy, NULL);
              if (self.manager.providerConfiguration) {
                  NSError *copyError = nil;
                  self.previous = NSFilterConfigurationCheckedCopy(self.manager.providerConfiguration,
@@ -148,10 +145,10 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
              if (![self constructCandidate:NO error:&buildError]) {
                  [self
                      finish:[self error:[NSString
-                                            stringWithFormat:@"%@ Migration did not occur; configuration "
-                                                             @"unchanged. Stock-boot fallback is unverified.",
-                                                             buildError.localizedDescription
-                                                                 ?: @"Policy unavailable."]]];
+                                            stringWithFormat:
+                                                @"%@ Migration did not occur; configuration "
+                                                @"unchanged. The saved filter's fallback is unverified.",
+                                                buildError.localizedDescription ?: @"Policy unavailable."]]];
                  return;
              }
              [self disableForStaging];
@@ -210,8 +207,7 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
         }
         return NO;
     }
-    return NSFilterConfigurationValidate(self.manager.providerConfiguration, self.expectedFields,
-                                         self.requiresBootPolicy, error);
+    return NSFilterConfigurationValidate(self.manager.providerConfiguration, self.expectedFields, YES, error);
 }
 - (void)stageConfiguration {
     [self
@@ -277,13 +273,11 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
         [self
             finish:self.restoring
                        ? [self error:[NSString stringWithFormat:@"%@ Previous configuration restored and "
-                                                                @"read back%@; its current control provider "
-                                                                @"responded. Data enforcement and stock boot "
-                                                                @"are not established by this heartbeat.",
-                                                                self.originalError.localizedDescription,
-                                                                self.requiresBootPolicy
-                                                                    ? @" with the required boot policy"
-                                                                    : @""]]
+                                                                @"read back with the required beta fallback "
+                                                                @"policy; its current control provider "
+                                                                @"responded. Control health does not verify "
+                                                                @"every connection.",
+                                                                self.originalError.localizedDescription]]
                        : nil];
         return;
     }
@@ -329,8 +323,8 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
     [self record:@"recovery-off-reloaded-verified"];
     [self finish:[self error:[NSString
                                  stringWithFormat:@"%@ %@ Firewall preference is verified off. Your rules "
-                                                  @"are saved. NetShield2 protection is off; network "
-                                                  @"recovery requires a connection test.",
+                                                  @"are saved. NetShield2 protection is off; this does not "
+                                                  @"verify connectivity.",
                                                   self.originalError.localizedDescription ?: @"",
                                                   startupError.localizedDescription]]];
 }

@@ -2,10 +2,6 @@
 #import "../App/NSFilterRestart.h"
 #import "../Shared/NSProviderHealth.h"
 
-#ifndef NS_BOOT_POLICY_EXPERIMENT
-#define NS_BOOT_POLICY_EXPERIMENT 0
-#endif
-
 #define CHECK(...)                                                                                           \
     do {                                                                                                     \
         if (!(__VA_ARGS__)) {                                                                                \
@@ -215,7 +211,6 @@ static BootConfiguration *BootConfig(NSString *activation, BOOL sockets) {
         _clock = 100;
         _sockets = YES;
         _restart.manager = _manager;
-        _restart.requiresBootPolicy = YES;
         __weak BootFixture *weakSelf = self;
         _restart.configuration = ^id(BootConfiguration *previous, BOOL restoring, NSError **error) {
             BootFixture *test = weakSelf;
@@ -229,7 +224,7 @@ static BootConfiguration *BootConfig(NSString *activation, BOOL sockets) {
             if (test.configureCandidate) {
                 test.configureCandidate(configuration, restoring);
             }
-            if (test.restart.requiresBootPolicy && !NSFilterBootPolicyApply(configuration, error)) {
+            if (!NSFilterBootPolicyApply(configuration, error)) {
                 return nil;
             }
             return configuration;
@@ -293,9 +288,6 @@ static BootConfiguration *BootConfig(NSString *activation, BOOL sockets) {
 @end
 
 static void TestBootAdapter(void) {
-    CHECK(!NSFilterBootPolicyQualified());
-    CHECK(NSFilterBootPolicyExperimentEnabled() == (NS_BOOT_POLICY_EXPERIMENT == 1));
-    CHECK(NSFilterBootPolicyRequired() == NSFilterBootPolicyExperimentEnabled());
     for (NSUInteger mode = 0; mode < 9; mode++) {
         BootConfiguration *configuration = BootConfig(@"test", YES);
         configuration.missingGetter = mode == 0;
@@ -323,8 +315,19 @@ static void TestBootAdapter(void) {
         }
         CHECK(!configuration.vendorConfiguration[@"disableDefaultDrop"]);
     }
+    // Old false/unreadable values can be snapshotted before migration, while
+    // neither is acceptable as a candidate for activation.
+    BootConfiguration *old = BootConfig(@"old", YES);
+    CHECK(NSFilterConfigurationCheckedCopy(old, NO, NULL));
+    CHECK(!NSFilterConfigurationCheckedCopy(old, YES, NULL));
+    old.missingGetter = YES;
+    CHECK(NSFilterConfigurationCheckedCopy(old, NO, NULL));
+    CHECK(!NSFilterConfigurationCheckedCopy(old, YES, NULL));
     BootConfiguration *configuration = BootConfig(@"original", YES);
+    CHECK([NSFilterBootPolicyStatus(nil, YES) containsString:@"configured when Firewall is enabled"]);
+    CHECK([NSFilterBootPolicyStatus(configuration, YES) containsString:@"has not migrated"]);
     CHECK(NSFilterBootPolicyApply(configuration, NULL));
+    CHECK([NSFilterBootPolicyStatus(configuration, YES) containsString:@"read back from preferences"]);
     NSDictionary *fields = NSFilterConfigurationFields(configuration);
     configuration.vendorConfiguration = BootConfig(@"other-activation", YES).vendorConfiguration;
     CHECK(!NSFilterConfigurationValidate(configuration, fields, YES, NULL));
@@ -349,6 +352,25 @@ static void TestBootPreflight(void) {
         CHECK([test.manager.saved.vendorConfiguration[@"activation"] isEqual:@"old"]);
         [test checkStaleCallbacks];
     }
+    // A builder that omits the policy must fail before changing preferences.
+    BootFixture *omitted = [BootFixture new];
+    omitted.restart.configuration = ^id(id previous, BOOL restoring, NSError **error) {
+        return BootConfig(@"new", YES);
+    };
+    [omitted run];
+    CHECK(omitted.result && omitted.manager.saves == 0 && omitted.manager.savedEnabled);
+    CHECK(omitted.restart.state == NSFilterRestartUnchanged);
+    [omitted checkStaleCallbacks];
+    // Snapshotting a true policy must retain it even before the builder applies it.
+    BootFixture *snapshot = [BootFixture new];
+    snapshot.manager.saved.bootPolicy = YES;
+    snapshot.manager.afterLoad = ^(BootManager *manager) {
+        ((BootConfiguration *)manager.providerConfiguration).loseOnCopy = YES;
+    };
+    [snapshot run];
+    CHECK(snapshot.result && snapshot.manager.saves == 0 && snapshot.manager.saved.bootPolicy);
+    CHECK(snapshot.restart.state == NSFilterRestartUnchanged);
+    [snapshot checkStaleCallbacks];
 }
 
 static void TestBootTransactions(void) {
@@ -356,6 +378,11 @@ static void TestBootTransactions(void) {
     // and a current-engine configuration missing the actual property.
     for (NSUInteger mode = 0; mode < 5; mode++) {
         BootFixture *test = [BootFixture new];
+        if (mode == 0) {
+            NSMutableDictionary *vendor = [test.manager.saved.vendorConfiguration mutableCopy];
+            vendor[@"engine"] = @(NSEngineVersion - 1);
+            test.manager.saved.vendorConfiguration = vendor;
+        }
         if (mode == 1 || mode == 2) {
             test.manager.savedEnabled = NO;
         }
@@ -382,18 +409,11 @@ static void TestBootTransactions(void) {
         }
         [test checkStaleCallbacks];
     }
-    // A normal build must preserve a previously saved true property too.
+    // An already migrated configuration must retain its true property too.
     BootFixture *test = [BootFixture new];
-    test.restart.requiresBootPolicy = NO;
     test.manager.saved.bootPolicy = YES;
     [test run];
-    CHECK(!test.result && test.restart.requiresBootPolicy && test.manager.saved.bootPolicy);
-    // Unqualified normal builds retain legacy operation and an accurate warning.
-    BootFixture *legacy = [BootFixture new];
-    legacy.restart.requiresBootPolicy = NO;
-    [legacy run];
-    CHECK(!legacy.result && !legacy.manager.saved.bootPolicy);
-    CHECK([NSFilterBootPolicyStatus(legacy.manager.saved, YES) containsString:@"unverified"]);
+    CHECK(!test.result && test.manager.saved.bootPolicy);
 }
 
 static void TestBootFailureRecovery(void) {

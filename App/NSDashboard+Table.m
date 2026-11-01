@@ -328,8 +328,9 @@
         return @"Overrides app & system rules.";
     }
     if (section == NSDashboardSectionFirewall) {
-        return [NSString stringWithFormat:@"Rules are saved when firewall is turned off. %@",
-                                          self.bootPolicyStatus ?: @"Stock-boot fallback unverified."];
+        return
+            [NSString stringWithFormat:@"Rules are saved when firewall is turned off. %@",
+                                       self.bootPolicyStatus ?: @"Beta fallback policy state unavailable."];
     }
     if (section == NSDashboardSectionRequests) {
         return [NSString stringWithFormat:@"During this filter session: %@ connections rejected at queue "
@@ -603,14 +604,25 @@
         cell.textLabel.textColor = healthy ? UIColor.systemGreenColor : UIColor.labelColor;
         NSString *detail =
             @"The filter has not reported a healthy status. Turn Firewall off and on if this continues.";
-        if (!enabled) {
+        if (!self.loaded) {
+            detail = @"The saved filter state is unknown. Reload preferences while jailbroken before "
+                     @"relying on its state.";
+        } else if (!enabled) {
             detail = @"Turn on Firewall to apply your rules.";
         } else if (healthy) {
-            detail =
-                NEFilterManager.sharedManager.providerConfiguration.filterSockets
-                    ? @"Browser and socket filtering configured. Data enforcement requires connection tests."
-                    : @"Browser filtering configured. Enable Filter System Sockets below Firewall for "
-                      @"other app connections. Data enforcement requires connection tests.";
+            NEFilterProviderConfiguration *configuration =
+                NEFilterManager.sharedManager.providerConfiguration;
+            if (configuration.filterBrowsers && configuration.filterSockets) {
+                detail = @"Browser and socket filtering configured.";
+            } else if (configuration.filterBrowsers) {
+                detail = @"Browser filtering configured. Enable Filter System Sockets below Firewall for "
+                         @"other app connections.";
+            } else if (configuration.filterSockets) {
+                detail = @"Socket filtering configured; browser filtering is not configured.";
+            } else {
+                detail = @"Browser and socket filtering are not configured. Restart Firewall to apply scope.";
+            }
+            detail = [detail stringByAppendingString:@" Control health does not verify every connection."];
         }
         if (enabled && NEFilterManager.sharedManager.providerConfiguration.filterSockets !=
                            [self.policy.document[@"filterSockets"] boolValue]) {

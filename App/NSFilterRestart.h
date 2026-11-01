@@ -26,7 +26,6 @@ typedef NS_ENUM(NSInteger, NSFilterRestartState) {
 @property(nonatomic, copy) BOOL (^isStopped)(BOOL previouslyEnabled);
 @property(nonatomic, copy) BOOL (^isRunning)(id configuration);
 @property(nonatomic, copy) void (^schedule)(NSTimeInterval delay, void (^work)(void));
-@property(nonatomic) BOOL requiresBootPolicy;
 @property(nonatomic, copy) void (^report)(NSString *stage, id configuration, BOOL enabled);
 @property(nonatomic, readonly) NSFilterRestartState state;
 - (void)start:(void (^)(NSError *error))completion;

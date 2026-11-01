@@ -26,16 +26,15 @@ sources = [
 with tempfile.TemporaryDirectory(prefix="netshield-tests-") as directory:
     # Apple SDKs expose DNSService APIs through the automatically linked
     # libSystem; there is no separate libdns_sd to request here.
-    for experiment in (0, 1):
-        executable = pathlib.Path(directory) / f"regression-tests-{experiment}"
-        subprocess.run([
-            "xcrun", "--sdk", "macosx", "clang", "-fobjc-arc", "-fblocks",
-            "-DNS_TESTING=1", f"-DNS_BOOT_POLICY_EXPERIMENT={experiment}",
-            "-Wall", "-Wextra", "-Werror", "-Wno-unused-parameter",
-            "-framework", "Foundation", "-framework", "UserNotifications",
-            *sources, "-o", str(executable),
-        ], cwd=ROOT, check=True)
-        subprocess.run([str(executable)], cwd=ROOT, check=True)
+    executable = pathlib.Path(directory) / "regression-tests"
+    subprocess.run([
+        "xcrun", "--sdk", "macosx", "clang", "-fobjc-arc", "-fblocks",
+        "-DNS_TESTING=1",
+        "-Wall", "-Wextra", "-Werror", "-Wno-unused-parameter",
+        "-framework", "Foundation", "-framework", "UserNotifications",
+        *sources, "-o", str(executable),
+    ], cwd=ROOT, check=True)
+    subprocess.run([str(executable)], cwd=ROOT, check=True)
 
 # Keep the isolated launch tests in the normal native suite as well as runnable
 # on their own. Their injected launcher never executes the device respring tool.

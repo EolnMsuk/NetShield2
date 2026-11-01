@@ -5,12 +5,12 @@
 - (NSString *)updateCheckSubtitle {
     NSString *mode = NSUpdateCheckMode(NSUserDefaults.standardUserDefaults);
     if ([mode isEqual:NSUpdateCheckEveryLaunch]) {
-        return @"Checks GitHub on every launch";
+        return @"Checks GitHub stable releases on every launch";
     }
     if ([mode isEqual:NSUpdateCheckOff]) {
-        return @"Automatic update checks are off";
+        return @"Automatic stable-release checks are off";
     }
-    return @"Checks GitHub daily on launch";
+    return @"Checks GitHub stable releases daily on launch";
 }
 - (void)setUpdateCheckMode:(NSString *)mode {
     [NSUserDefaults.standardUserDefaults setObject:mode forKey:NSUpdateCheckModeKey];
@@ -57,7 +57,7 @@
     [NSUserDefaults.standardUserDefaults setObject:now forKey:NSUpdateCheckLastAttemptKey];
     self.updateCheckWasManual |= manual;
     if (manual) {
-        self.message = @"Checking for updates...";
+        self.message = @"Checking for stable releases...";
         [self refreshTableKeepingPosition];
     }
     NSMutableURLRequest *request = [NSMutableURLRequest
@@ -91,28 +91,31 @@
                   NSString *title = nil, *message = nil;
                   BOOL newer = comparison && comparison.integerValue == NSOrderedDescending;
                   if (newer) {
-                      title = @"Update available";
+                      title = @"Stable update available";
                       message = [NSString
-                          stringWithFormat:@"NetShield2 %@ is available!\n\n"
+                          stringWithFormat:@"NetShield2 stable release %@ is available!\n\n"
                                            @"After downloading the update, turn off Firewall and uninstall "
                                            @"this version before installing the new one.",
                                            latest];
                   } else if (report && comparison) {
-                      title = @"You're up to date";
+                      title = @"Stable-release check complete";
                       message =
                           comparison.integerValue == NSOrderedSame
                               ? [NSString
-                                    stringWithFormat:@"NetShield2 v%@ is the latest version.", installed]
+                                    stringWithFormat:@"NetShield2 v%@ matches the latest stable release. "
+                                                     @"Betas are not checked.",
+                                                     installed]
                               : [NSString
                                     stringWithFormat:@"NetShield2 v%@ is installed, newer than the latest "
-                                                     @"published release (%@). No update is needed.",
+                                                     @"stable release (%@). Betas are not checked.",
                                                      installed, latest];
                   } else if (report) {
-                      title = @"Unable to check for updates";
-                      message = http.statusCode == 403 || http.statusCode == 429
-                                    ? @"GitHub is limiting update checks. Please try again later."
-                                    : @"Could not verify the latest GitHub release. Check your internet "
-                                      @"connection and NetShield2's network rule, then try again.";
+                      title = @"Unable to check stable releases";
+                      message =
+                          http.statusCode == 403 || http.statusCode == 429
+                              ? @"GitHub is limiting update checks. Please try again later."
+                              : @"Could not verify the latest GitHub stable release. Check your internet "
+                                @"connection and NetShield2's network rule, then try again.";
                   }
                   if (title) {
                       owner.pendingUpdateResult =

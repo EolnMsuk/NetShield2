@@ -36,7 +36,7 @@
         },
         {
           "class": "DepictionMarkdownView",
-          "markdown": "System wide Firewall and Network Monitor for iOS 15-18, includes saved app rules and permission notifications.\n\nFresh installs, updates and reinstalls automatically respring. Wait for the homescreen to return, then open NetShield2 and enable Firewall.\n\nGet started: [ReadMe](https://github.com/EolnMsuk/NetShield2/#readme) | [GitHub](https://github.com/EolnMsuk/NetShield2/)\n\nSupport Developer: [Venmo](https://venmo.com/u/rustonrails) | [BTC](https://www.blockchain.com/explorer/addresses/btc/31uHLpioo1TbxAmo9kM7rrKcLz3wvcoZaL)"
+          "markdown": "System wide Firewall and Network Monitor for iOS 15-18, includes saved app rules and permission notifications.\n\n2.6.2 BETA includes guarded fallback by default. Intended fallback allows traffic without NetShield2 blocking or monitoring while providers are unavailable; saved rules should resume when filtering returns. Compatibility varies. [Beta behavior and evidence](https://github.com/EolnMsuk/NetShield2/blob/main/docs/stock-boot-testing.md).\n\nFresh installs, updates and reinstalls automatically respring. Install the matching variant while jailbroken, wait for the homescreen to return, then open NetShield2 to migrate an enabled filter or enable Firewall. Installation/respring alone does not update saved configuration.\n\nGet started: [ReadMe](https://github.com/EolnMsuk/NetShield2/#readme) | [GitHub](https://github.com/EolnMsuk/NetShield2/)\n\nSupport Developer: [Venmo](https://venmo.com/u/rustonrails) | [BTC](https://www.blockchain.com/explorer/addresses/btc/31uHLpioo1TbxAmo9kM7rrKcLz3wvcoZaL)"
         }
       ]
     }

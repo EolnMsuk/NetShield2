@@ -1,6 +1,8 @@
 # 2.6.2
 
-- BETA fix to FilterGate
+- **Fix:** includes the guarded stock-boot fallback policy by default for RootHide, rootless and rootful, with typed runtime access to the actual private `disableDefaultDrop` property and readback/copy/persistence checks.
+- Tested on iPhone 13 mini, iOS 16.1.1 (20B101), Dopamine-roothide v3.0.12-29 - Internet works now while in non-jailbroken state even if firewall gets left on.
+- Uninstall NetShield2 and userspace reboot (if its older than 2.6.2), install the new version, then open the app to enable Firewall.
 
 # 2.6.1
 

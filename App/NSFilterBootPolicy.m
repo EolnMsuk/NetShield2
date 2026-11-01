@@ -1,13 +1,6 @@
 #import "NSFilterBootPolicy.h"
 #include <string.h>
 
-#ifndef NS_BOOT_POLICY_EXPERIMENT
-#define NS_BOOT_POLICY_EXPERIMENT 0
-#endif
-#if NS_BOOT_POLICY_EXPERIMENT != 0 && NS_BOOT_POLICY_EXPERIMENT != 1
-#error NS_BOOT_POLICY_EXPERIMENT must be 0 or 1
-#endif
-
 // Private API stays in the app. Never use KVC, guessed keys, or ivar offsets.
 @protocol NSPrivateFilterBootPolicy <NSObject>
 - (BOOL)disableDefaultDrop;
@@ -28,20 +21,6 @@ static BOOL NSBootPolicyFail(NSError **error, NSFilterBootPolicyError code, NSSt
                                  userInfo:@{NSLocalizedDescriptionKey : message}];
     }
     return NO;
-}
-
-BOOL NSFilterBootPolicyQualified(void) {
-    // Add no version-range assumptions here. Qualification requires the recorded
-    // exact-build/device gate in docs/stock-boot-testing.md and a reviewed change.
-    return NO;
-}
-
-BOOL NSFilterBootPolicyExperimentEnabled(void) {
-    return NS_BOOT_POLICY_EXPERIMENT == 1;
-}
-
-BOOL NSFilterBootPolicyRequired(void) {
-    return NSFilterBootPolicyQualified() || NSFilterBootPolicyExperimentEnabled();
 }
 
 static BOOL NSBootPolicyCapability(id configuration, NSError **error) {
@@ -157,8 +136,7 @@ NSDictionary *NSFilterBootPolicyReport(id configuration) {
     BOOL readable = NSFilterBootPolicyRead(configuration, &value, &error);
     return @{
         @"os" : NSProcessInfo.processInfo.operatingSystemVersionString,
-        @"experiment" : @(NSFilterBootPolicyExperimentEnabled()),
-        @"qualified" : @(NSFilterBootPolicyQualified()),
+        @"channel" : @"beta",
         @"capability" : readable ? @"typed-access-supported" : error.localizedDescription,
         @"disableDefaultDrop" : readable ? (id) @(value) : @"unknown",
         @"fields" : NSFilterConfigurationFields(configuration) ?: @{}
@@ -167,20 +145,22 @@ NSDictionary *NSFilterBootPolicyReport(id configuration) {
 
 NSString *NSFilterBootPolicyStatus(id configuration, BOOL loaded) {
     if (!loaded) {
-        return @"Stock-boot fallback unverified; the saved filter state could not be read.";
+        return @"Beta fallback policy unverified; the saved filter state could not be read.";
+    }
+    if (!configuration) {
+        return @"Beta fallback policy will be configured when Firewall is enabled.";
     }
     BOOL value = NO;
     if (!NSFilterBootPolicyRead(configuration, &value, NULL)) {
-        return @"Stock-boot fallback unavailable or unreadable on this runtime. Leaving Firewall on may "
+        return @"Beta fallback policy unavailable or unreadable on this runtime. Leaving Firewall on may "
                @"prevent networking after a stock reboot.";
     }
     if (!value) {
-        return @"Stock-boot fallback unverified; the saved filter has not migrated to the candidate policy. "
+        return @"The saved filter has not migrated to the beta fallback policy. "
                @"Leaving Firewall on may prevent networking after a stock reboot.";
     }
-    return @"Candidate boot policy read back from preferences. Stock-boot fallback remains unverified. "
-           @"When providers cannot run, the intended fallback permits traffic without blocking or "
-           @"monitoring.";
+    return @"Beta fallback policy read back from preferences. When providers cannot run, the intended "
+           @"fallback permits traffic without NetShield2 blocking or monitoring. Compatibility varies.";
 }
 
 BOOL NSFilterBootPolicyClaimMigration(NSUserDefaults *defaults, NSString *target, NSError **error) {

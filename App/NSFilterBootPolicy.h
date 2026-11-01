@@ -8,11 +8,8 @@ typedef NS_ENUM(NSInteger, NSFilterBootPolicyError) {
     NSFilterBootPolicyMigrationLatchFailed,
 };
 
-// No OS/package/jailbreak combination is qualified yet. The build-only experiment
-// opt-in is never evidence of qualification and is not a user-defaults switch.
-FOUNDATION_EXPORT BOOL NSFilterBootPolicyQualified(void);
-FOUNDATION_EXPORT BOOL NSFilterBootPolicyExperimentEnabled(void);
-FOUNDATION_EXPORT BOOL NSFilterBootPolicyRequired(void);
+// Every beta candidate requires the actual policy; runtime support, readback,
+// copy retention and persistence are checked separately.
 FOUNDATION_EXPORT BOOL NSFilterBootPolicyRead(id configuration, BOOL *value, NSError **error);
 FOUNDATION_EXPORT BOOL NSFilterBootPolicyApply(id configuration, NSError **error);
 FOUNDATION_EXPORT NSDictionary *NSFilterBootPolicyReport(id configuration);

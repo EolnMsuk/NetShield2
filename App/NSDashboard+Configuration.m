@@ -51,9 +51,8 @@ static NSString *NSBootMigrationTarget(NSPolicy *policy) {
                 [self showError:error operation:@"Load filter configuration"];
             }
             NEFilterManager *manager = NEFilterManager.sharedManager;
-            self.bootPolicyStatus = NSFilterBootPolicyStatus(
-                manager.providerConfiguration ?: [NEFilterProviderConfiguration new], !error);
-            if (!error && NSFilterBootPolicyExperimentEnabled()) {
+            self.bootPolicyStatus = NSFilterBootPolicyStatus(manager.providerConfiguration, !error);
+            if (!error) {
                 NSLog(@"NetShield2 boot-policy loaded enabled=%d package=%@ %@", manager.enabled,
                       @NS_JAILBREAK_TYPE, NSFilterBootPolicyReport(manager.providerConfiguration));
             }
@@ -62,32 +61,27 @@ static NSString *NSBootMigrationTarget(NSPolicy *policy) {
                 [manager.providerConfiguration.vendorConfiguration[@"engine"] integerValue];
             BOOL bootPolicy = NO;
             BOOL readable = NSFilterBootPolicyRead(manager.providerConfiguration, &bootPolicy, NULL);
-            BOOL wantsBootPolicy = NSFilterBootPolicyRequired() || (readable && bootPolicy);
-            BOOL needsBootPolicy = NSFilterBootPolicyRequired() && (!readable || !bootPolicy);
+            BOOL needsBootPolicy = !readable || !bootPolicy;
             if (!error && manager.enabled && !self.attemptedProviderUpgrade && policy &&
                 (needsBootPolicy || configuredEngine < NSEngineVersion ||
                  manager.providerConfiguration.filterSockets !=
                      [policy.document[@"filterSockets"] boolValue] ||
                  ![manager.localizedDescription isEqual:NSFilterLocalizedDescription])) {
                 self.attemptedProviderUpgrade = YES;
-                if (wantsBootPolicy) {
-                    // Claim this goal before mutation, across app loads/relaunches.
-                    // A manual restart bypasses the automatic-attempt latch.
-                    NSString *target = NSBootMigrationTarget(policy);
-                    NSError *claimError = nil;
-                    if (!NSFilterBootPolicyClaimMigration(NSUserDefaults.standardUserDefaults, target,
-                                                          &claimError)) {
-                        self.message =
-                            claimError.localizedDescription
-                                ?: @"Automatic migration already "
-                                   @"attempted for this target. Boot protection remains unverified; "
-                                   @"use an explicit Firewall restart to retry.";
-                        [self reloadMonitor];
-                        if (completion) {
-                            completion();
-                        }
-                        return;
+                // Claim this goal before mutation, across app loads/relaunches.
+                // A manual restart can retry an existing automatic-attempt claim.
+                NSString *target = NSBootMigrationTarget(policy);
+                NSError *claimError = nil;
+                if (!NSFilterBootPolicyClaimMigration(NSUserDefaults.standardUserDefaults, target,
+                                                      &claimError)) {
+                    self.message = claimError.localizedDescription
+                                       ?: @"Automatic migration already attempted for this target. "
+                                          @"Use an explicit Firewall restart while jailbroken to retry.";
+                    [self reloadMonitor];
+                    if (completion) {
+                        completion();
                     }
+                    return;
                 }
                 [self changeConfiguration:NSConfigurationEnable completion:completion];
                 return;
@@ -114,33 +108,24 @@ static NSString *NSBootMigrationTarget(NSPolicy *policy) {
         NSFilterRestart *restart = [NSFilterRestart new];
         self.restart = restart;
         restart.manager = (id<NSFilterRestartManager>)manager;
-        restart.requiresBootPolicy = NSFilterBootPolicyRequired();
-        BOOL savedBootPolicy = NO;
-        if (NSFilterBootPolicyRead(manager.providerConfiguration, &savedBootPolicy, NULL) &&
-            savedBootPolicy) {
-            restart.requiresBootPolicy = YES;
+        NSPolicy *policy = NSReadPolicy(NULL);
+        NSError *claimError = nil;
+        if (policy) {
+            // Explicit restarts can retry an existing claim, but also record
+            // their target so a later launch cannot hide a failed migration.
+            NSFilterBootPolicyClaimMigration(NSUserDefaults.standardUserDefaults,
+                                             NSBootMigrationTarget(policy), &claimError);
         }
-        if (restart.requiresBootPolicy) {
-            NSPolicy *policy = NSReadPolicy(NULL);
-            NSError *claimError = nil;
-            if (policy) {
-                // Explicit restarts can retry an existing claim, but also record
-                // their target so a later launch cannot hide a failed migration.
-                NSFilterBootPolicyClaimMigration(NSUserDefaults.standardUserDefaults,
-                                                 NSBootMigrationTarget(policy), &claimError);
+        if (claimError) {
+            self.restart = nil;
+            self.busy = NO;
+            [self showError:claimError operation:@"Record migration before configuration change"];
+            [self reloadMonitor];
+            if (completion) {
+                completion();
             }
-            if (claimError) {
-                self.restart = nil;
-                self.busy = NO;
-                [self showError:claimError operation:@"Record migration before configuration change"];
-                [self reloadMonitor];
-                if (completion) {
-                    completion();
-                }
-                return;
-            }
+            return;
         }
-        __weak NSFilterRestart *weakRestart = restart;
         restart.configuration = ^id(id previous, BOOL restoring, NSError **error) {
             NSPolicy *policy = NSReadPolicy(error);
             if (!policy) {
@@ -165,17 +150,15 @@ static NSString *NSBootMigrationTarget(NSPolicy *policy) {
             vendor[@"engine"] = @(NSEngineVersion);
             vendor[@"activation"] = NSUUID.UUID.UUIDString;
             configuration.vendorConfiguration = vendor;
-            if (weakRestart.requiresBootPolicy && !NSFilterBootPolicyApply(configuration, error)) {
+            if (!NSFilterBootPolicyApply(configuration, error)) {
                 return nil;
             }
             return configuration;
         };
-        if (NSFilterBootPolicyExperimentEnabled()) {
-            restart.report = ^(NSString *stage, id configuration, BOOL enabled) {
-                NSLog(@"NetShield2 boot-policy %@ enabled=%d package=%@ %@", stage, enabled,
-                      @NS_JAILBREAK_TYPE, NSFilterBootPolicyReport(configuration));
-            };
-        }
+        restart.report = ^(NSString *stage, id configuration, BOOL enabled) {
+            NSLog(@"NetShield2 boot-policy %@ enabled=%d package=%@ %@", stage, enabled, @NS_JAILBREAK_TYPE,
+                  NSFilterBootPolicyReport(configuration));
+        };
         restart.isStopped = ^BOOL(BOOL previouslyEnabled) {
             NSStoreLock *lock = NSAcquireProviderLock(NULL);
             if (!lock) {
@@ -203,9 +186,8 @@ static NSString *NSBootMigrationTarget(NSPolicy *policy) {
             if (error) {
                 [self showError:error operation:@"Enable/restart filter"];
             } else {
-                self.message =
-                    @"Filter configuration read back and current control provider verified. "
-                    @"Data enforcement requires connection tests; stock-boot fallback is unverified.";
+                self.message = @"Filter configuration read back. Current control provider responding. "
+                               @"Control health does not verify every connection.";
             }
             if (state == NSFilterRestartUnknown) {
                 self.loaded = NO;
