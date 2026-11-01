@@ -1,6 +1,6 @@
 # 2.6.2
 
-- BETA FIX to FilterGate
+- BETA fix to FilterGate
 
 # 2.6.1
 
