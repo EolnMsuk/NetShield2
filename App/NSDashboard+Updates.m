@@ -31,7 +31,7 @@
     ];
     NSString *mode = NSUpdateCheckMode(NSUserDefaults.standardUserDefaults);
     for (NSArray<NSString *> *choice in modes) {
-        NSString *title = [choice[1] isEqual:mode] ? [@"✓ " stringByAppendingString:choice[0]] : choice[0];
+        NSString *title = [choice[1] isEqual:mode] ? [choice[0] stringByAppendingString:@" ✓"] : choice[0];
         UIAlertActionStyle style =
             [choice[1] isEqual:NSUpdateCheckOff] ? UIAlertActionStyleDestructive : UIAlertActionStyleDefault;
         [alert addAction:[UIAlertAction actionWithTitle:title
