@@ -96,7 +96,7 @@
                           stringWithFormat:@"NetShield2 %@ is available!\n\n"
                                            @"After downloading the update, turn off Firewall and uninstall "
                                            @"this version before installing the new one.",
-                                           latest, installed];
+                                           latest];
                   } else if (report && comparison) {
                       title = @"You're up to date";
                       message =
