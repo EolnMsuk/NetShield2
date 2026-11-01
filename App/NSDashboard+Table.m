@@ -820,11 +820,10 @@
             UIAlertController *alert = [UIAlertController
                 alertControllerWithTitle:removeFilter ? @"Remove Filter & Settings?" : @"Reset Settings?"
                                  message:removeFilter
-                                             ? @"Removes the content filter, rules and history, then "
-                                               @"resets settings. Firewall remains off. iOS notification "
-                                               @"authorization is managed in Settings."
-                                             : @"Removes rules and history, resets settings, and leaves "
-                                               @"the installed content filter disabled. Firewall remains off."
+                                             ? @"Removes the content filter, rules and "
+                                               @"history, then resets settings."
+                                             : @"Removes rules and history, resets settings, "
+                                               @"and removes the installed content filter."
                           preferredStyle:UIAlertControllerStyleAlert];
             [alert addAction:[UIAlertAction actionWithTitle:removeFilter ? @"Remove Filter & Settings"
                                                                          : @"Reset Settings"
