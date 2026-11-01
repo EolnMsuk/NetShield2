@@ -1,3 +1,10 @@
+# 2.6.4
+
+- **FilterGate Fixed:** included the (now not beta) guarded stock-boot fallback policy by default for RootHide (main impact), rootless and rootful, with typed runtime access to the actual private `disableDefaultDrop` property and readback/copy/persistence checks. 
+- Fixed export staging using the shared app-group cache.
+- Prepared a stable release, retaining the stock-boot connectivity fallback for all jailbreak variants.
+- Fixed some labels and update settings.
+
 # 2.6.3
 
 - Fixed export staging using the shared app-group cache.
@@ -5,7 +12,7 @@
 
 # 2.6.2
 
-- **BETA:** includes the guarded stock-boot fallback policy by default for RootHide, rootless and rootful, with typed runtime access to the actual private `disableDefaultDrop` property and readback/copy/persistence checks.
+- **BETA:** includes the first attempt with guarded stock-boot fallback policy by default for RootHide, rootless and rootful, with typed runtime access to the actual private `disableDefaultDrop` property and readback/copy/persistence checks.
 
 # 2.6.1
 

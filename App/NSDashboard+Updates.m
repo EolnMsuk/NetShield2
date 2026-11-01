@@ -91,23 +91,27 @@
                   NSString *title = nil, *message = nil;
                   BOOL newer = comparison && comparison.integerValue == NSOrderedDescending;
                   if (newer) {
-                      title = @"Stable update available";
+                      title = @"Update available";
+                      NSString *version = [latest
+                          stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+                      if ([version hasPrefix:@"v"] || [version hasPrefix:@"V"]) {
+                          version = [version substringFromIndex:1];
+                      }
                       message = [NSString
-                          stringWithFormat:@"NetShield2 stable release %@ is available!\n\n"
+                          stringWithFormat:@"NetShield2 v%@ is available!\n\n"
                                            @"After downloading the update, turn off Firewall and uninstall "
                                            @"this version before installing the new one.",
-                                           latest];
+                                           version];
                   } else if (report && comparison) {
-                      title = @"Stable-release check complete";
+                      title = @"Release check complete";
                       message =
                           comparison.integerValue == NSOrderedSame
                               ? [NSString
-                                    stringWithFormat:@"NetShield2 v%@ matches the latest stable release. "
-                                                     @"Betas are not checked.",
+                                    stringWithFormat:@"NetShield2 v%@ matches the latest stable release.",
                                                      installed]
                               : [NSString
                                     stringWithFormat:@"NetShield2 v%@ is installed, newer than the latest "
-                                                     @"stable release (%@). Betas are not checked.",
+                                                     @"stable release (%@).",
                                                      installed, latest];
                   } else if (report) {
                       title = @"Unable to check stable releases";
