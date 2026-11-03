@@ -18,10 +18,14 @@
 }
 - (void)authorizeNotificationsThen:(void (^)(void))completion {
     NSRegisterPermissionActions();
+    NSUInteger generation = self.storageGeneration;
     [UNUserNotificationCenter.currentNotificationCenter
         requestAuthorizationWithOptions:UNAuthorizationOptionAlert | UNAuthorizationOptionSound
                       completionHandler:^(BOOL granted, NSError *error) {
                           dispatch_async(dispatch_get_main_queue(), ^{
+                              if (generation != self.storageGeneration) {
+                                  return;
+                              }
                               [self refreshNotificationSettings];
                               if (error) {
                                   [self showError:error operation:@"Notification authorization"];
@@ -29,8 +33,9 @@
                                   self.message = @"Notifications are off. Enable Allow Notifications and "
                                                  @"Banners in notification settings.";
                               }
-                              NSWriteDocument(@{@"revision" : NSUUID.UUID.UUIDString},
-                                              NSNotificationRetryFile, NULL);
+                              if (generation == self.storageGeneration && !self.busy) {
+                                  NSWriteNotificationRetryRevision(NULL);
+                              }
                               if (completion) {
                                   completion();
                               }
@@ -56,22 +61,34 @@
         }];
 }
 - (void)answerRequest:(NSDictionary *)request rule:(NSString *)rule {
-    if ([NSReadPolicy(NULL) automaticallyAllowsIdentity:request[@"identity"]]) {
-        [self reloadMonitor];
+    if (self.busy) {
         return;
     }
-    NSError *error = nil;
-    if (!NSAnswerPermissionRequestWithRule(request, rule, &error)) {
-        [self showError:error];
-    } else {
-        NSDictionary *destination = NSReadPolicy(NULL).document[@"ruleDestinations"][request[@"identity"]];
-        self.message = [NSString
-            stringWithFormat:
-                @"Rule saved for %@. First requested peer: %@. Applies to all connections from "
-                @"this app according to the selected direction. Retry the app if its connection timed out.",
-                NSIdentityDisplayName(request[@"identity"]), NSDestinationSummary(destination)];
-    }
-    [self reloadMonitor];
+    NSUInteger generation = self.storageGeneration;
+    dispatch_async(NSAppStorageQueue(), ^{
+        NSError *error = nil;
+        BOOL automatic = [NSReadPolicy(NULL) automaticallyAllowsIdentity:request[@"identity"]];
+        BOOL saved = !automatic && NSAnswerPermissionRequestWithRule(request, rule, &error);
+        NSDictionary *destination =
+            saved ? NSReadPolicy(NULL).document[@"ruleDestinations"][request[@"identity"]] : nil;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (self.storageGeneration != generation) {
+                return;
+            }
+            if (!automatic && !saved) {
+                [self showError:error];
+            }
+            if (saved) {
+                self.storageGeneration++;
+                self.message = [NSString
+                    stringWithFormat:
+                        @"Rule saved for %@. First requested peer: %@. Applies to new connections in the "
+                        @"selected direction. Retry the app if its connection timed out.",
+                        NSIdentityDisplayName(request[@"identity"]), NSDestinationSummary(destination)];
+            }
+            [self reloadMonitor];
+        });
+    });
 }
 - (void)presentRequest:(NSDictionary *)request {
     NSPolicy *current = NSReadPolicy(NULL);

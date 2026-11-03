@@ -13,6 +13,12 @@ typedef id<NSDNSOperation> (^NSDNSLookupFactory)(NSString *key, dispatch_queue_t
                         clock:(NSTimeInterval (^)(void))clock
                        lookup:(NSDNSLookupFactory)lookup
                    completion:(void (^)(NSString *, NSString *, NSDictionary *, NSError *))completion;
+@property(nonatomic, readonly, copy) NSString *coverageIssue;
 - (void)refreshRules:(NSDictionary *)rules;
+- (void)refreshRules:(NSDictionary *)rules generation:(NSString *)generation;
+- (void)invalidateNetwork;
+- (void)invalidateNetworkWithCompletion:(void (^)(void))completion;
 - (void)stop;
+// Acknowledged on the DNS queue after all DNS references have been cancelled.
+- (void)stopWithCompletion:(void (^)(void))completion;
 @end

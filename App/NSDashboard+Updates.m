@@ -13,6 +13,9 @@
     return @"Checks GitHub stable releases daily on launch";
 }
 - (void)setUpdateCheckMode:(NSString *)mode {
+    if ([mode isEqual:NSUpdateCheckOff]) {
+        [self cancelUpdateCheck];
+    }
     [NSUserDefaults.standardUserDefaults setObject:mode forKey:NSUpdateCheckModeKey];
     [self refreshTableKeepingPosition];
 }
@@ -43,6 +46,13 @@
     [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];
 }
+- (void)cancelUpdateCheck {
+    self.updateGeneration++;
+    [self.updateTask cancel];
+    self.updateTask = nil;
+    self.updateCheckWasManual = NO;
+    self.pendingUpdateResult = nil;
+}
 - (void)checkForUpdateManually:(BOOL)manual {
     if (self.updateTask) {
         self.updateCheckWasManual |= manual;
@@ -69,71 +79,75 @@
     [request setValue:@"NetShield2" forHTTPHeaderField:@"User-Agent"];
     [request setValue:@"no-cache" forHTTPHeaderField:@"Cache-Control"];
     __weak typeof(self) weakSelf = self;
-    self.updateTask = [NSURLSession.sharedSession
-        dataTaskWithRequest:request
-          completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
-              NSHTTPURLResponse *http = [response isKindOfClass:NSHTTPURLResponse.class] ? (id)response : nil;
-              id release = !error && http.statusCode == 200 && data.length && data.length <= 1024 * 1024
-                               ? [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL]
-                               : nil;
-              NSString *latest = NSPublishedReleaseVersion(release);
-              NSString *installed =
-                  [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
-              NSNumber *comparison = NSCompareReleaseVersions(latest, installed);
-              dispatch_async(dispatch_get_main_queue(), ^{
-                  NSDashboard *owner = weakSelf;
-                  if (!owner) {
-                      return;
-                  }
-                  BOOL report = owner.updateCheckWasManual;
-                  owner.updateTask = nil;
-                  owner.updateCheckWasManual = NO;
-                  NSString *title = nil, *message = nil;
-                  BOOL newer = comparison && comparison.integerValue == NSOrderedDescending;
-                  if (newer) {
-                      title = @"Update available";
-                      NSString *version = [latest
-                          stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-                      if ([version hasPrefix:@"v"] || [version hasPrefix:@"V"]) {
-                          version = [version substringFromIndex:1];
-                      }
-                      message = [NSString
-                          stringWithFormat:@"NetShield2 v%@ is available!\n\n"
+    NSUInteger generation = ++self.updateGeneration;
+    self.updateTask = [[NSReleaseFetch alloc]
+        initWithRequest:request
+             completion:^(NSData *data, NSURLResponse *response, NSError *error) {
+                 NSHTTPURLResponse *http =
+                     [response isKindOfClass:NSHTTPURLResponse.class] ? (id)response : nil;
+                 id release = !error && http.statusCode == 200 && data.length && data.length <= 1024 * 1024
+                                  ? [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL]
+                                  : nil;
+                 NSString *latest = NSPublishedReleaseVersion(release);
+                 NSString *installed =
+                     [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
+                 NSNumber *comparison = NSCompareReleaseVersions(latest, installed);
+                 dispatch_async(dispatch_get_main_queue(), ^{
+                     NSDashboard *owner = weakSelf;
+                     if (!owner || owner.updateGeneration != generation) {
+                         return;
+                     }
+                     BOOL report = owner.updateCheckWasManual;
+                     owner.updateTask = nil;
+                     owner.updateCheckWasManual = NO;
+                     NSString *title = nil, *message = nil;
+                     BOOL newer = comparison && comparison.integerValue == NSOrderedDescending;
+                     if (newer) {
+                         title = @"Update available";
+                         NSString *version = [latest
+                             stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+                         if ([version hasPrefix:@"v"] || [version hasPrefix:@"V"]) {
+                             version = [version substringFromIndex:1];
+                         }
+                         message =
+                             [NSString stringWithFormat:
+                                           @"NetShield2 v%@ is available!\n\n"
                                            @"After downloading the update, turn off Firewall and uninstall "
-                                           @"this version before installing the new one.",
+                                           @"this version before installing the new one. Uninstall removes "
+                                           @"saved rules and history; export them first.",
                                            version];
-                  } else if (report && comparison) {
-                      title = @"Release check complete";
-                      message =
-                          comparison.integerValue == NSOrderedSame
-                              ? [NSString
-                                    stringWithFormat:@"NetShield2 v%@ matches the latest stable release.",
-                                                     installed]
-                              : [NSString
-                                    stringWithFormat:@"NetShield2 v%@ is installed, newer than the latest "
-                                                     @"stable release (%@).",
-                                                     installed, latest];
-                  } else if (report) {
-                      title = @"Unable to check stable releases";
-                      message =
-                          http.statusCode == 403 || http.statusCode == 429
-                              ? @"GitHub is limiting update checks. Please try again later."
-                              : @"Could not verify the latest GitHub stable release. Check your internet "
-                                @"connection and NetShield2's network rule, then try again.";
-                  }
-                  if (title) {
-                      owner.pendingUpdateResult =
-                          @{@"title" : title,
-                            @"message" : message,
-                            @"newer" : @(newer)};
-                  }
-                  if (report) {
-                      owner.message = message;
-                      [owner refreshTableKeepingPosition];
-                  }
-                  [owner presentPendingUpdateResult];
-              });
-          }];
+                     } else if (report && comparison) {
+                         title = @"Release check complete";
+                         message =
+                             comparison.integerValue == NSOrderedSame
+                                 ? [NSString
+                                       stringWithFormat:@"NetShield2 v%@ matches the latest stable release.",
+                                                        installed]
+                                 : [NSString
+                                       stringWithFormat:@"NetShield2 v%@ is installed, newer than the latest "
+                                                        @"stable release (%@).",
+                                                        installed, latest];
+                     } else if (report) {
+                         title = @"Unable to check stable releases";
+                         message =
+                             http.statusCode == 403 || http.statusCode == 429
+                                 ? @"GitHub is limiting update checks. Please try again later."
+                                 : @"Could not verify the latest GitHub stable release. Check your internet "
+                                   @"connection and NetShield2's network rule, then try again.";
+                     }
+                     if (title) {
+                         owner.pendingUpdateResult =
+                             @{@"title" : title,
+                               @"message" : message,
+                               @"newer" : @(newer)};
+                     }
+                     if (report) {
+                         owner.message = message;
+                         [owner refreshTableKeepingPosition];
+                     }
+                     [owner presentPendingUpdateResult];
+                 });
+             }];
     [self.updateTask resume];
 }
 - (void)presentPendingUpdateResult {

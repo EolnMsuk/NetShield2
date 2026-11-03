@@ -1,6 +1,7 @@
 """Prepare staged maintainer scripts without modifying the rootless sources."""
 import argparse
 import pathlib
+from sync_version import release_metadata
 
 
 PACKAGE_ARCHITECTURES = {
@@ -11,6 +12,7 @@ PACKAGE_ARCHITECTURES = {
 
 
 def maintainer_script(source, scheme):
+    source = source.replace(b'@NETSHIELD_PACKAGE_VERSION@', release_metadata()['Version'].encode('ascii'))
     # Rootful uses / directly; RootHide resolves it within its relocated root.
     # Apply this consistently to registration, sbreload and dpkg-query paths.
     if scheme in ('roothide', 'rootful'):

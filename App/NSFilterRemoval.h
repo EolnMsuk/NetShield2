@@ -16,3 +16,8 @@ FOUNDATION_EXPORT void NSRemoveInstalledFilter(id<NSFilterRemovalManager> manage
 // uptime; cleanup attempts and the single completion run on the main queue.
 FOUNDATION_EXPORT void NSRemoveSharedStateAfterFilterRemovalWithRetry(NSTimeInterval deadline,
                                                                       void (^completion)(NSError *error));
+
+// The helper uses the same transaction for verified preference removal and cleanup.
+FOUNDATION_EXPORT void NSRemoveInstalledFilterAndSharedState(id<NSFilterRemovalManager> manager,
+                                                             NSTimeInterval deadline,
+                                                             void (^completion)(NSError *));

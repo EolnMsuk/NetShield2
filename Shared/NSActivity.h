@@ -2,6 +2,26 @@
 #import "NSGlobalRule.h"
 #import "NSDestination.h"
 #import "NSIdentityDisplay.h"
+#include <limits.h>
+
+static inline NSString *NSActivityOutcome(NSString *action) {
+    return @{
+        @"allow" : @"allow",
+        @"permission-allow" : @"allow",
+        @"block" : @"block",
+        @"permission-block" : @"block"
+    }[action]
+               ?: @"other";
+}
+static inline unsigned long long NSActivityAdd(unsigned long long left, unsigned long long right) {
+    return ULLONG_MAX - left < right ? ULLONG_MAX : left + right;
+}
+static inline NSString *NSActivityBytes(NSNumber *value) {
+    unsigned long long bytes = value.unsignedLongLongValue;
+    return bytes > LLONG_MAX ? [NSString stringWithFormat:@"%llu bytes", bytes]
+                             : [NSByteCountFormatter stringFromByteCount:(long long)bytes
+                                                              countStyle:NSByteCountFormatterCountStyleFile];
+}
 
 static inline NSUInteger NSActivityRoot(NSMutableArray<NSNumber *> *parents, NSUInteger index) {
     while (parents[index].unsignedIntegerValue != index) {
@@ -54,7 +74,10 @@ static inline NSArray<NSDictionary *> *NSGroupedActivity(NSArray<NSDictionary *>
             if (!host) {
                 continue;
             }
-            NSArray *key = @[ event[@"identity"], destination[@"port"] ?: @0, event[@"direction"], host ];
+            NSArray *key = @[
+                event[@"identity"], destination[@"port"] ?: @0, event[@"direction"],
+                destination[@"protocol"] ?: @"unknown", host
+            ];
             NSNumber *previous = hosts[key];
             if (previous) {
                 NSUInteger left = NSActivityRoot(parents, index);
@@ -67,18 +90,11 @@ static inline NSArray<NSDictionary *> *NSGroupedActivity(NSArray<NSDictionary *>
     }
     for (NSUInteger index = 0; index < unique.count; index++) {
         NSDictionary *event = unique[index];
-        NSString *action = event[@"action"];
-        NSString *outcome = @{
-            @"allow" : @"allow",
-            @"permission-allow" : @"allow",
-            @"block" : @"block",
-            @"permission-block" : @"block"
-        }[action]
-                                ?: @"other";
+        NSString *outcome = NSActivityOutcome(event[@"action"]);
         NSDictionary *destination = event[@"destination"];
         NSArray *key = @[
             event[@"identity"], NSGlobalHostKey(destination[@"address"]) ?: NSGlobalHostKey(destination[@"domain"]) ?: @"",
-            destination[@"port"] ?: @0, event[@"direction"]
+            destination[@"port"] ?: @0, event[@"direction"], destination[@"protocol"] ?: @"unknown"
         ];
         NSNumber *root = @(NSActivityRoot(parents, index));
         NSMutableDictionary *group = groups[root];
@@ -86,6 +102,8 @@ static inline NSArray<NSDictionary *> *NSGroupedActivity(NSArray<NSDictionary *>
             group = [event mutableCopy];
             group[@"action"] = outcome;
             group[@"connections"] = @0;
+            group[@"outcomeCounts"] = [NSMutableDictionary new];
+            group[@"hosts"] = [NSMutableSet new];
             group[@"bytesIn"] = @0;
             group[@"bytesOut"] = @0;
             group[@"groupKey"] = [key[1] length] ? key : [key arrayByAddingObject:@(index)];
@@ -93,14 +111,39 @@ static inline NSArray<NSDictionary *> *NSGroupedActivity(NSArray<NSDictionary *>
             [ordered addObject:group];
         }
         group[@"connections"] = @([group[@"connections"] unsignedIntegerValue] + 1);
-        group[@"bytesIn"] =
-            @([group[@"bytesIn"] unsignedLongLongValue] + [event[@"bytesIn"] unsignedLongLongValue]);
-        group[@"bytesOut"] =
-            @([group[@"bytesOut"] unsignedLongLongValue] + [event[@"bytesOut"] unsignedLongLongValue]);
+        NSMutableDictionary *counts = group[@"outcomeCounts"];
+        counts[outcome] = @([counts[outcome] unsignedIntegerValue] + 1);
+        if (counts.count > 1) {
+            group[@"action"] = @"mixed";
+        }
+        NSMutableSet *distinctHosts = group[@"hosts"];
+        NSString *host = NSGlobalHostKey(destination[@"domain"]) ?: NSGlobalHostKey(destination[@"address"]);
+        if (host) {
+            [distinctHosts addObject:host];
+        }
+        for (NSString *field in @[ @"bytesIn", @"bytesOut" ]) {
+            unsigned long long left = [group[field] unsignedLongLongValue],
+                               right = [event[field] unsignedLongLongValue];
+            if (ULLONG_MAX - left < right) {
+                group[@"bytesSaturated"] = @YES;
+            }
+            group[field] = @(NSActivityAdd(left, right));
+        }
     }
     NSMutableArray *result = [NSMutableArray new];
     for (NSDictionary *group in ordered) {
-        [result addObject:[group copy]];
+        NSMutableDictionary *immutable = [group mutableCopy];
+        immutable[@"outcomeCounts"] = [group[@"outcomeCounts"] copy];
+        immutable[@"hosts"] = [[group[@"hosts"] allObjects] sortedArrayUsingSelector:@selector(compare:)];
+        immutable[@"hostCount"] = @([immutable[@"hosts"] count]);
+        if ([immutable[@"hosts"] count]) {
+            NSMutableArray *key = [immutable[@"groupKey"] mutableCopy];
+            key[1] = [immutable[@"hosts"] firstObject];
+            immutable[@"groupKey"] = [key copy];
+        } else if ([immutable[@"flow"] length]) {
+            immutable[@"groupKey"] = @[ @"flow", immutable[@"identity"], immutable[@"flow"] ];
+        }
+        [result addObject:[immutable copy]];
     }
     return [result copy];
 }
@@ -112,23 +155,38 @@ static inline NSArray<NSArray<NSString *> *> *NSActivityDetailRows(NSDictionary 
         arrayWithArray:@[ @[ @"Process name", identity.length ? identity : @"Unavailable from iOS" ] ]];
     [details
         addObjectsFromArray:NSConnectionDetailRows(connection[@"destination"], connection[@"direction"])];
+    if ([connection[@"hostCount"] unsignedIntegerValue] > 1) {
+        [details addObject:@[
+            @"Grouped peers",
+            [NSString stringWithFormat:@"%@ hosts; endpoint fields show the most recent peer",
+                                       connection[@"hostCount"]]
+        ]];
+    }
+    if (connection[@"outcomeCounts"]) {
+        NSDictionary *counts = connection[@"outcomeCounts"];
+        [details addObject:@[
+            @"Outcomes",
+            [NSString stringWithFormat:@"%@ allowed / %@ blocked / %@ other", counts[@"allow"] ?: @0,
+                                       counts[@"block"] ?: @0, counts[@"other"] ?: @0]
+        ]];
+    }
     if (connection[@"connections"]) {
         [details addObject:@[ @"Connections", [connection[@"connections"] stringValue] ]];
     }
-    NSString *outcome =
-        @{@"allow" : @"Allowed", @"block" : @"Blocked"}[connection[@"action"] ?: @""] ?: @"Connection";
+    NSString *outcome = @{@"allow" : @"Allowed",
+                          @"block" : @"Blocked",
+                          @"mixed" : @"Mixed outcomes"}[connection[@"action"] ?: @""]
+                            ?: @"Connection";
     if (connection[@"action"]) {
         [details addObject:@[ @"Result", outcome ]];
     }
     if (connection[@"bytesIn"] || connection[@"bytesOut"]) {
-        [details addObject:@[
-            @"Received", [NSByteCountFormatter stringFromByteCount:[connection[@"bytesIn"] longLongValue]
-                                                        countStyle:NSByteCountFormatterCountStyleFile]
-        ]];
-        [details addObject:@[
-            @"Sent", [NSByteCountFormatter stringFromByteCount:[connection[@"bytesOut"] longLongValue]
-                                                    countStyle:NSByteCountFormatterCountStyleFile]
-        ]];
+        [details addObject:@[ @"Received", NSActivityBytes(connection[@"bytesIn"]) ]];
+        [details addObject:@[ @"Sent", NSActivityBytes(connection[@"bytesOut"]) ]];
+        if ([connection[@"bytesSaturated"] boolValue]) {
+            [details
+                addObject:@[ @"Byte totals", @"At least the displayed total (counter capacity reached)" ]];
+        }
     }
     if (connection[@"time"]) {
         [details addObject:@[

@@ -1,6 +1,16 @@
+# 2.6.5
+
+- Fixed permission notification retries when a delivery callback arrives late or never arrives.
+- Made firewall changes, reset, and uninstall verify saved preferences. Timed-out writes are tracked so a retry cannot race them.
+- Hardened provider startup and shutdown, DNS refresh and expiry, and validation of stored rules and activity.
+- Clarified global rule precedence and updated Recent Activity to show mixed outcomes and keep cleared history from reappearing.
+- Moved dashboard storage work off the main thread, protected active exports, and capped update-check downloads.
+- Strengthened stock-boot fallback configuration checks and fixed resource cleanup for dialogs and respring helpers.
+- Added regression tests and tightened package verification with binary checks, source revisions, and package hashes.
+
 # 2.6.4
 
-- **FilterGate Fixed:** included the (now not beta) guarded stock-boot fallback policy by default for RootHide (main impact), rootless and rootful, with typed runtime access to the actual private `disableDefaultDrop` property and readback/copy/persistence checks. 
+- **FilterGate Fixed:** included the guarded stock-boot fallback policy by default for RootHide (main impact), rootless and rootful, with typed runtime access to the actual private `disableDefaultDrop` property and readback/copy/persistence checks. 
 - Fixed export staging using the shared app-group cache.
 - Prepared a stable release, retaining the stock-boot connectivity fallback for all jailbreak variants.
 - Fixed some labels and update settings.

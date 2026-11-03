@@ -9,11 +9,13 @@
 #import "NSFilterBootPolicy.h"
 #import "NSRuleActionController.h"
 #import "NSRuleAppearance.h"
+#import "NSReleaseFetch.h"
+#import "NSAppStorage.h"
 
 typedef NS_ENUM(NSInteger, NSConfigurationOperation) {
     NSConfigurationDisable,
     NSConfigurationEnable,
-    NSConfigurationRemove,
+    NSConfigurationApplyScope,
 };
 typedef NS_ENUM(NSInteger, NSDashboardSection) {
     NSDashboardSectionFirewall,
@@ -50,8 +52,15 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 @property(nonatomic, copy) NSString *message;
 @property(nonatomic, copy) NSString *bootPolicyStatus;
 @property(nonatomic, strong) NSTimer *timer;
-@property(nonatomic, strong) NSURLSessionDataTask *updateTask;
+@property(nonatomic, strong) NSReleaseFetch *updateTask;
 @property(nonatomic) BOOL updateCheckWasManual;
+@property(nonatomic) NSUInteger updateGeneration;
+@property(nonatomic) NSUInteger storageGeneration;
+@property(nonatomic) BOOL snapshotPending;
+@property(nonatomic) BOOL snapshotAgain;
+@property(nonatomic) BOOL exportPending;
+@property(nonatomic, copy) NSArray *activityEvents;
+@property(nonatomic, copy) NSString *monitorReadError;
 @property(nonatomic, copy) NSDictionary *pendingUpdateResult;
 @property(nonatomic, strong) UITableViewCell *firewallCell;
 @property(nonatomic, strong) UITableViewCell *appleCell;
@@ -61,16 +70,22 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 @property(nonatomic, weak) UIViewController *permissionAlert;
 @property(nonatomic, copy) NSDictionary *presentedRequest;
 @property(nonatomic) BOOL busy;
+@property(nonatomic) NSUInteger authorizationGeneration;
 @property(nonatomic) BOOL loaded;
 @property(nonatomic) BOOL attemptedProviderUpgrade;
+@property(nonatomic) BOOL automaticMigrationRequested;
 @property(nonatomic, strong) NSFilterRestart *restart;
+@property(nonatomic, strong) NSConfigurationCoordinator *configuration;
+@property(nonatomic) BOOL configurationRefreshPending;
 @property(nonatomic) BOOL resetRequiresLegacyStop;
 @property(nonatomic) BOOL removeFilterAfterReset;
 @property(nonatomic) BOOL respringPromptPending;
 @property(nonatomic, strong) NSMutableSet<NSString *> *deferredRequests;
 @property(nonatomic, copy) NSString *notificationStatus;
-- (BOOL)updatePolicy:(BOOL (^)(NSMutableDictionary *, NSError **))mutation;
-- (BOOL)removeAppRuleForIdentity:(NSString *)identity;
+- (void)performStorageCommand:(BOOL (^)(NSError **))work completion:(void (^)(BOOL, NSError *))completion;
+- (void)updatePolicy:(BOOL (^)(NSMutableDictionary *, NSError **))mutation
+          completion:(void (^)(BOOL))completion;
+- (void)removeAppRuleForIdentity:(NSString *)identity completion:(void (^)(BOOL))completion;
 - (void)reloadMonitor;
 - (void)clearSectionTapped:(UIButton *)sender;
 - (BOOL)hasFreshMonitor;
@@ -122,6 +137,7 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 @end
 
 @interface NSDashboard (Updates)
+- (void)cancelUpdateCheck;
 - (void)checkForUpdateManually:(BOOL)manual;
 - (void)presentUpdateOptions;
 - (NSString *)updateCheckSubtitle;

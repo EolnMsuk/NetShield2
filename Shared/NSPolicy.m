@@ -4,10 +4,11 @@
 #import "NSGlobalRule.h"
 #import "NSDNSCache.h"
 #import "NSRuleChoices.h"
+#import "NSValidation.h"
 #import <CoreFoundation/CoreFoundation.h>
 
 static NSString *NSAppActionForDirection(id value, NSFlowDirection direction) {
-    NSDictionary *record = NSAppRuleRecord(value);
+    NSDictionary *record = value; // policy construction has already canonicalized app records
     return record[@"both"]
                ?: record[direction == NSFlowDirectionInbound    ? @"inbound"
                          : direction == NSFlowDirectionOutbound ? @"outbound"
@@ -70,8 +71,7 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
         // DNS address fallback is safe for blocking only; never grant an
         // allow rule to another hostname sharing the same IP address.
         if (!NSGlobalActionIsAllow(rule[@"action"]) && ![domain hasPrefix:@"domain:"] && address &&
-            [host hasPrefix:@"domain:"] &&
-            NSDNSExpiryIsLive(document[@"globalDomainExpirations"][host], NSDate.date) &&
+            [host hasPrefix:@"domain:"] && NSDNSAddressIsLive(document, host, NSDate.date) &&
             [document[@"globalDomainAddresses"][host] containsObject:address]) {
             hostMatches = YES;
             break;
@@ -83,6 +83,7 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
 @interface NSPolicy ()
 @property(nonatomic, copy) NSArray<NSDictionary *> *customGlobalRules;
 @property(nonatomic, copy) NSArray<NSDictionary *> *directionalGlobalRules;
+@property(nonatomic, copy) NSDictionary *dnsByAddress;
 @end
 
 @implementation NSPolicy
@@ -114,6 +115,8 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
             [defaults containsObject:d[@"default"]] && [d[@"unattributed"] isKindOfClass:NSString.class] &&
             [unknownActions containsObject:d[@"unattributed"]] &&
             [d[@"rules"] isKindOfClass:NSDictionary.class];
+    valid = valid && (!d[@"globalRuleGeneration"] || NSBoundedString(d[@"globalRuleGeneration"], 128, YES));
+    valid = valid && (!d[@"exactDomainResolution"] || NSBoolean(d[@"exactDomainResolution"]));
     id appleAllowance = d[@"allowAppleSystemProcesses"];
     valid = valid &&
             (!appleAllowance || ([appleAllowance isKindOfClass:NSNumber.class] &&
@@ -181,6 +184,19 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
             }
         }
     }
+    id lifetimes = d[@"globalDomainLifetimes"];
+    if (valid && lifetimes) {
+        valid = [lifetimes isKindOfClass:NSDictionary.class] && [lifetimes count] <= NSMaximumRules;
+        if (valid) {
+            for (id key in lifetimes) {
+                if (![key isKindOfClass:NSString.class] || ![addresses isKindOfClass:NSDictionary.class] ||
+                    !addresses[key] || !NSValidDNSLifetime(lifetimes[key])) {
+                    valid = NO;
+                    break;
+                }
+            }
+        }
+    }
     id generations = d[@"askGenerations"];
     if (valid && generations) {
         valid = [generations isKindOfClass:NSDictionary.class] && [generations count] <= NSMaximumRules;
@@ -215,13 +231,24 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
                 errorWithDomain:@"NetShield2.Policy"
                            code:1
                        userInfo:@{
-                           NSLocalizedDescriptionKey : @"Invalid v2 policy. Filtering callbacks will block "
-                                                       @"until a valid policy is readable."
+                           NSLocalizedDescriptionKey :
+                               @"Invalid or unsupported policy. Active filtering callbacks will block "
+                               @"until a valid policy is readable."
                        }];
         }
         return nil;
     }
-    NSMutableDictionary *canonicalDocument = [d mutableCopy];
+    NSMutableDictionary *canonicalDocument = [NSMutableDictionary new];
+    for (NSString *key in @[
+             @"schema", @"revision", @"default", @"unattributed", @"rules", @"globalRules",
+             @"globalDomainAddresses", @"globalDomainExpirations", @"globalDomainLifetimes",
+             @"globalRuleGeneration", @"ruleDestinations", @"askGenerations", @"exactDomainResolution",
+             @"allowAppleSystemProcesses", @"filterSockets"
+         ]) {
+        if (d[key]) {
+            canonicalDocument[key] = d[key];
+        }
+    }
     canonicalDocument[@"schema"] = @(NSSchemaVersion);
     NSMutableDictionary *appRules = [NSMutableDictionary new];
     for (NSString *identity in d[@"rules"]) {
@@ -245,6 +272,7 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
     if (![d[@"exactDomainResolution"] isEqual:@YES]) {
         [canonicalDocument removeObjectForKey:@"globalDomainAddresses"];
         [canonicalDocument removeObjectForKey:@"globalDomainExpirations"];
+        [canonicalDocument removeObjectForKey:@"globalDomainLifetimes"];
     }
     canonicalDocument[@"exactDomainResolution"] = @YES;
     d = canonicalDocument;
@@ -287,13 +315,25 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
         }
     }
     policy.customGlobalRules = customRules;
+    NSMutableDictionary *reverse = [NSMutableDictionary new];
+    for (NSString *domain in policy.document[@"globalDomainAddresses"]) {
+        for (NSString *address in policy.document[@"globalDomainAddresses"][domain]) {
+            NSMutableArray *domains = reverse[address] ?: (reverse[address] = [NSMutableArray new]);
+            [domains addObject:domain];
+        }
+    }
+    NSMutableDictionary *immutableReverse = [NSMutableDictionary new];
+    for (NSString *address in reverse) {
+        immutableReverse[address] = [reverse[address] copy];
+    }
+    policy.dnsByAddress = [immutableReverse copy];
     return policy->_document ? policy : nil;
 }
 - (BOOL)automaticallyAllowsIdentity:(NSString *)identity {
     return [self.document[@"allowAppleSystemProcesses"] boolValue] && NSIsAppleSystemIdentity(identity);
 }
 - (NSString *)globalActionForDestination:(NSDictionary *)destination direction:(NSFlowDirection)direction {
-    NSDictionary *rules = self.directionalGlobalRules[direction];
+    NSDictionary *rules = self.directionalGlobalRules[NSNormalizedFlowDirection(direction)];
     NSString *addressKey = NSGlobalHostKey(destination[@"address"]);
     NSString *action = NSGlobalActionForDirection(addressKey ? rules[addressKey] : nil, direction);
     if (action) {
@@ -308,9 +348,8 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
     }
     BOOL inbound = NO, outbound = NO;
     NSDate *now = NSDate.date;
-    for (NSString *key in self.document[@"globalDomainAddresses"]) {
-        if ([domainKey hasPrefix:@"domain:"] || !addressKey ||
-            !NSDNSExpiryIsLive(self.document[@"globalDomainExpirations"][key], now) ||
+    for (NSString *key in addressKey ? self.dnsByAddress[addressKey] : @[]) {
+        if ([domainKey hasPrefix:@"domain:"] || !addressKey || !NSDNSAddressIsLive(self.document, key, now) ||
             ![self.document[@"globalDomainAddresses"][key] containsObject:addressKey]) {
             continue;
         }
@@ -377,7 +416,7 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
 - (BOOL)needsSocketDestination:(NSDictionary *)destination
                       identity:(NSString *)identity
                      direction:(NSFlowDirection)direction {
-    NSDictionary *applicable = self.directionalGlobalRules[direction];
+    NSDictionary *applicable = self.directionalGlobalRules[NSNormalizedFlowDirection(direction)];
     for (NSString *key in applicable) {
         NSString *action = applicable[key];
         if (action && NSMissingGlobalEndpoint(key, action, destination)) {
@@ -451,5 +490,32 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
         return YES;
     }
     return NO;
+}
+- (NSFlowEvaluation)evaluateIdentity:(NSString *)identity
+                           direction:(NSFlowDirection)direction
+                         destination:(NSDictionary *)destination
+                              socket:(BOOL)socket {
+    direction = NSNormalizedFlowDirection(direction);
+    if (socket && [self needsSocketDestination:destination identity:identity direction:direction]) {
+        return (NSFlowEvaluation){NSFlowNeedsEndpoints, NSFlowReasonEndpoints};
+    }
+    NSString *action = [self globalActionForIdentity:identity direction:direction destination:destination];
+    if (action) {
+        return (NSFlowEvaluation){[action isEqual:@"allow"] ? NSFlowAllow : NSFlowDrop, NSFlowReasonGlobal};
+    }
+    if ([self automaticallyAllowsIdentity:identity]) {
+        return (NSFlowEvaluation){NSFlowAllow, NSFlowReasonSystem};
+    }
+    NSFlowDecisionReason reason = identity.length ? NSFlowReasonApp : NSFlowReasonUnidentified;
+    action = identity.length ? NSAppActionForDirection(self.document[@"rules"][identity], direction)
+                             : self.document[@"unattributed"];
+    if (!action) {
+        action = self.document[@"default"];
+        reason = NSFlowReasonDefault;
+    }
+    NSFlowDisposition disposition =
+        [action isEqual:@"allow"] ? NSFlowAllow
+                                  : ([action isEqual:@"ask"] && identity.length ? NSFlowAsk : NSFlowDrop);
+    return (NSFlowEvaluation){disposition, reason};
 }
 @end

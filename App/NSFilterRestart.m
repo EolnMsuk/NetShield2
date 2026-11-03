@@ -8,22 +8,26 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
 @property(nonatomic, strong) id previous;
 @property(nonatomic, strong) id candidate;
 @property(nonatomic, copy) NSDictionary *expectedFields;
+@property(nonatomic, strong) NSMutableArray<NSDictionary *> *ownedFingerprints;
 @property(nonatomic, copy) NSString *previousDescription;
 @property(nonatomic) BOOL wasEnabled;
 @property(nonatomic) BOOL touchedPreferences;
 @property(nonatomic) BOOL restoring;
 @property(nonatomic) NSUInteger generation;
 @property(nonatomic, strong) NSError *originalError;
+@property(nonatomic, copy) void (^defaultSchedule)(NSTimeInterval, void (^)(void));
+@property(nonatomic, strong) dispatch_source_t waitTimer;
 @property(nonatomic, readwrite) NSFilterRestartState state;
 @end
 
 @implementation NSFilterRestart
 - (instancetype)init {
     if ((self = [super init])) {
-        _schedule = ^(NSTimeInterval delay, void (^work)(void)) {
+        _defaultSchedule = ^(NSTimeInterval delay, void (^work)(void)) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)),
                            dispatch_get_main_queue(), work);
         };
+        _schedule = _defaultSchedule;
     }
     return self;
 }
@@ -35,6 +39,15 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
 - (void)finish:(NSError *)error {
     void (^completion)(NSError *) = self.completion;
     self.completion = nil;
+    [self.coordinator finish];
+    if (self.waitTimer) {
+        dispatch_source_cancel(self.waitTimer);
+    }
+    self.waitTimer = nil;
+    self.previous = nil;
+    self.candidate = nil;
+    self.expectedFields = nil;
+    self.ownedFingerprints = nil;
     self.generation++;
     if (completion) {
         completion(error);
@@ -49,38 +62,43 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
 // late callbacks cannot start a later phase. A timed-out write may still reach
 // the OS: do not race it with a cleanup write or claim a verified final state.
 - (void)preferences:(BOOL)save completion:(void (^)(NSError *))completion {
-    NSUInteger generation = ++self.generation;
-    self.schedule(10, ^{
-        if (generation == self.generation && self.completion) {
-            self.state = NSFilterRestartUnknown;
-            [self
-                finish:
-                    [self
-                        error:save ? @"Saving filter preferences timed out. A pending write may still "
-                                     @"complete; the saved state is unknown/unverified. Your rules are saved."
-                                   : @"Loading filter preferences timed out. The saved state is "
-                                     @"unknown/unverified. Your rules are saved."]];
-        }
-    });
     void (^callback)(NSError *) = ^(NSError *error) {
-        void (^deliver)(void) = ^{
-            if (generation != self.generation || !self.completion) {
-                return;
-            }
-            self.generation++;
-            completion(error);
-        };
-        if (NSThread.isMainThread) {
-            deliver();
-        } else {
-            dispatch_async(dispatch_get_main_queue(), deliver);
+        self.generation++;
+        if (!self.completion) {
+            return;
         }
+        if (self.coordinator.uncertain) {
+            self.state = NSFilterRestartUnknown;
+            [self finish:error];
+            return;
+        }
+        completion(error);
     };
     if (save) {
-        [self.manager saveToPreferencesWithCompletionHandler:callback];
+        [self.coordinator save:self.manager completion:callback];
     } else {
-        [self.manager loadFromPreferencesWithCompletionHandler:callback];
+        [self.coordinator load:self.manager completion:callback];
     }
+}
+
+- (void)rememberFields:(NSDictionary *)fields description:(NSString *)description {
+    [self.ownedFingerprints
+        addObject:@{@"fields" : fields ?: (id)NSNull.null, @"description" : description ?: (id)NSNull.null}];
+}
+- (BOOL)ownsLoadedConfiguration {
+    NSDictionary *fields = NSFilterConfigurationFields(self.manager.providerConfiguration);
+    if (self.manager.providerConfiguration && !fields) {
+        return NO;
+    }
+    return [self.ownedFingerprints containsObject:@{
+        @"fields" : fields ?: (id)NSNull.null,
+        @"description" : self.manager.localizedDescription ?: (id)NSNull.null
+    }];
+}
+- (void)finishExternalChange {
+    self.state = NSFilterRestartUnknown;
+    [self finish:[self error:@"Saved configuration no longer matches this transaction. No automatic write "
+                             @"was made after the mismatch; state is unknown/unverified."]];
 }
 - (BOOL)constructCandidate:(BOOL)restoring error:(NSError **)error {
     id candidate = self.configuration(self.previous, restoring, error);
@@ -96,6 +114,8 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
     }
     self.candidate = copy;
     self.expectedFields = fields;
+    [self rememberFields:fields
+             description:restoring ? self.previousDescription : NSFilterLocalizedDescription];
     if (self.report) {
         self.report(restoring ? @"restore-copy-verified" : @"candidate-copy-verified", copy, NO);
     }
@@ -103,10 +123,27 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
 }
 - (void)start:(void (^)(NSError *))completion {
     if (self.completion) {
+        completion([self error:@"A filter restart is already in progress."]);
         return;
     }
     self.completion = completion;
+    if (!self.coordinator) {
+        self.coordinator = [NSConfigurationCoordinator new];
+    }
+    self.coordinator.schedule = self.schedule == self.defaultSchedule ? nil : self.schedule;
+    __weak typeof(self) weakSelf = self;
+    self.coordinator.abort = ^(NSError *error) {
+        NSFilterRestart *owner = weakSelf;
+        owner.state = NSFilterRestartUnknown;
+        [owner finish:error];
+    };
+    NSError *lockError = nil;
+    if (![self.coordinator begin:&lockError]) {
+        [self finish:lockError];
+        return;
+    }
     self.restoring = NO;
+    self.ownedFingerprints = [NSMutableArray new];
     self.touchedPreferences = NO;
     self.originalError = nil;
     self.state = NSFilterRestartUnchanged;
@@ -122,6 +159,8 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
                  return;
              }
              self.previousDescription = self.manager.localizedDescription;
+             [self rememberFields:NSFilterConfigurationFields(self.manager.providerConfiguration)
+                      description:self.previousDescription];
              self.wasEnabled = self.manager.enabled;
              // Snapshot old false/missing policy for migration, but never lose an
              // already readable true policy while retaining that snapshot.
@@ -180,6 +219,26 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
                       }];
            }];
 }
+- (void)wait:(NSTimeInterval)delay work:(void (^)(void))work {
+    if (self.schedule != self.defaultSchedule) {
+        self.schedule(delay, work);
+        return;
+    }
+    if (self.waitTimer) {
+        dispatch_source_cancel(self.waitTimer);
+    }
+    self.waitTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+    if (!self.waitTimer) {
+        self.state = NSFilterRestartUnknown;
+        [self finish:[self error:@"Could not allocate the transaction wait timer."]];
+        return;
+    }
+    dispatch_source_set_timer(self.waitTimer,
+                              dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)),
+                              DISPATCH_TIME_FOREVER, NSEC_PER_MSEC * 10);
+    dispatch_source_set_event_handler(self.waitTimer, work);
+    dispatch_resume(self.waitTimer);
+}
 - (void)waitForStop:(NSUInteger)attempt {
     if (self.isStopped(self.wasEnabled)) {
         [self stageConfiguration];
@@ -190,11 +249,12 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
         return;
     }
     NSUInteger generation = self.generation;
-    self.schedule(0.25, ^{
-        if (self.completion && generation == self.generation) {
-            [self waitForStop:attempt + 1];
-        }
-    });
+    [self wait:0.25
+          work:^{
+              if (self.completion && generation == self.generation) {
+                  [self waitForStop:attempt + 1];
+              }
+          }];
 }
 - (BOOL)validateReloadEnabled:(BOOL)enabled error:(NSError **)error {
     NSString *description = self.restoring ? self.previousDescription : NSFilterLocalizedDescription;
@@ -210,40 +270,42 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
     return NSFilterConfigurationValidate(self.manager.providerConfiguration, self.expectedFields, YES, error);
 }
 - (void)stageConfiguration {
-    [self
-        preferences:NO
-         completion:^(NSError *loadError) {
-             if (loadError || self.manager.enabled) {
-                 [self recover:loadError
-                                   ?: [self error:@"The filter changed to enabled before disabled staging."]];
-                 return;
-             }
-             self.manager.providerConfiguration = self.candidate;
-             self.manager.localizedDescription =
-                 self.restoring ? self.previousDescription : NSFilterLocalizedDescription;
-             self.manager.enabled = NO;
-             self.touchedPreferences = YES;
-             self.state = NSFilterRestartUnknown;
-             [self preferences:YES
-                    completion:^(NSError *saveError) {
-                        if (saveError) {
-                            [self recover:saveError];
-                            return;
-                        }
-                        [self preferences:NO
-                               completion:^(NSError *reloadError) {
-                                   NSError *validationError = nil;
-                                   if (reloadError || ![self validateReloadEnabled:NO
-                                                                             error:&validationError]) {
-                                       [self recover:reloadError ?: validationError];
-                                       return;
-                                   }
-                                   self.state = NSFilterRestartOffVerified;
-                                   [self record:@"staged-off-reloaded-verified"];
-                                   [self enableStagedConfiguration];
-                               }];
-                    }];
-         }];
+    [self preferences:NO
+           completion:^(NSError *loadError) {
+               if (loadError) {
+                   [self recover:loadError];
+                   return;
+               }
+               if (self.manager.enabled || ![self ownsLoadedConfiguration]) {
+                   [self finishExternalChange];
+                   return;
+               }
+               self.manager.providerConfiguration = self.candidate;
+               self.manager.localizedDescription =
+                   self.restoring ? self.previousDescription : NSFilterLocalizedDescription;
+               self.manager.enabled = NO;
+               self.touchedPreferences = YES;
+               self.state = NSFilterRestartUnknown;
+               [self preferences:YES
+                      completion:^(NSError *saveError) {
+                          if (saveError) {
+                              [self recover:saveError];
+                              return;
+                          }
+                          [self preferences:NO
+                                 completion:^(NSError *reloadError) {
+                                     NSError *validationError = nil;
+                                     if (reloadError || ![self validateReloadEnabled:NO
+                                                                               error:&validationError]) {
+                                         [self recover:reloadError ?: validationError];
+                                         return;
+                                     }
+                                     self.state = NSFilterRestartOffVerified;
+                                     [self record:@"staged-off-reloaded-verified"];
+                                     [self enableStagedConfiguration];
+                                 }];
+                      }];
+           }];
 }
 - (void)enableStagedConfiguration {
     self.manager.enabled = YES;
@@ -273,7 +335,7 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
         [self
             finish:self.restoring
                        ? [self error:[NSString stringWithFormat:@"%@ Previous configuration restored and "
-                                                                @"read back with the required beta fallback "
+                                                                @"read back with the required fallback "
                                                                 @"policy; its current control provider "
                                                                 @"responded. Control health does not verify "
                                                                 @"every connection.",
@@ -288,11 +350,12 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
         return;
     }
     NSUInteger generation = self.generation;
-    self.schedule(0.25, ^{
-        if (self.completion && generation == self.generation) {
-            [self waitForStart:attempt + 1];
-        }
-    });
+    [self wait:0.25
+          work:^{
+              if (self.completion && generation == self.generation) {
+                  [self waitForStart:attempt + 1];
+              }
+          }];
 }
 - (void)recover:(NSError *)error {
     if (!self.originalError) {
@@ -313,6 +376,10 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
            completion:^(NSError *loadError) {
                if (loadError) {
                    [self disableFailedConfiguration:loadError];
+                   return;
+               }
+               if (![self ownsLoadedConfiguration]) {
+                   [self finishExternalChange];
                    return;
                }
                [self disableForStaging];
@@ -345,6 +412,10 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
            completion:^(NSError *loadError) {
                if (loadError) {
                    failed(loadError);
+                   return;
+               }
+               if (![self ownsLoadedConfiguration]) {
+                   [self finishExternalChange];
                    return;
                }
                if (!self.manager.enabled) {

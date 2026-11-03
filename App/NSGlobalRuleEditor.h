@@ -6,5 +6,5 @@
 // Initial values for a new rule; never treated as a rule to replace.
 @property(nonatomic, copy) NSString *initialKey;
 @property(nonatomic, copy) NSString *originalAction;
-@property(nonatomic, copy) BOOL (^saveRule)(NSString *key, NSString *action, NSError **error);
+@property(nonatomic, copy) void (^saveRule)(NSString *key, NSString *action, void (^completion)(NSError *));
 @end

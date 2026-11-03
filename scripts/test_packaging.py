@@ -10,6 +10,7 @@ import sys
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import patch
 import sync_version
 from sync_version import generate_bundle_metadata, release_metadata
 from prepare_package import maintainer_script
@@ -104,6 +105,7 @@ def check_install_lifecycle(temporary, scheme):
         'sbreload': 'printf "reload\\n" >> "$TEST_LOG"\nexit "$RELOAD_STATUS"\n',
     }
     source = maintainer_script(sources['postinst'], scheme).decode()
+    source = source.replace(f'{prefix}/var/lib/netshield2-lifecycle', shlex.quote(str(fixture / 'lifecycle')))
     for command, body in commands.items():
         path = fixture / command
         path.write_text('#!/bin/sh\n' + body, newline='\n')
@@ -132,15 +134,16 @@ logger() { printf 'diagnostic:%s\\n' "$*" >> "$TEST_LOG"; }
     subprocess.run([shell, '-n', str(script)], check=True)
     version = release_metadata()['Version']
     cases = [
-        (['configure'], 0, 0, 'install ok installed', False, True),
-        (['configure', '1.0.0'], 0, 0, 'install ok installed', False, True),
-        (['configure', version], 0, 0, 'install ok installed', False, True),
-        (['configure'], 1, 0, 'install ok installed', False, False),
+        (['configure'], 0, 0, f'install ok installed {version}', False, True),
+        (['configure', '1.0.0'], 0, 0, f'install ok installed {version}', False, True),
+        (['configure', version], 0, 0, f'install ok installed {version}', False, True),
+        (['configure'], 1, 0, f'install ok installed {version}', False, False),
         (['configure'], 0, 0, 'install ok half-configured', False, False),
-        (['configure'], 0, 1, 'install ok installed', False, True),
-        (['configure'], 0, 0, 'install ok installed', True, False),
+        (['configure'], 0, 0, 'install ok installed 0.0.0', False, False),
+        (['configure'], 0, 1, f'install ok installed {version}', False, True),
+        (['configure'], 0, 0, f'install ok installed {version}', True, False),
     ]
-    cases += [([action], 0, 0, 'install ok installed', False, False)
+    cases += [([action], 0, 0, f'install ok installed {version}', False, False)
               for action in ('abort-upgrade', 'abort-remove', 'abort-deconfigure', 'triggered', '')]
     release = fixture / 'release-worker'
     for index, (arguments, cache_status, reload_status, status, wait_forever, reload) in enumerate(cases):
@@ -170,7 +173,7 @@ logger() { printf 'diagnostic:%s\\n' "$*" >> "$TEST_LOG"; }
         assert calls.count('reload') == int(reload), (arguments, calls)
         if worker:
             assert any(call.startswith('diagnostic:') for call in calls) == (
-                wait_forever or reload_status != 0 or status != 'install ok installed'), calls
+                wait_forever or reload_status != 0 or status != f'install ok installed {version}'), calls
             if reload:
                 assert calls.index('reload') > next(i for i, call in enumerate(calls)
                                                     if call.startswith('query:')), calls
@@ -187,8 +190,30 @@ logger() { printf 'diagnostic:%s\\n' "$*" >> "$TEST_LOG"; }
     print(f'Passed {scheme} fresh/update/reinstall, deferred reload, failure and non-configure checks')
 
 
+def check_metadata_read_contention(temporary):
+    template = ROOT / 'App/Resources/Info.plist'
+    output = temporary / 'read-contention.plist'
+    output.write_bytes(b'outdated')
+    read_bytes = pathlib.Path.read_bytes
+    denied = False
+
+    def read_with_contention(path):
+        nonlocal denied
+        if path == output and not denied:
+            denied = True
+            raise PermissionError('injected sharing violation')
+        return read_bytes(path)
+
+    with patch.object(pathlib.Path, 'read_bytes', read_with_contention):
+        generate_bundle_metadata(template, output)
+    assert denied
+    assert plistlib.loads(output.read_bytes())['CFBundleShortVersionString'] == release_metadata()['Version']
+    print('Passed metadata read-sharing fault injection')
+
+
 with tempfile.TemporaryDirectory(prefix='netshield-packaging-') as directory:
     check_generated_metadata(pathlib.Path(directory))
+    check_metadata_read_contention(pathlib.Path(directory))
     for scheme, architecture, prefix in VARIANTS:
         check_install_lifecycle(pathlib.Path(directory), scheme)
         if shutil.which('sh'):
@@ -227,7 +252,7 @@ with tempfile.TemporaryDirectory(prefix='netshield-packaging-') as directory:
             if not prefix:
                 assert b'/var/jb/' not in content
             else:
-                assert content == sources[name]
+                assert content == sources[name].replace(b'@NETSHIELD_PACKAGE_VERSION@', release_metadata()['Version'].encode('ascii'))
         run('validate.py', *arguments)
 
         staged_info = app / 'Info.plist'

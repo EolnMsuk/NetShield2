@@ -1,4 +1,5 @@
 #import "../Shared/NSRuleChoices.h"
+#import "NSSectionTypography.h"
 #import "NSDashboard+Internal.h"
 #import "../Shared/NSActivity.h"
 
@@ -151,8 +152,8 @@
     return @[
         @(path.section), [self rowKey:path],
         path.section == NSDashboardSectionActivity && self.filteredActivityGroups.count
-            ? self.filteredActivityGroups[path.row]
-            : @{},
+            ? self.filteredActivityGroups[path.row][@"time"]
+            : @0,
         @(self.tableView.bounds.size.width), self.traitCollection.preferredContentSizeCategory
     ];
 }
@@ -163,7 +164,7 @@
 - (void)tableView:(UITableView *)tableView
       willDisplayCell:(UITableViewCell *)cell
     forRowAtIndexPath:(NSIndexPath *)path {
-    if (self.rowHeights.count > 5000) {
+    if (self.rowHeights.count >= 512) {
         [self.rowHeights removeAllObjects];
     }
     self.rowHeights[[self heightKey:path]] = @(cell.bounds.size.height);
@@ -174,7 +175,11 @@
         return;
     }
     NSArray *signature = @[
-        self.policy.document ?: @{},
+        [self.policy.document dictionaryWithValuesForKeys:@[
+            @"rules", @"globalRules", @"default", @"unattributed", @"filterSockets",
+            @"allowAppleSystemProcesses", @"ruleDestinations"
+        ]]
+            ?: @{},
         self.monitor[@"requests"] ?: @[],
         self.monitor[@"events"] ?: @[],
         self.monitor[@"policyError"] ?: @"",
@@ -189,7 +194,9 @@
         self.bootPolicyStatus ?: @"",
         self.notificationStatus ?: @"",
         self.policyReadError ?: @"",
+        self.monitorReadError ?: @"",
         self.monitor[@"overflowCount"] ?: @0,
+        self.monitor[@"droppedWorkCount"] ?: @0,
         self.monitor[@"evictedRequestCount"] ?: @0,
         self.identities ?: @[],
         self.systemIdentities ?: @[],
@@ -213,7 +220,7 @@
             ]];
         }
     }
-    self.activityGroups = NSGroupedActivity(self.monitor[@"events"] ?: @[]);
+    // Grouping is prepared on the app storage worker with its monitor snapshot.
     self.filteredActivityGroups = [self.activityGroups
         filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *connection,
                                                                           NSDictionary *bindings) {
@@ -328,9 +335,8 @@
         return @"Overrides app & system rules.";
     }
     if (section == NSDashboardSectionFirewall) {
-        return
-            [NSString stringWithFormat:@"Rules are saved when firewall is turned off. %@",
-                                       self.bootPolicyStatus ?: @"Beta fallback policy state unavailable."];
+        return [NSString stringWithFormat:@"Rules are saved when firewall is turned off. %@",
+                                          self.bootPolicyStatus ?: @"Fallback policy state unavailable."];
     }
     if (section == NSDashboardSectionRequests) {
         return [NSString stringWithFormat:@"During this filter session: %@ connections rejected at queue "
@@ -517,10 +523,7 @@
 - (void)tableView:(UITableView *)tableView
     willDisplayHeaderView:(UIView *)view
                forSection:(NSInteger)section {
-    if ([view isKindOfClass:UITableViewHeaderFooterView.class]) {
-        ((UITableViewHeaderFooterView *)view).textLabel.font = [[UIFontMetrics
-            metricsForTextStyle:UIFontTextStyleFootnote] scaledFontForFont:[UIFont systemFontOfSize:16]];
-    }
+    NSStyleSectionHeader(view);
 }
 - (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section {
     if (section == NSDashboardSectionGlobalRules) {
@@ -568,8 +571,18 @@
         }
         return cached;
     }
-    UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle
-                                                   reuseIdentifier:nil];
+    BOOL persistent = path.section == NSDashboardSectionFirewall && (path.row == 0 || path.row == 2);
+    NSString *reuse = persistent ? nil : @"DashboardSubtitle";
+    UITableViewCell *cell = reuse ? [tableView dequeueReusableCellWithIdentifier:reuse] : nil;
+    if (!cell) {
+        cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:reuse];
+    }
+    cell.textLabel.text = nil;
+    cell.detailTextLabel.text = nil;
+    cell.imageView.image = nil;
+    cell.backgroundColor = nil;
+    cell.accessoryView = nil;
+    cell.selectionStyle = UITableViewCellSelectionStyleDefault;
     cell.textLabel.numberOfLines = 0;
     cell.detailTextLabel.numberOfLines = 0;
     cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
@@ -634,6 +647,13 @@
         }
         if ([self.monitor[@"dnsIssue"] length]) {
             detail = [detail stringByAppendingFormat:@"\n%@", self.monitor[@"dnsIssue"]];
+        }
+        if (healthy && [self.monitor[@"droppedWorkCount"] unsignedLongLongValue]) {
+            detail = [NSString stringWithFormat:@"%@ Control work skipped under load: %@.", detail ?: @"",
+                                                self.monitor[@"droppedWorkCount"]];
+        }
+        if (self.monitorReadError.length) {
+            detail = [NSString stringWithFormat:@"Provider report unavailable: %@", self.monitorReadError];
         }
         if (self.policyReadError.length) {
             detail = self.policyReadError;
@@ -748,7 +768,10 @@
             NSDictionary *event = events[path.row];
             BOOL allowed = [event[@"action"] isEqual:@"allow"];
             BOOL blocked = [event[@"action"] isEqual:@"block"];
-            NSString *action = allowed ? @"Allowed" : blocked ? @"Blocked" : @"Connection";
+            NSString *action =
+                allowed   ? @"Allowed"
+                : blocked ? @"Blocked"
+                          : ([event[@"action"] isEqual:@"mixed"] ? @"Mixed outcomes" : @"Connection");
             UIColor *color = allowed ? NSRuleColor(@"allow") : blocked ? NSRuleColor(@"block") : nil;
             if (color) {
                 cell.backgroundColor = [color colorWithAlphaComponent:0.14];
@@ -765,8 +788,12 @@
                                            event[@"direction"], event[@"connections"],
                                            [event[@"bytesIn"] unsignedLongLongValue] / 1000000.0,
                                            [event[@"bytesOut"] unsignedLongLongValue] / 1000000.0];
+            NSDictionary *counts = event[@"outcomeCounts"];
             cell.detailTextLabel.text = [cell.detailTextLabel.text
-                stringByAppendingFormat:@"\n%@", NSDestinationSummary(event[@"destination"])];
+                stringByAppendingFormat:
+                    @"\n%@ allowed / %@ blocked / %@ other\n%@ hosts; most recent peer: %@",
+                    counts[@"allow"] ?: @0, counts[@"block"] ?: @0, counts[@"other"] ?: @0,
+                    event[@"hostCount"] ?: @1, NSDestinationSummary(event[@"destination"])];
         }
     } else if (path.section == NSDashboardSectionSupport) {
         cell.textLabel.text = @[ @"Check for Updates", @"GitHub Link", @"Support the Developer" ][path.row];
@@ -837,7 +864,7 @@
                                  message:removeFilter ? @"Removes the content filter, rules and "
                                                         @"history, then resets settings."
                                                       : @"Removes rules and history, resets settings, "
-                                                        @"and removes the installed content filter."
+                                                        @"and disables the installed content filter."
                           preferredStyle:UIAlertControllerStyleAlert];
             [alert addAction:[UIAlertAction actionWithTitle:removeFilter ? @"Remove Filter & Settings"
                                                                          : @"Reset Settings"
@@ -874,18 +901,23 @@
         contextualActionWithStyle:UIContextualActionStyleDestructive
                             title:@"Remove"
                           handler:^(UIContextualAction *action, UIView *source, void (^completion)(BOOL)) {
-                              BOOL saved = !global ? [self removeAppRuleForIdentity:key]
-                                                   : [self updatePolicy:^BOOL(NSMutableDictionary *document,
-                                                                              NSError **error) {
-                                                         NSMutableDictionary *rules =
-                                                             [document[@"globalRules"] mutableCopy];
-                                                         [rules removeObjectForKey:key];
-                                                         document[@"globalRules"] = rules;
-                                                         return YES;
-                                                     }];
-                              completion(saved);
-                              [tableView setEditing:NO animated:YES];
-                              [self reloadMonitor];
+                              void (^finished)(BOOL) = ^(BOOL saved) {
+                                  completion(saved);
+                                  [tableView setEditing:NO animated:YES];
+                                  [self reloadMonitor];
+                              };
+                              if (!global) {
+                                  [self removeAppRuleForIdentity:key completion:finished];
+                              } else {
+                                  [self
+                                      updatePolicy:^BOOL(NSMutableDictionary *document, NSError **error) {
+                                          NSMutableDictionary *rules = [document[@"globalRules"] mutableCopy];
+                                          [rules removeObjectForKey:key];
+                                          document[@"globalRules"] = rules;
+                                          return YES;
+                                      }
+                                        completion:finished];
+                              }
                           }];
     remove.backgroundColor = UIColor.systemRedColor;
     UISwipeActionsConfiguration *configuration =

@@ -1,6 +1,7 @@
 #import "NSRespring.h"
 #include <errno.h>
 #include <spawn.h>
+#include <sys/wait.h>
 #include <string.h>
 
 extern char **environ;
@@ -74,7 +75,22 @@ BOOL NSRespring(NSError **error) {
             const char *executable = path.fileSystemRepresentation;
             char *const arguments[] = {(char *)executable, NULL};
             pid_t process = 0;
-            return posix_spawn(&process, executable, NULL, NULL, arguments, environ);
+            int result = posix_spawn(&process, executable, NULL, NULL, arguments, environ);
+            if (!result) {
+                dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+                    int status = 0;
+                    pid_t child;
+                    do {
+                        child = waitpid(process, &status, 0);
+                    } while (child < 0 && errno == EINTR);
+                    if (child < 0 || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+                        NSLog(@"NetShield2: respring child failed (wait=%d status=%d). Launch was "
+                              @"acknowledged; respring completion is unverified.",
+                              child < 0 ? errno : 0, status);
+                    }
+                });
+            }
+            return result;
         },
         error);
 }

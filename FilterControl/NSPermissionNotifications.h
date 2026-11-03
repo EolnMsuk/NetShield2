@@ -15,6 +15,10 @@
 
 @interface NSPermissionNotifications : NSObject
 - (instancetype)initWithCenter:(id<NSPermissionNotificationCenter>)center;
+// The provider polls current requests; the monotonic clock also makes missing
+// notification-center completions deterministic in regressions.
+- (instancetype)initWithCenter:(id<NSPermissionNotificationCenter>)center
+                         clock:(NSTimeInterval (^)(void))clock;
 @property(nonatomic, readonly, copy) NSString *deliveryIssue;
 - (void)updateRequests:(NSArray<NSDictionary *> *)requests
                 policy:(NSPolicy *)policy

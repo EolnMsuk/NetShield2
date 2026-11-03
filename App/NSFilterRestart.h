@@ -1,4 +1,5 @@
 #import <Foundation/Foundation.h>
+#import "NSConfigurationCoordinator.h"
 
 @protocol NSFilterRestartManager <NSObject>
 @property(nonatomic, strong) id providerConfiguration;
@@ -22,6 +23,7 @@ typedef NS_ENUM(NSInteger, NSFilterRestartState) {
 // so preference errors and provider handoff can be tested without NetworkExtension.
 @interface NSFilterRestart : NSObject
 @property(nonatomic, strong) id<NSFilterRestartManager> manager;
+@property(nonatomic, strong) NSConfigurationCoordinator *coordinator;
 @property(nonatomic, copy) id (^configuration)(id previous, BOOL restoring, NSError **error);
 @property(nonatomic, copy) BOOL (^isStopped)(BOOL previouslyEnabled);
 @property(nonatomic, copy) BOOL (^isRunning)(id configuration);

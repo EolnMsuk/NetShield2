@@ -26,6 +26,9 @@ with tempfile.TemporaryDirectory(prefix="netshield-uninstall-") as directory:
     app = temporary / "app"
     cache = temporary / "uicache"
     reload = temporary / "sbreload"
+    query = temporary / "dpkg-query"
+    query.write_text('#!/bin/sh\nif [ "${PACKAGE_PRESENT:-0}" = 1 ]; then printf "install ok installed 2.6.4"; exit 0; fi\nprintf "dpkg-query: no packages found matching com.eolnmsuk.netshield\n" >&2\nexit 1\n')
+    query.chmod(0o755)
     app.write_text(
         '#!/bin/sh\nprintf "app:%s\\n" "$*" >> "$TEST_LOG"\n'
         'printf "%s\\n" "LYNX DEBUG startup noise"\n'
@@ -62,6 +65,8 @@ logger() { printf 'diagnostic:%s\\n' "$*" >> "$TEST_LOG"; }
     script.write_text(source.replace(f"{prefix}/Applications/NetShield2.app/NetShield2", shlex.quote(str(app)))
                      .replace(f"{prefix}/usr/bin/uicache", shlex.quote(str(cache)))
                      .replace(f"{prefix}/usr/bin/sbreload", shlex.quote(str(reload)))
+                     .replace(f"{prefix}/usr/bin/dpkg-query", shlex.quote(str(query)))
+                     .replace(f"{prefix}/var/lib/netshield2-lifecycle", shlex.quote(str(temporary / 'lifecycle')))
                      .replace("set -eu\n", worker_stubs), newline='\n')
     subprocess.run([shell, "-n", str(script)], check=True)
     cases = [
@@ -124,6 +129,15 @@ logger() { printf 'diagnostic:%s\\n' "$*" >> "$TEST_LOG"; }
             assert f"exit {app_status}" in result.stderr
         else:
             assert result.stderr == "", (action, result.stderr)
+    # A replacement already installed must fence the earlier removal worker.
+    log.write_text('')
+    result = subprocess.run([shell, str(script), 'remove'], env=dict(environment, PACKAGE_PRESENT='1'),
+                            capture_output=True, text=True, timeout=5)
+    assert result.returncode == 0
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline and 'diagnostic:' not in log.read_text():
+        time.sleep(0.01)
+    assert 'removal is unverified' in log.read_text() and 'reload' not in log.read_text().splitlines()
     reload.unlink()
     log.write_text('')
     result = subprocess.run([shell, str(script), 'remove'], env=environment,

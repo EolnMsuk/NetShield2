@@ -1,4 +1,5 @@
 #import "NSGlobalRuleEditor.h"
+#import "NSSectionTypography.h"
 #import "NSRuleActionController.h"
 #import "NSRuleAppearance.h"
 #import "../Shared/NSGlobalRule.h"
@@ -112,12 +113,26 @@ typedef NS_ENUM(NSInteger, NSGlobalEditorSection) {
         [self showMessage:@"The app identity is too long or this rule contains too many entries."];
         return;
     }
-    NSError *error = nil;
-    if (!self.saveRule || !self.saveRule(key, self.ruleAction, &error)) {
-        [self showMessage:error.localizedDescription ?: @"The rule could not be saved. Please try again."];
+    if (!self.saveRule || !self.navigationItem.rightBarButtonItem.enabled) {
         return;
     }
-    [self dismissViewControllerAnimated:YES completion:nil];
+    self.navigationItem.rightBarButtonItem.enabled = NO;
+    self.navigationItem.leftBarButtonItem.enabled = NO;
+    __weak typeof(self) weakSelf = self;
+    self.saveRule(key, self.ruleAction, ^(NSError *error) {
+        NSGlobalRuleEditor *owner = weakSelf;
+        if (!owner) {
+            return;
+        }
+        owner.navigationItem.rightBarButtonItem.enabled = YES;
+        owner.navigationItem.leftBarButtonItem.enabled = YES;
+        if (error) {
+            [owner
+                showMessage:error.localizedDescription ?: @"The rule could not be saved. Please try again."];
+        } else {
+            [owner dismissViewControllerAnimated:YES completion:nil];
+        }
+    });
 }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
     return 5;
@@ -128,17 +143,14 @@ typedef NS_ENUM(NSInteger, NSGlobalEditorSection) {
 - (void)tableView:(UITableView *)tableView
     willDisplayHeaderView:(UIView *)view
                forSection:(NSInteger)section {
-    if ([view isKindOfClass:UITableViewHeaderFooterView.class]) {
-        ((UITableViewHeaderFooterView *)view).textLabel.font = [[UIFontMetrics
-            metricsForTextStyle:UIFontTextStyleFootnote] scaledFontForFont:[UIFont systemFontOfSize:16]];
-    }
+    NSStyleSectionHeader(view);
 }
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
     return @[ @"Direction", @"App", @"Domains / IP ranges", @"Port", @"Protocol" ][section];
 }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     return @[
-        @"Every selected condition must match. Leave apps, destinations and ports unrestricted to apply the action to all traffic for the selected protocol. Saved in Global Rules, overriding app rules and the iOS system traffic allowance. Directional rules leave the opposite direction to other rules or the default policy, including Ask Me. If global rules overlap, blocking takes priority.",
+        @"Every selected condition must match. Leave apps, destinations and ports unrestricted to apply the action to all traffic for the selected protocol. Saved in Global Rules, overriding app rules and the iOS system traffic allowance. Directional rules leave the opposite direction to other rules or the default policy, including Ask Me. Matching custom rules use blocking priority. Legacy rules keep their ordered address, exact domain, DNS block fallback, remote port, then local port precedence; an earlier allow can win.",
         @"Select one or more apps. Tap a checked app to remove it, or choose All apps to clear the selection.",
         @"Separate entries with commas, e.g. example.com, 192.168.1.10-192.168.1.20. Blank means all destinations. Bare and www domains are separate.",
         @"Choose remote or local, then enter port numbers separated by commas. Blank means all ports.",
@@ -201,12 +213,13 @@ typedef NS_ENUM(NSInteger, NSGlobalEditorSection) {
         field.keyboardType = UIKeyboardTypeASCIICapable;
     }];
     __weak typeof(self) weakSelf = self;
+    __weak UIAlertController *weakAlert = alert;
     [alert
         addAction:[UIAlertAction
                       actionWithTitle:@"Add"
                                 style:UIAlertActionStyleDefault
                               handler:^(UIAlertAction *action) {
-                                  NSString *identity = [alert.textFields.firstObject.text
+                                  NSString *identity = [weakAlert.textFields.firstObject.text
                                       stringByTrimmingCharactersInSet:NSCharacterSet
                                                                           .whitespaceAndNewlineCharacterSet];
                                   if (!identity.length || identity.length > NSMaximumIdentityLength) {

@@ -5,6 +5,7 @@
 #import "../Shared/NSExport.h"
 #import "../Shared/NSProviderHealth.h"
 #import "../Shared/NSRuleChoices.h"
+#include <errno.h>
 
 @interface NSCryptoWalletsController : UITableViewController
 @property(nonatomic, copy) NSArray<NSArray<NSString *> *> *wallets;
@@ -139,10 +140,16 @@
     [self loadConfiguration];
 }
 - (void)configurationChanged:(NSNotification *)notification {
+    BOOL returning = [notification.name isEqual:UIApplicationDidBecomeActiveNotification];
     dispatch_async(dispatch_get_main_queue(), ^{
         [self refreshNotificationSettings];
-        NSWriteDocument(@{@"revision" : NSUUID.UUID.UUIDString}, NSNotificationRetryFile, NULL);
-        [self loadConfiguration];
+        NSUInteger generation = self.storageGeneration;
+        [self loadConfigurationWithCompletion:^{
+            if (returning && generation == self.storageGeneration && !self.busy && self.loaded &&
+                NEFilterManager.sharedManager.enabled) {
+                NSWriteNotificationRetryRevision(NULL);
+            }
+        }];
     });
 }
 - (void)dealloc {
@@ -182,16 +189,53 @@
     self.timer = nil;
 }
 - (void)reloadMonitor {
-    if (self.tableView.editing) {
+    if (self.tableView.editing ||
+        UIApplication.sharedApplication.applicationState != UIApplicationStateActive) {
         return;
     }
-    NSError *policyError = nil;
-    self.policy = NSReadPolicy(&policyError);
-    self.policyReadError = self.policy ? @"" : policyError.localizedDescription;
-    if (self.policy && (self.tableView.dragging || self.tableView.decelerating)) {
+    if (self.snapshotPending) {
+        self.snapshotAgain = YES;
         return;
     }
-    NSMutableDictionary *monitor = [NSReadMonitor() mutableCopy];
+    self.snapshotPending = YES;
+    NSUInteger generation = self.storageGeneration;
+    NSArray *cachedEvents = self.activityEvents, *cachedGroups = self.activityGroups;
+    __weak typeof(self) weakSelf = self;
+    dispatch_async(NSAppStorageQueue(), ^{
+        NSError *policyError = nil, *monitorError = nil;
+        NSPolicy *policy = NSReadPolicy(&policyError);
+        NSDictionary *report = NSReadMonitorWithError(&monitorError) ?: @{};
+        NSArray *events = report[@"events"] ?: @[];
+        NSArray *groups =
+            [events isEqual:cachedEvents] && cachedGroups ? cachedGroups : NSGroupedActivity(events);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            NSDashboard *owner = weakSelf;
+            if (!owner) {
+                return;
+            }
+            owner.snapshotPending = NO;
+            BOOL again = owner.snapshotAgain;
+            owner.snapshotAgain = NO;
+            if (generation == owner.storageGeneration && !owner.tableView.editing &&
+                !owner.tableView.dragging && !owner.tableView.decelerating) {
+                owner.policy = policy;
+                owner.policyReadError = policy ? @"" : policyError.localizedDescription;
+                owner.monitorReadError = monitorError && !([monitorError.domain isEqual:NSPOSIXErrorDomain] &&
+                                                           monitorError.code == ENOENT)
+                                             ? monitorError.localizedDescription
+                                             : @"";
+                owner.activityEvents = report[@"events"] ?: @[];
+                owner.activityGroups = groups;
+                [owner applyMonitor:report];
+            }
+            if (again || generation != owner.storageGeneration) {
+                [owner reloadMonitor];
+            }
+        });
+    });
+}
+- (void)applyMonitor:(NSDictionary *)report {
+    NSMutableDictionary *monitor = [report mutableCopy];
     NSMutableArray *requests = [NSMutableArray new];
     for (NSDictionary *request in monitor[@"requests"]) {
         if ([self.policy requiresPermissionForRequest:request]) {
@@ -200,8 +244,18 @@
     }
     monitor[@"requests"] = requests;
     self.monitor = monitor;
+    NSDictionary *represented = nil;
+    for (NSDictionary *request in requests) {
+        if ([request[@"token"] isEqual:self.presentedRequest[@"token"]]) {
+            represented = request;
+        }
+    }
     if (self.permissionAlert &&
-        ![[requests valueForKey:@"token"] containsObject:self.presentedRequest[@"token"]]) {
+        (!represented ||
+         ![(represented[@"direction"] ?: @"unknown") isEqual:(self.presentedRequest[@"direction"]
+                                                                  ?: @"unknown")] ||
+         ![(represented[@"askGeneration"] ?: @"") isEqual:(self.presentedRequest[@"askGeneration"] ?: @"")] ||
+         ![(represented[@"session"] ?: @"") isEqual:(self.presentedRequest[@"session"] ?: @"")])) {
         [self.permissionAlert dismissViewControllerAnimated:NO completion:nil];
         self.permissionAlert = nil;
         self.presentedRequest = nil;
@@ -210,8 +264,12 @@
     NSMutableSet *hiddenIdentities = [NSMutableSet
         setWithArray:[NSUserDefaults.standardUserDefaults stringArrayForKey:@"hiddenRuleIdentities"] ?: @[]];
     [hiddenIdentities minusSet:identities];
-    [NSUserDefaults.standardUserDefaults setObject:hiddenIdentities.allObjects
-                                            forKey:@"hiddenRuleIdentities"];
+    NSSet *previousHidden = [NSSet
+        setWithArray:[NSUserDefaults.standardUserDefaults stringArrayForKey:@"hiddenRuleIdentities"] ?: @[]];
+    if (![previousHidden isEqual:hiddenIdentities]) {
+        [NSUserDefaults.standardUserDefaults setObject:hiddenIdentities.allObjects
+                                                forKey:@"hiddenRuleIdentities"];
+    }
     for (NSDictionary *event in self.monitor[@"events"]) {
         NSString *identity = event[@"identity"];
         if ([identity isKindOfClass:NSString.class] && identity.length &&
@@ -261,60 +319,77 @@
     [self showError:error operation:@"Policy/storage"];
 }
 - (void)exportRulesAndRecentActivityFromRow:(NSIndexPath *)path {
-    NSError *error = nil;
-    NSPolicy *policy = NSReadPolicy(&error);
-    if (!policy) {
-        [self showError:error operation:@"Export"];
+    if (self.exportPending || self.busy) {
         return;
     }
+    self.exportPending = YES;
+    NSUInteger generation = self.storageGeneration;
     NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"";
-    NSData *data = NSRulesAndActivityJSON(policy, NSReadMonitor()[@"events"] ?: @[], version, &error);
-    if (!data) {
-        [self showError:error operation:@"Export"];
-        return;
-    }
-    NSURL *container = NSSharedURL(@"");
-    NSURL *url = NSStageRulesAndActivityExport(data, container, &error);
-    if (!url) {
-        [self showError:error operation:@"Export"];
-        return;
-    }
-    NSError *presentationError = nil;
-    @try {
-        UIActivityViewController *share = [[UIActivityViewController alloc] initWithActivityItems:@[ url ]
-                                                                            applicationActivities:nil];
-        share.popoverPresentationController.sourceView = self.tableView;
-        share.popoverPresentationController.sourceRect = [self.tableView rectForRowAtIndexPath:path];
-        __weak typeof(self) weakSelf = self;
-        share.completionWithItemsHandler =
-            ^(UIActivityType activityType, BOOL completed, NSArray *returnedItems, NSError *activityError) {
-                NSError *cleanupError = nil;
-                NSRemoveStagedExport(container, url, &cleanupError);
-                NSError *resultError = activityError ?: cleanupError;
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    if (resultError) {
-                        [weakSelf showError:resultError operation:@"Export"];
-                    } else if (completed && [weakSelf.message hasPrefix:@"Export: "]) {
-                        weakSelf.message = @"";
-                        [weakSelf refreshTableKeepingPosition];
-                    }
+    dispatch_async(NSAppStorageQueue(), ^{
+        NSError *error = nil;
+        NSPolicy *policy = NSReadPolicy(&error);
+        NSData *data =
+            policy ? NSRulesAndActivityJSON(policy, NSReadMonitor()[@"events"] ?: @[], version, &error) : nil;
+        NSURL *container = NSSharedURL(@"");
+        NSURL *url = data ? NSStageRulesAndActivityExport(data, container, &error) : nil;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self.exportPending = NO;
+            if (generation != self.storageGeneration || self.busy) {
+                if (url) {
+                    dispatch_async(NSAppStorageQueue(), ^{
+                        NSRemoveStagedExport(container, url, NULL);
+                    });
+                }
+                return;
+            }
+            if (!url) {
+                [self showError:error operation:@"Export"];
+                return;
+            }
+            NSError *presentationError = nil;
+            @try {
+                UIActivityViewController *share =
+                    [[UIActivityViewController alloc] initWithActivityItems:@[ url ]
+                                                      applicationActivities:nil];
+                share.popoverPresentationController.sourceView = self.tableView;
+                share.popoverPresentationController.sourceRect = [self.tableView rectForRowAtIndexPath:path];
+                __weak typeof(self) weakSelf = self;
+                share.completionWithItemsHandler = ^(UIActivityType activityType, BOOL completed,
+                                                     NSArray *returnedItems, NSError *activityError) {
+                    dispatch_async(NSAppStorageQueue(), ^{
+                        NSError *cleanupError = nil;
+                        NSRemoveStagedExport(container, url, &cleanupError);
+                        NSError *resultError = activityError ?: cleanupError;
+                        dispatch_async(dispatch_get_main_queue(), ^{
+                            if (resultError) {
+                                [weakSelf showError:resultError operation:@"Export"];
+                            } else if (completed && [weakSelf.message hasPrefix:@"Export: "]) {
+                                weakSelf.message = @"";
+                                [weakSelf refreshTableKeepingPosition];
+                            }
+                        });
+                    });
+                };
+                if (self.view.window && !self.presentedViewController && !self.isBeingDismissed) {
+                    [self presentViewController:share animated:YES completion:nil];
+                }
+                if (!share.presentingViewController) {
+                    presentationError =
+                        NSExportError(@"The share sheet could not open. Return to NetShield2 and "
+                                      @"retry Export.");
+                }
+            } @catch (NSException *exception) {
+                presentationError = NSExportError(
+                    [NSString stringWithFormat:@"The share sheet could not open: %@", exception.reason]);
+            }
+            if (presentationError) {
+                dispatch_async(NSAppStorageQueue(), ^{
+                    NSRemoveStagedExport(container, url, NULL);
                 });
-            };
-        if (self.view.window && !self.presentedViewController && !self.isBeingDismissed) {
-            [self presentViewController:share animated:YES completion:nil];
-        }
-        if (!share.presentingViewController) {
-            presentationError = NSExportError(@"The share sheet could not open. Return to NetShield2 and "
-                                              @"retry Export.");
-        }
-    } @catch (NSException *exception) {
-        presentationError = NSExportError(
-            [NSString stringWithFormat:@"The share sheet could not open: %@", exception.reason]);
-    }
-    if (presentationError) {
-        NSRemoveStagedExport(container, url, NULL);
-        [self showError:presentationError operation:@"Export"];
-    }
+                [self showError:presentationError operation:@"Export"];
+            }
+        });
+    });
 }
 - (void)showError:(NSError *)error operation:(NSString *)operation {
     self.message = [NSString stringWithFormat:@"%@: %@ (%@ %ld).", operation, error.localizedDescription,
@@ -327,34 +402,90 @@
     }
     [self refreshTableKeepingPosition];
 }
-- (BOOL)updatePolicy:(BOOL (^)(NSMutableDictionary *, NSError **))mutation {
-    NSError *error = nil;
-    if (!NSUpdatePolicy(mutation, &error)) {
-        [self showError:error];
-        [self reloadMonitor];
-        return NO;
+- (void)performStorageCommand:(BOOL (^)(NSError **))work completion:(void (^)(BOOL, NSError *))completion {
+    if (self.busy) {
+        completion(NO, [NSError errorWithDomain:@"NetShield2.Storage"
+                                           code:EBUSY
+                                       userInfo:@{
+                                           NSLocalizedDescriptionKey :
+                                               @"Another operation is in progress. Try again shortly."
+                                       }]);
+        return;
     }
-    NSRemoveAutomaticallyAllowedNotifications();
-    self.message = @"Policy saved for new flows. Close existing connections and retry; admitted flows keep "
-                   @"their previous verdict.";
-    [self reloadMonitor];
-    return YES;
+    self.busy = YES;
+    self.storageGeneration++;
+    [self refreshTableKeepingPosition];
+    dispatch_async(NSAppStorageQueue(), ^{
+        NSError *error = nil;
+        NSURL *lockURL = NSSharedURL(@"configuration.lock");
+        NSStoreLock *lock = lockURL ? [NSStoreLock tryLockURL:lockURL error:&error] : nil;
+        BOOL saved = NO;
+        @try {
+            if (lock) {
+                saved = work(&error);
+            }
+        } @finally {
+            [lock unlock];
+        }
+        if (!saved && !error) {
+            error = [NSError errorWithDomain:@"NetShield2.Storage"
+                                        code:1
+                                    userInfo:@{
+                                        NSLocalizedDescriptionKey :
+                                            @"Saved state is unavailable or the operation did not persist."
+                                    }];
+        }
+        NSPolicy *persisted = saved ? NSReadPolicy(NULL) : nil;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self.busy = NO;
+            self.storageGeneration++;
+            if (persisted) {
+                self.policy = persisted;
+            }
+            completion(saved, error);
+            [self reloadMonitor];
+            if (self.configurationRefreshPending && !self.busy) {
+                [self loadConfiguration];
+            }
+        });
+    });
 }
-- (BOOL)removeAppRuleForIdentity:(NSString *)identity {
-    BOOL saved = [self updatePolicy:^BOOL(NSMutableDictionary *document, NSError **error) {
-        return NSUseDefaultRule(document, identity, error);
-    }];
-    if (saved) {
-        // History must not recreate a removed row on refresh or after relaunch.
-        // A newly saved explicit rule will still make the identity visible.
-        NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
-        NSMutableSet *hidden =
-            [NSMutableSet setWithArray:[defaults stringArrayForKey:@"hiddenRuleIdentities"] ?: @[]];
-        [hidden addObject:identity];
-        [defaults setObject:hidden.allObjects forKey:@"hiddenRuleIdentities"];
-        [self reloadMonitor];
-    }
-    return saved;
+- (void)updatePolicy:(BOOL (^)(NSMutableDictionary *, NSError **))mutation
+          completion:(void (^)(BOOL))completion {
+    [self
+        performStorageCommand:^BOOL(NSError **error) {
+            return NSUpdatePolicy(mutation, error);
+        }
+        completion:^(BOOL saved, NSError *error) {
+            if (saved) {
+                NSRemoveAutomaticallyAllowedNotifications();
+                self.message = @"Policy saved for new flows. Close existing connections and retry; admitted "
+                               @"flows keep their previous verdict.";
+            } else {
+                [self showError:error];
+            }
+            if (completion) {
+                completion(saved);
+            }
+        }];
+}
+- (void)removeAppRuleForIdentity:(NSString *)identity completion:(void (^)(BOOL))completion {
+    [self
+        updatePolicy:^BOOL(NSMutableDictionary *document, NSError **error) {
+            return NSUseDefaultRule(document, identity, error);
+        }
+        completion:^(BOOL saved) {
+            if (saved) {
+                NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+                NSMutableSet *hidden =
+                    [NSMutableSet setWithArray:[defaults stringArrayForKey:@"hiddenRuleIdentities"] ?: @[]];
+                [hidden addObject:identity];
+                [defaults setObject:hidden.allObjects forKey:@"hiddenRuleIdentities"];
+            }
+            if (completion) {
+                completion(saved);
+            }
+        }];
 }
 - (void)clearSectionTapped:(UIButton *)sender {
     if (self.busy || self.clearingSection) {
@@ -383,54 +514,57 @@
                                                 self.clearingSection = NO;
                                                 [self refreshTableKeepingPosition];
                                             }]];
-    [alert addAction:[UIAlertAction
-                         actionWithTitle:@"Clear"
-                                   style:UIAlertActionStyleDestructive
-                                 handler:^(UIAlertAction *action) {
-                                     NSError *error = nil;
-                                     NSMutableSet *removed = [NSMutableSet new];
-                                     BOOL saved =
-                                         activity
-                                             ? NSClearActivity(&error)
-                                             : NSUpdatePolicy(
-                                                   ^BOOL(NSMutableDictionary *document,
-                                                         NSError **mutationError) {
-                                                       if (global) {
-                                                           document[@"globalRules"] = @{};
-                                                           return YES;
-                                                       }
-                                                       NSArray *identities = NSClearIdentityRules(
-                                                           document, system,
-                                                           NSReadMonitor()[@"events"] ?: @[], mutationError);
-                                                       if (!identities) {
-                                                           return NO;
-                                                       }
-                                                       [removed addObjectsFromArray:identities];
-                                                       return YES;
-                                                   },
-                                                   &error);
-                                     self.clearingSection = NO;
-                                     if (saved) {
-                                         if (removed.count) {
-                                             NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
-                                             NSMutableSet *hidden = [NSMutableSet
-                                                 setWithArray:[defaults
-                                                                  stringArrayForKey:@"hiddenRuleIdentities"]
-                                                                  ?: @[]];
-                                             [hidden unionSet:removed];
-                                             [defaults setObject:hidden.allObjects
-                                                          forKey:@"hiddenRuleIdentities"];
-                                         }
-                                         if (!activity) {
-                                             NSRemoveAutomaticallyAllowedNotifications();
-                                         }
-                                         self.message = [NSString stringWithFormat:@"%@ cleared.", name];
-                                     } else {
-                                         [self showError:error
-                                               operation:[@"Clear " stringByAppendingString:name]];
-                                     }
-                                     [self reloadMonitor];
-                                 }]];
+    [alert
+        addAction:[UIAlertAction
+                      actionWithTitle:@"Clear"
+                                style:UIAlertActionStyleDestructive
+                              handler:^(UIAlertAction *action) {
+                                  NSMutableSet *removed = [NSMutableSet new];
+                                  [self
+                                      performStorageCommand:^BOOL(NSError **error) {
+                                          if (activity) {
+                                              return NSClearActivity(error);
+                                          }
+                                          return NSUpdatePolicy(
+                                              ^BOOL(NSMutableDictionary *document, NSError **mutationError) {
+                                                  if (global) {
+                                                      document[@"globalRules"] = @{};
+                                                      return YES;
+                                                  }
+                                                  NSArray *identities = NSClearIdentityRules(
+                                                      document, system, NSReadMonitor()[@"events"] ?: @[],
+                                                      mutationError);
+                                                  if (!identities) {
+                                                      return NO;
+                                                  }
+                                                  [removed addObjectsFromArray:identities];
+                                                  return YES;
+                                              },
+                                              error);
+                                      }
+                                      completion:^(BOOL saved, NSError *error) {
+                                          self.clearingSection = NO;
+                                          if (!saved) {
+                                              [self showError:error
+                                                    operation:[@"Clear " stringByAppendingString:name]];
+                                              return;
+                                          }
+                                          if (removed.count) {
+                                              NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+                                              NSMutableSet *hidden = [NSMutableSet
+                                                  setWithArray:[defaults
+                                                                   stringArrayForKey:@"hiddenRuleIdentities"]
+                                                                   ?: @[]];
+                                              [hidden unionSet:removed];
+                                              [defaults setObject:hidden.allObjects
+                                                           forKey:@"hiddenRuleIdentities"];
+                                          }
+                                          if (!activity) {
+                                              NSRemoveAutomaticallyAllowedNotifications();
+                                          }
+                                          self.message = [NSString stringWithFormat:@"%@ cleared.", name];
+                                      }];
+                              }]];
     [self presentViewController:alert animated:YES completion:nil];
     [self refreshTableKeepingPosition];
 }
@@ -489,11 +623,11 @@
                              rule:action
                           handler:^{
                               if (!key && [action isEqual:@"remove"]) {
-                                  [self removeAppRuleForIdentity:identity];
+                                  [self removeAppRuleForIdentity:identity completion:nil];
                                   return;
                               }
-                              BOOL saved =
-                                  [self updatePolicy:^BOOL(NSMutableDictionary *document, NSError **error) {
+                              [self
+                                  updatePolicy:^BOOL(NSMutableDictionary *document, NSError **error) {
                                       if (key) {
                                           document[key] = action;
                                       } else {
@@ -504,13 +638,14 @@
                                           rules[identity] = NSAppRuleBySelecting(rules[identity], action);
                                       }
                                       return YES;
+                                  }
+                                  completion:^(BOOL saved) {
+                                      weakAlert.message = saved ? nil : self.message;
+                                      if (self.policy) {
+                                          weakAlert.selectedRules = NSAppRuleSelections(
+                                              self.policy.document[@"rules"][identity ?: @""]);
+                                      }
                                   }];
-                              weakAlert.message = saved ? nil : self.message;
-                              NSPolicy *persisted = NSReadPolicy(NULL);
-                              if (persisted) {
-                                  weakAlert.selectedRules =
-                                      NSAppRuleSelections(persisted.document[@"rules"][identity ?: @""]);
-                              }
                           }];
     }
     if (!key) {
@@ -568,7 +703,7 @@
     NSString *hosts = @"", *ports = @"", *protocol = @"any";
     NSString *action =
         NSAppRuleSelections(self.policy.document[@"rules"][identity ?: @""]).firstObject ?: @"allow";
-    if (connection) {
+    if (connection && [connection[@"connections"] unsignedIntegerValue] <= 1) {
         NSDictionary *destination = connection[@"destination"];
         NSMutableArray *members = [NSMutableArray new];
         for (NSString *field in @[ @"domain", @"address" ]) {
@@ -615,29 +750,37 @@
     editor.initialKey = initialKey;
     editor.originalAction = original ? self.policy.document[@"globalRules"][original] : initialAction;
     __weak typeof(self) weakSelf = self;
-    editor.saveRule = ^BOOL(NSString *key, NSString *action, NSError **error) {
-        BOOL saved = NSUpdatePolicy(
-            ^BOOL(NSMutableDictionary *document, NSError **mutationError) {
-                NSMutableDictionary *rules =
-                    [document[@"globalRules"] mutableCopy] ?: [NSMutableDictionary new];
-                if (!NSValidateGlobalRuleChange(rules, key, action, original, mutationError)) {
-                    return NO;
-                }
-                if (original) {
-                    [rules removeObjectForKey:original];
-                }
-                rules[key] = action;
-                document[@"globalRules"] = rules;
-                return YES;
-            },
-            error);
-        if (saved) {
-            NSRemoveAutomaticallyAllowedNotifications();
-            weakSelf.message = @"Policy saved for new flows. Close existing connections and retry; admitted "
-                               @"flows keep their previous verdict.";
-            [weakSelf reloadMonitor];
+    editor.saveRule = ^(NSString *key, NSString *action, void (^finished)(NSError *)) {
+        NSDashboard *owner = weakSelf;
+        if (!owner) {
+            finished([NSError errorWithDomain:@"NetShield2.Storage" code:1 userInfo:nil]);
+            return;
         }
-        return saved;
+        [owner
+            performStorageCommand:^BOOL(NSError **error) {
+                return NSUpdatePolicy(
+                    ^BOOL(NSMutableDictionary *document, NSError **mutationError) {
+                        NSMutableDictionary *rules =
+                            [document[@"globalRules"] mutableCopy] ?: [NSMutableDictionary new];
+                        if (!NSValidateGlobalRuleChange(rules, key, action, original, mutationError)) {
+                            return NO;
+                        }
+                        if (original) {
+                            [rules removeObjectForKey:original];
+                        }
+                        rules[key] = action;
+                        document[@"globalRules"] = rules;
+                        return YES;
+                    },
+                    error);
+            }
+            completion:^(BOOL saved, NSError *error) {
+                if (saved) {
+                    NSRemoveAutomaticallyAllowedNotifications();
+                    owner.message = @"Global rule saved for new connections.";
+                }
+                finished(error);
+            }];
     };
     UINavigationController *navigation = [[UINavigationController alloc] initWithRootViewController:editor];
     navigation.modalPresentationStyle = UIModalPresentationFormSheet;
@@ -654,20 +797,35 @@
         [self changeConfiguration:NSConfigurationDisable];
         return;
     }
-    NSError *error = nil;
-    if (!NSReadPolicy(&error)) {
-        [self showError:error];
+    if (!self.policy) {
         [self reloadMonitor];
         return;
     }
-    self.policy = NSReadPolicy(&error);
-    self.policyReadError = self.policy ? @"" : error.localizedDescription;
     NSRemoveAutomaticallyAllowedNotifications();
     self.busy = YES;
     [self refreshTableKeepingPosition];
+    NSUInteger generation = ++self.authorizationGeneration;
+    __weak typeof(self) weakSelf = self;
+    dispatch_block_t expiry = dispatch_block_create(0, ^{
+        NSDashboard *owner = weakSelf;
+        if (!owner || owner.authorizationGeneration != generation) {
+            return;
+        }
+        owner.authorizationGeneration++;
+        owner.busy = NO;
+        owner.message = @"Notification permission response timed out. Firewall change was not started.";
+        [owner loadConfiguration];
+    });
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 60 * NSEC_PER_SEC), dispatch_get_main_queue(), expiry);
     [self authorizeNotificationsThen:^{
-        self.busy = NO;
-        [self changeConfiguration:NSConfigurationEnable];
+        NSDashboard *owner = weakSelf;
+        if (!owner || owner.authorizationGeneration != generation) {
+            return;
+        }
+        dispatch_block_cancel(expiry);
+        owner.authorizationGeneration++;
+        owner.busy = NO;
+        [owner changeConfiguration:NSConfigurationEnable];
     }];
 }
 - (void)appleSystemProcessesChanged:(UISwitch *)sender {
@@ -675,10 +833,12 @@
         return;
     }
     BOOL allow = sender.on;
-    [self updatePolicy:^BOOL(NSMutableDictionary *document, NSError **error) {
-        document[@"allowAppleSystemProcesses"] = @(allow);
-        return YES;
-    }];
+    [self
+        updatePolicy:^BOOL(NSMutableDictionary *document, NSError **error) {
+            document[@"allowAppleSystemProcesses"] = @(allow);
+            return YES;
+        }
+          completion:nil];
     [self refreshTableKeepingPosition];
 }
 - (void)openSupportURL:(NSURL *)url {

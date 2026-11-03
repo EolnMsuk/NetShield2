@@ -44,34 +44,21 @@ static int NSUninstallFilter(void) {
                    });
     __block BOOL finished = NO;
     __block int status = EXIT_FAILURE;
-    NSRemoveInstalledFilter((id<NSFilterRemovalManager>)NEFilterManager.sharedManager, ^(NSError *error) {
-        dispatch_async(dispatch_get_main_queue(), ^{
+    NSRemoveInstalledFilterAndSharedState(
+        (id<NSFilterRemovalManager>)NEFilterManager.sharedManager, operationDeadline - 1, ^(NSError *error) {
             if (error) {
-                fprintf(stderr, "NetShield2: filter removal failed: %s (%s %ld).\n",
+                fprintf(stderr, "NetShield2: filter removal/cleanup failed: %s (%s %ld).\n",
                         error.localizedDescription.UTF8String, error.domain.UTF8String, (long)error.code);
-                finished = YES;
-                return;
+            } else {
+                [NSUserDefaults.standardUserDefaults
+                    removePersistentDomainForName:NSBundle.mainBundle.bundleIdentifier];
+                [UNUserNotificationCenter.currentNotificationCenter removeAllPendingNotificationRequests];
+                [UNUserNotificationCenter.currentNotificationCenter removeAllDeliveredNotifications];
+                fprintf(stdout, "NetShield2: verified system filter and saved state are removed.\n");
+                status = EXIT_SUCCESS;
             }
-            // Leave one second for reporting/finalization before the watchdog.
-            NSTimeInterval cleanupDeadline =
-                MIN(NSProcessInfo.processInfo.systemUptime + 15, operationDeadline - 1);
-            NSRemoveSharedStateAfterFilterRemovalWithRetry(cleanupDeadline, ^(NSError *cleanupError) {
-                if (cleanupError) {
-                    fprintf(stderr, "NetShield2: saved-state cleanup failed: %s (%s %ld).\n",
-                            cleanupError.localizedDescription.UTF8String, cleanupError.domain.UTF8String,
-                            (long)cleanupError.code);
-                } else {
-                    [NSUserDefaults.standardUserDefaults
-                        removePersistentDomainForName:NSBundle.mainBundle.bundleIdentifier];
-                    [UNUserNotificationCenter.currentNotificationCenter removeAllPendingNotificationRequests];
-                    [UNUserNotificationCenter.currentNotificationCenter removeAllDeliveredNotifications];
-                    fprintf(stdout, "NetShield2: verified system filter and saved state are removed.\n");
-                    status = EXIT_SUCCESS;
-                }
-                finished = YES;
-            });
+            finished = YES;
         });
-    });
     while (!finished) {
         [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
     }

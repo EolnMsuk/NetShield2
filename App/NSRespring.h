@@ -2,6 +2,7 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+// YES acknowledges launch only. Child exit is reaped asynchronously.
 FOUNDATION_EXPORT BOOL NSRespring(NSError **error);
 
 #ifdef NS_TESTING

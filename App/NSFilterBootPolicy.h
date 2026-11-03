@@ -8,7 +8,7 @@ typedef NS_ENUM(NSInteger, NSFilterBootPolicyError) {
     NSFilterBootPolicyMigrationLatchFailed,
 };
 
-// Every beta candidate requires the actual policy; runtime support, readback,
+// Every candidate requires the actual policy; runtime support, readback,
 // copy retention and persistence are checked separately.
 FOUNDATION_EXPORT BOOL NSFilterBootPolicyRead(id configuration, BOOL *value, NSError **error);
 FOUNDATION_EXPORT BOOL NSFilterBootPolicyApply(id configuration, NSError **error);

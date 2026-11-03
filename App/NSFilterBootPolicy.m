@@ -1,5 +1,7 @@
 #import "NSFilterBootPolicy.h"
 #include <string.h>
+#import "../Shared/NSValidation.h"
+#import "../Shared/NSConstants.h"
 
 // Private API stays in the app. Never use KVC, guessed keys, or ivar offsets.
 @protocol NSPrivateFilterBootPolicy <NSObject>
@@ -12,6 +14,10 @@
 @property(nonatomic) BOOL filterSockets;
 @property(nonatomic, copy) NSString *organization;
 @property(nonatomic, copy) NSDictionary *vendorConfiguration;
+@property(nonatomic, copy) NSString *serverAddress;
+@property(nonatomic, copy) NSString *username;
+@property(nonatomic, copy) NSData *passwordReference;
+@property(nonatomic, copy) NSData *identityReference;
 @end
 
 static BOOL NSBootPolicyFail(NSError **error, NSFilterBootPolicyError code, NSString *message) {
@@ -76,19 +82,52 @@ BOOL NSFilterBootPolicyApply(id configuration, NSError **error) {
 }
 
 NSDictionary *NSFilterConfigurationFields(id configuration) {
-    if (![configuration respondsToSelector:@selector(filterBrowsers)] ||
-        ![configuration respondsToSelector:@selector(filterSockets)] ||
-        ![configuration respondsToSelector:@selector(organization)] ||
-        ![configuration respondsToSelector:@selector(vendorConfiguration)]) {
+    @try {
+        if (![configuration respondsToSelector:@selector(filterBrowsers)] ||
+            ![configuration respondsToSelector:@selector(filterSockets)] ||
+            ![configuration respondsToSelector:@selector(organization)] ||
+            ![configuration respondsToSelector:@selector(vendorConfiguration)]) {
+            return nil;
+        }
+        id<NSFilterConfigurationFields> fields = configuration;
+        NSDictionary *vendor = fields.vendorConfiguration ?: @{};
+        if (![vendor isKindOfClass:NSDictionary.class]) {
+            return nil;
+        }
+        NSData *data = [NSPropertyListSerialization dataWithPropertyList:vendor
+                                                                  format:NSPropertyListBinaryFormat_v1_0
+                                                                 options:0
+                                                                   error:NULL];
+        if (!data || data.length > NSMaximumDocumentBytes) {
+            return nil;
+        }
+        NSDictionary *immutableVendor =
+            [NSPropertyListSerialization propertyListWithData:data
+                                                      options:NSPropertyListImmutable
+                                                       format:NULL
+                                                        error:NULL];
+        NSMutableDictionary *snapshot = [@{
+            @"browsers" : @(fields.filterBrowsers),
+            @"sockets" : @(fields.filterSockets),
+            @"organization" : [fields.organization copy] ?: NSNull.null,
+            @"vendor" : immutableVendor
+        } mutableCopy];
+        if ([configuration respondsToSelector:@selector(serverAddress)]) {
+            snapshot[@"serverAddress"] = [fields.serverAddress copy] ?: NSNull.null;
+        }
+        if ([configuration respondsToSelector:@selector(username)]) {
+            snapshot[@"username"] = [fields.username copy] ?: NSNull.null;
+        }
+        if ([configuration respondsToSelector:@selector(passwordReference)]) {
+            snapshot[@"passwordReference"] = [fields.passwordReference copy] ?: NSNull.null;
+        }
+        if ([configuration respondsToSelector:@selector(identityReference)]) {
+            snapshot[@"identityReference"] = [fields.identityReference copy] ?: NSNull.null;
+        }
+        return [snapshot copy];
+    } @catch (NSException *exception) {
         return nil;
     }
-    id<NSFilterConfigurationFields> fields = configuration;
-    return @{
-        @"browsers" : @(fields.filterBrowsers),
-        @"sockets" : @(fields.filterSockets),
-        @"organization" : [fields.organization copy] ?: NSNull.null,
-        @"vendor" : [fields.vendorConfiguration copy] ?: @{}
-    };
 }
 
 BOOL NSFilterConfigurationValidate(id configuration, NSDictionary *expectedFields, BOOL requireBootPolicy,
@@ -117,9 +156,16 @@ id NSFilterConfigurationCheckedCopy(id configuration, BOOL requireBootPolicy, NS
     }
     @try {
         id copy = [configuration copy];
-        if (!copy || !NSFilterConfigurationValidate(copy, fields, requireBootPolicy, error)) {
+        if (!copy || copy == configuration ||
+            !NSFilterConfigurationValidate(copy, fields, requireBootPolicy, error)) {
             NSBootPolicyFail(error, NSFilterBootPolicyCopyFailed,
                              @"The candidate lost its boot policy or configuration fields on copy.");
+            return nil;
+        }
+        // Replace a shallow copy's nested vendor aliases with our independently
+        // decoded immutable snapshot after verifying the original copy contract.
+        [(id<NSFilterConfigurationFields>)copy setVendorConfiguration:fields[@"vendor"]];
+        if (!NSFilterConfigurationValidate(copy, fields, requireBootPolicy, error)) {
             return nil;
         }
         return copy;
@@ -139,7 +185,10 @@ NSDictionary *NSFilterBootPolicyReport(id configuration) {
         @"channel" : @"stable",
         @"capability" : readable ? @"typed-access-supported" : error.localizedDescription,
         @"disableDefaultDrop" : readable ? (id) @(value) : @"unknown",
-        @"fields" : NSFilterConfigurationFields(configuration) ?: @{}
+        @"scope" : @{
+            @"browsers" : NSFilterConfigurationFields(configuration)[@"browsers"] ?: @NO,
+            @"sockets" : NSFilterConfigurationFields(configuration)[@"sockets"] ?: @NO
+        }
     };
 }
 
@@ -165,7 +214,22 @@ NSString *NSFilterBootPolicyStatus(id configuration, BOOL loaded) {
 
 BOOL NSFilterBootPolicyClaimMigration(NSUserDefaults *defaults, NSString *target, NSError **error) {
     NSString *key = @"NSBootPolicyAutomaticAttempts";
-    NSArray *saved = [defaults arrayForKey:key] ?: @[];
+    id raw = [defaults objectForKey:key];
+    NSArray *saved = [raw isKindOfClass:NSArray.class] ? raw : @[];
+    BOOL valid =
+        (!raw || [raw isKindOfClass:NSArray.class]) && saved.count <= 32 && NSBoundedString(target, 512, YES);
+    NSMutableSet *unique = [NSMutableSet new];
+    for (id claim in saved) {
+        if (!NSBoundedString(claim, 512, YES) || [unique containsObject:claim]) {
+            valid = NO;
+        }
+        [unique addObject:claim];
+    }
+    if (!valid) {
+        return NSBootPolicyFail(error, NSFilterBootPolicyMigrationLatchFailed,
+                                @"Migration claims are malformed; configuration unchanged. Export saved "
+                                @"rules before an explicit settings reset.");
+    }
     if ([saved containsObject:target]) {
         return NO;
     }

@@ -26,7 +26,8 @@ static inline BOOL NSAutomaticUpdateCheckDue(NSUserDefaults *defaults, NSDate *n
     }
     id lastAttempt = [defaults objectForKey:NSUpdateCheckLastAttemptKey];
     return ![lastAttempt isKindOfClass:NSDate.class] ||
-           [now timeIntervalSinceDate:lastAttempt] >= 24 * 60 * 60;
+           [now timeIntervalSinceDate:lastAttempt] >= 24 * 60 * 60 ||
+           [now timeIntervalSinceDate:lastAttempt] < -24 * 60 * 60;
 }
 
 static inline void NSResetAppPreferences(NSUserDefaults *defaults, NSString *domain) {

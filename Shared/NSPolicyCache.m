@@ -1,21 +1,17 @@
 #import "NSPolicyCache.h"
 #import "NSConstants.h"
+#import "NSBoundedFile.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
-static NSArray *NSFileIdentity(struct stat info) {
-    return @[
-        @(info.st_dev), @(info.st_ino), @(info.st_size), @(info.st_mtimespec.tv_sec),
-        @(info.st_mtimespec.tv_nsec), @(info.st_ctimespec.tv_sec), @(info.st_ctimespec.tv_nsec)
-    ];
-}
-
 @implementation NSPolicyCache {
     NSPolicy *_policy;
     NSArray *_identity;
     NSURL *_url;
+    NSError *_invalidError;
+    NSTimeInterval _invalidUntil;
 }
 
 - (void)invalidate {
@@ -23,71 +19,50 @@ static NSArray *NSFileIdentity(struct stat info) {
         _policy = nil;
         _identity = nil;
         _url = nil;
+        _invalidError = nil;
     }
 }
 
 - (NSPolicy *)readURL:(NSURL *)url error:(NSError **)error {
     @synchronized(self) {
-        int descriptor = open(url.fileSystemRepresentation, O_RDONLY | O_CLOEXEC);
-        int failure = descriptor < 0 ? errno : 0;
         struct stat before = {0};
-        if (!failure && fstat(descriptor, &before) != 0) {
-            failure = errno;
+        int descriptor = NSOpenRegularFile(url, &before, error);
+        if (descriptor < 0) {
+            [self invalidate];
+            return nil;
         }
-        if (!failure && (!S_ISREG(before.st_mode) || before.st_size > NSMaximumDocumentBytes)) {
-            failure = EFBIG;
-        }
-        if (!failure && _policy && [_url isEqual:url] && [_identity isEqual:NSFileIdentity(before)]) {
+        BOOL same = [_url isEqual:url] && [_identity isEqual:NSDescriptorIdentity(before)];
+        if (same && (_policy || (_invalidError && NSProcessInfo.processInfo.systemUptime < _invalidUntil))) {
             close(descriptor);
+            if (!_policy && error) {
+                *error = _invalidError;
+            }
             return _policy;
         }
         [self invalidate];
-        NSMutableData *data = [NSMutableData data];
-        if (!failure) {
-            uint8_t buffer[8192];
-            ssize_t count;
-            while ((count = read(descriptor, buffer, sizeof(buffer))) != 0) {
-                if (count < 0) {
-                    if (errno == EINTR) {
-                        continue;
-                    }
-                    failure = errno;
-                    break;
-                }
-                [data appendBytes:buffer length:(NSUInteger)count];
-                if (data.length > NSMaximumDocumentBytes) {
-                    failure = EFBIG;
-                    break;
-                }
-            }
-            struct stat after = {0};
-            if (!failure && fstat(descriptor, &after) != 0) {
-                failure = errno;
-            }
-            if (!failure && ![NSFileIdentity(before) isEqual:NSFileIdentity(after)]) {
-                failure = EAGAIN;
-            }
-        }
-        if (descriptor >= 0) {
-            close(descriptor);
-        }
-        if (failure) {
-            if (error) {
-                *error = [NSError errorWithDomain:NSPOSIXErrorDomain code:failure userInfo:nil];
-            }
+        NSData *data = NSReadBoundedDescriptor(descriptor, url, before, error);
+        close(descriptor);
+        if (!data) {
             return nil;
         }
+        NSError *parseError = nil;
         id document = [NSPropertyListSerialization propertyListWithData:data
                                                                 options:NSPropertyListImmutable
                                                                  format:NULL
-                                                                  error:error];
-        if (!document) {
-            return nil;
-        }
-        _policy = [NSPolicy policyWithDocument:document error:error];
+                                                                  error:&parseError];
+        _policy = document ? [NSPolicy policyWithDocument:document error:&parseError] : nil;
         if (_policy) {
-            _identity = NSFileIdentity(before);
+            _identity = NSDescriptorIdentity(before);
             _url = [url copy];
+        }
+        if (!_policy) {
+            _identity = NSDescriptorIdentity(before);
+            _url = [url copy];
+            _invalidError = parseError ?: [NSError errorWithDomain:@"NetShield2.Policy" code:1 userInfo:nil];
+            _invalidUntil = NSProcessInfo.processInfo.systemUptime + 1;
+            if (error) {
+                *error = _invalidError;
+            }
         }
         return _policy;
     }

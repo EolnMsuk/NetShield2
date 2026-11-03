@@ -44,9 +44,15 @@ def generate_bundle_metadata(template, output):
     if template.resolve() == output.resolve():
         raise ValueError('Generated bundle metadata must not overwrite its source template')
     data = plistlib.dumps(bundle_metadata(template), sort_keys=False)
-    if output.is_file() and output.read_bytes() == data:
-        output.chmod(0o644)
-        return
+    try:
+        if output.read_bytes() == data:
+            output.chmod(0o644)
+            return
+    except (FileNotFoundError, PermissionError):
+        # The fast path is optional. Windows may transiently deny a read or
+        # chmod while another writer replaces the pathname. Use the same
+        # bounded atomic replacement path rather than failing on the probe.
+        pass
     output.parent.mkdir(parents=True, exist_ok=True)
     # Unique temporary files and atomic replacement also support parallel builds.
     with tempfile.NamedTemporaryFile(dir=output.parent, delete=False) as temporary:
