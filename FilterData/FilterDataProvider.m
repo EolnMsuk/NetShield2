@@ -1,5 +1,5 @@
 #import <NetworkExtension/NetworkExtension.h>
-#import "../Shared/NSStore.h"
+#import "../Shared/NSPolicyReader.h"
 #import "../Shared/NSFlowDestination.h"
 
 @interface NSFilterDataProvider : NEFilterDataProvider
@@ -7,9 +7,9 @@
 
 @implementation NSFilterDataProvider
 - (NSFlowDirection)directionForFlow:(NEFilterFlow *)flow {
-    return flow.direction == NETrafficDirectionInbound    ? NSFlowDirectionInbound
-           : flow.direction == NETrafficDirectionOutbound ? NSFlowDirectionOutbound
-                                                          : NSFlowDirectionUnknown;
+    return flow && flow.direction == NETrafficDirectionInbound    ? NSFlowDirectionInbound
+           : flow && flow.direction == NETrafficDirectionOutbound ? NSFlowDirectionOutbound
+                                                                  : NSFlowDirectionUnknown;
 }
 - (void)startFilterWithCompletionHandler:(void (^)(NSError *))completionHandler {
     NSError *error = nil;
@@ -19,30 +19,22 @@
 - (NEFilterNewFlowVerdict *)handleNewFlow:(NEFilterFlow *)flow {
     NSPolicy *policy = NSReadPolicy(NULL);
     NSDictionary *destination = NSDestinationForFlow(flow);
-    if ([flow isKindOfClass:NEFilterSocketFlow.class] &&
-        [policy needsSocketDestination:destination
-                              identity:flow.sourceAppIdentifier
-                             direction:[self directionForFlow:flow]]) {
+    NSFlowEvaluation evaluation =
+        policy ? [policy evaluateIdentity:flow.sourceAppIdentifier
+                                direction:[self directionForFlow:flow]
+                              destination:destination
+                                   socket:[flow isKindOfClass:NEFilterSocketFlow.class]]
+               : (NSFlowEvaluation){NSFlowDrop, NSFlowReasonPolicy};
+    if (evaluation.disposition == NSFlowNeedsEndpoints) {
         return [NEFilterNewFlowVerdict filterDataVerdictWithFilterInbound:YES
                                                          peekInboundBytes:1
                                                            filterOutbound:YES
                                                         peekOutboundBytes:1];
     }
-    if ([policy requiresPermissionForIdentity:flow.sourceAppIdentifier
-                                    direction:[self directionForFlow:flow]
-                                  destination:destination]) {
+    if (evaluation.disposition == NSFlowAsk) {
         return [NEFilterNewFlowVerdict needRulesVerdict];
     }
-    NSFlowDirection direction = NSFlowDirectionUnknown;
-    if (flow.direction == NETrafficDirectionInbound) {
-        direction = NSFlowDirectionInbound;
-    }
-    if (flow.direction == NETrafficDirectionOutbound) {
-        direction = NSFlowDirectionOutbound;
-    }
-    BOOL allow = policy && [policy allowsIdentity:flow.sourceAppIdentifier
-                                        direction:direction
-                                      destination:destination];
+    BOOL allow = evaluation.disposition == NSFlowAllow;
     NEFilterNewFlowVerdict *verdict =
         allow ? [NEFilterNewFlowVerdict allowVerdict] : [NEFilterNewFlowVerdict dropVerdict];
     verdict.shouldReport = YES;
@@ -54,21 +46,17 @@
 - (NEFilterDataVerdict *)verdictForDeferredFlow:(NEFilterFlow *)flow {
     NSPolicy *policy = NSReadPolicy(NULL);
     NSDictionary *destination = NSDestinationForFlow(flow);
-    if (!policy || [policy needsSocketDestination:destination
-                                         identity:flow.sourceAppIdentifier
-                                        direction:[self directionForFlow:flow]]) {
-        NEFilterDataVerdict *verdict = [NEFilterDataVerdict dropVerdict];
-        verdict.shouldReport = YES;
-        return verdict;
-    }
-    if ([policy requiresPermissionForIdentity:flow.sourceAppIdentifier
-                                    direction:[self directionForFlow:flow]
-                                  destination:destination]) {
+    NSFlowEvaluation evaluation = policy ? [policy evaluateIdentity:flow.sourceAppIdentifier
+                                                          direction:[self directionForFlow:flow]
+                                                        destination:destination
+                                                             socket:YES]
+                                         : (NSFlowEvaluation){NSFlowDrop, NSFlowReasonPolicy};
+    if (evaluation.disposition == NSFlowAsk) {
         return [NEFilterDataVerdict needRulesVerdict];
     }
-    BOOL allow = [policy allowsIdentity:flow.sourceAppIdentifier
-                              direction:[self directionForFlow:flow]
-                            destination:destination];
+    // A deferred callback with still-missing endpoints terminates by dropping;
+    // it cannot start an unbounded peek/need-rules loop.
+    BOOL allow = evaluation.disposition == NSFlowAllow;
     NEFilterDataVerdict *verdict =
         allow ? [NEFilterDataVerdict allowVerdict] : [NEFilterDataVerdict dropVerdict];
     verdict.shouldReport = YES;

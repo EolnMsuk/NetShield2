@@ -1,7 +1,22 @@
 #!/bin/sh
 set -eu
+# Supersede older detached workers, including reinstall of the same version.
+# Failure to allocate a marker leaves installation/cleanup successful but skips
+# automatic respring. The directory and marker are private to package scripts.
+state=/var/jb/var/lib/netshield2-lifecycle
+new_generation() {
+    umask 077
+    [ ! -L "$state" ] && mkdir -p "$state" || return 1
+    marker=$(mktemp "$state/generation.XXXXXXXX") || return 1
+    if ! printf '%s\n' "$marker" > "$marker" || ! mv -f "$marker" "$state/current"; then
+        rm -f "$marker"
+        return 1
+    fi
+    printf '%s\n' "$marker"
+}
 case "${1:-}" in
     configure)
+        generation=$(new_generation 2>/dev/null) || generation=
         if [ -n "${2:-}" ]; then
             if [ -d /var/jb/Applications/NetShield.app ]; then
                 /var/jb/usr/bin/uicache -u /var/jb/Applications/NetShield.app || true
@@ -13,8 +28,8 @@ case "${1:-}" in
         printf '%s\n' 'NetShield2: open the app after the automatic respring and turn on Firewall.'
         reload=/var/jb/usr/bin/sbreload
         query=/var/jb/usr/bin/dpkg-query
-        if [ ! -x "$reload" ] || [ ! -x "$query" ]; then
-            printf '%s\n' 'NetShield2: automatic respring unavailable (missing sbreload or dpkg-query). Installation is configured; respring manually using your jailbreak, then open NetShield2.' >&2
+        if [ ! -x "$reload" ] || [ ! -x "$query" ] || [ -z "$generation" ]; then
+            printf '%s\n' 'NetShield2: automatic respring unavailable (missing sbreload, dpkg-query or lifecycle marker). Installation is configured; respring manually using your jailbreak, then open NetShield2.' >&2
             exit 0
         fi
         printf '%s\n' 'NetShield2: respring scheduled after dpkg finishes. If it does not occur, respring manually using your jailbreak. Rules and settings are preserved.'
@@ -37,8 +52,12 @@ case "${1:-}" in
                 sleep 1
                 attempts=$((attempts + 1))
             done
-            if [ "$("$query" -W -f='${Status}' com.eolnmsuk.netshield 2>/dev/null)" != 'install ok installed' ]; then
+            if [ "$("$query" -W -f='${Status} ${Version}' com.eolnmsuk.netshield 2>/dev/null)" != 'install ok installed @NETSHIELD_PACKAGE_VERSION@' ]; then
                 report_reload_failure 'Automatic respring skipped: package configuration is incomplete.'
+                exit 0
+            fi
+            if [ "$(cat "$state/current" 2>/dev/null)" != "$generation" ]; then
+                report_reload_failure 'Automatic respring skipped: a newer package operation superseded it.'
                 exit 0
             fi
             if ! "$reload"; then

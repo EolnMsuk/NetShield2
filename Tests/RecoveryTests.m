@@ -144,8 +144,9 @@ static void TestBoundedResolver(void) {
           @"expires" : [NSDate dateWithTimeIntervalSinceNow:120]};
     dispatch_sync(queue, ^{
         operations[0].completion(answer, nil);
-        VERIFY(operations.count == 5 && delivered == 1);
         operations[0].completion(answer, nil);
+    });
+    dispatch_sync(queue, ^{
         VERIFY(operations.count == 5 && delivered == 1);
     });
     [resolver refreshRules:@{}];
@@ -160,6 +161,8 @@ static void TestBoundedResolver(void) {
     dispatch_sync(queue, ^{
         VERIFY(operations.count == 6);
         operations.lastObject.completion(nil, [NSError errorWithDomain:@"test" code:1 userInfo:nil]);
+    });
+    dispatch_sync(queue, ^{
         VERIFY(delivered == 2);
     });
     [resolver refreshRules:@{@"domain:retry.test" : @"block"}];
@@ -322,8 +325,9 @@ static void TestNotificationPublicationAndOrphans(void) {
     UNNotificationRequest *orphan = [UNNotificationRequest requestWithIdentifier:@"orphan"
                                                                          content:content
                                                                          trigger:nil];
+    NSString *liveID = ((UNNotificationRequest *)center.requests.firstObject).identifier;
     center.pendingEnumeration(@[ orphan, center.requests.firstObject ]);
-    VERIFY([center.removed containsObject:@"orphan"] && ![center.removed containsObject:@"live"]);
+    VERIFY([center.removed containsObject:@"orphan"] && ![center.removed containsObject:liveID]);
     VERIFY([NSFileManager.defaultManager removeItemAtURL:monitorURL error:NULL]);
     VERIFY([NSFileManager.defaultManager createDirectoryAtURL:monitorURL
                                   withIntermediateDirectories:NO
@@ -332,7 +336,7 @@ static void TestNotificationPublicationAndOrphans(void) {
     VERIFY(![dispatcher publishSnapshot:snapshot policy:NSReadPolicy(NULL) retryRevision:nil error:NULL]);
     void (^late)(NSError *) = center.callbacks.firstObject;
     late(nil);
-    VERIFY([center.removed containsObject:@"live"]);
+    VERIFY([center.removed containsObject:liveID]);
     [dispatcher stop];
     VERIFY([NSFileManager.defaultManager removeItemAtURL:monitorURL error:NULL]);
 }
@@ -372,14 +376,14 @@ static void TestDistinctFlowActivity(void) {
     VERIFY(groups.count == 1);
     VERIFY([groups[0][@"connections"] integerValue] == 2);
     VERIFY([groups[0][@"bytesIn"] integerValue] == 150);
-    VERIFY([groups[0][@"action"] isEqual:@"allow"]);
+    VERIFY([groups[0][@"action"] isEqual:@"mixed"]);
     groups = NSGroupedActivity(@[
         event(@"one", @"a.test", @"allow", 0, 100), event(@"one", @"a.test", @"permission-block", 3, 0),
         event(@"two", @"a.test", @"allow", 2, 50)
     ]);
     VERIFY(groups.count == 1 && [groups[0][@"connections"] integerValue] == 2);
     VERIFY([groups[0][@"bytesIn"] integerValue] == 150);
-    VERIFY([groups[0][@"action"] isEqual:@"block"]);
+    VERIFY([groups[0][@"action"] isEqual:@"mixed"]);
 }
 
 static void TestGlobalDirectionStorage(void) {
@@ -557,7 +561,8 @@ static void TestActivityClearBoundary(void) {
         @"identity" : @"pending.app",
         @"created" : now,
         @"expires" : [now dateByAddingTimeInterval:30],
-        @"waiting" : @YES,
+        @"waiting" : @1,
+        @"direction" : @"unknown",
         @"expired" : @NO
     } ];
     NSMutableDictionary *snapshot = [@{

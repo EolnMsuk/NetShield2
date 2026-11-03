@@ -27,6 +27,7 @@
 @property(nonatomic) BOOL throwGetter;
 @property(nonatomic) BOOL throwSetter;
 @property(nonatomic) BOOL loseOnCopy;
+@property(nonatomic) BOOL aliasOnCopy;
 @property(nonatomic) BOOL changeScopeOnCopy;
 @property(nonatomic) NSUInteger reads;
 @property(nonatomic) NSUInteger writes;
@@ -67,6 +68,9 @@
     }
 }
 - (id)copyWithZone:(NSZone *)zone {
+    if (self.aliasOnCopy) {
+        return self;
+    }
     BootConfiguration *copy = [BootConfiguration new];
     copy.filterBrowsers = self.filterBrowsers;
     copy.filterSockets = self.changeScopeOnCopy ? !self.filterSockets : self.filterSockets;
@@ -196,6 +200,7 @@ static BootConfiguration *BootConfig(NSString *activation, BOOL sockets) {
 @property(nonatomic, strong) NSMutableArray *scheduled;
 @property(nonatomic, strong) NSMutableArray<NSString *> *stages;
 @property(nonatomic) NSTimeInterval clock;
+@property(nonatomic) NSTimeInterval completedAt;
 @property(nonatomic) NSUInteger completions;
 @property(nonatomic, strong) NSError *result;
 @property(nonatomic) BOOL sockets;
@@ -215,6 +220,11 @@ static BootConfiguration *BootConfig(NSString *activation, BOOL sockets) {
     if ((self = [super init])) {
         _manager = [BootManager new];
         _restart = [NSFilterRestart new];
+        _restart.coordinator = [NSConfigurationCoordinator new];
+        _restart.coordinator.durableFence = NO;
+        _restart.coordinator.acquireLock = ^NSStoreLock *(NSError **error) {
+            return [NSStoreLock new];
+        };
         _scheduled = [NSMutableArray new];
         _stages = [NSMutableArray new];
         _clock = 100;
@@ -266,6 +276,7 @@ static BootConfiguration *BootConfig(NSString *activation, BOOL sockets) {
 - (void)run {
     [self.restart start:^(NSError *error) {
         self.completions++;
+        self.completedAt = self.clock;
         self.result = error;
     }];
     [self drain];
@@ -611,7 +622,7 @@ static void TestBootTimeouts(void) {
         [test run];
         CHECK(test.result && test.restart.state == NSFilterRestartUnknown);
         CHECK([test.result.localizedDescription containsString:@"timed out"]);
-        CHECK(test.clock <= 110);
+        CHECK(test.completedAt <= 110);
         [test checkStaleCallbacks];
     }
     // An old callback while the current enable-reload is still pending must not
@@ -637,6 +648,9 @@ static void TestBootTimeouts(void) {
 @property(nonatomic) BOOL failWrite;
 @end
 @implementation BootDefaults
+- (id)objectForKey:(NSString *)key {
+    return self.record;
+}
 - (NSArray *)arrayForKey:(NSString *)key {
     return self.record;
 }
@@ -705,7 +719,47 @@ static void TestBootMigrationRetries(void) {
     CHECK([full.record count] == 32);
 }
 
+static void TestExternalConfigurationReplacement(void) {
+    BootFixture *test = [BootFixture new];
+    test.failNewHeartbeat = YES;
+    test.manager.afterSave = ^(BootManager *manager) {
+        if (manager.saves == 3) {
+            manager.saved = BootConfig(@"externally-replaced", YES);
+            manager.saved.bootPolicy = YES;
+        }
+    };
+    [test run];
+    CHECK(test.result && test.restart.state == NSFilterRestartUnknown);
+    CHECK(test.manager.saves == 3);
+    CHECK([test.manager.saved.vendorConfiguration[@"activation"] isEqual:@"externally-replaced"]);
+}
+static void TestBootSnapshotIndependence(void) {
+    BootConfiguration *configuration = BootConfig(@"independent", YES);
+    configuration.bootPolicy = YES;
+    configuration.aliasOnCopy = YES;
+    CHECK(!NSFilterConfigurationCheckedCopy(configuration, YES, NULL));
+    configuration.aliasOnCopy = NO;
+    NSMutableArray *nested = [NSMutableArray arrayWithObject:@"retained"];
+    configuration.vendorConfiguration = @{@"nested" : nested};
+    NSDictionary *fields = NSFilterConfigurationFields(configuration);
+    BootConfiguration *copy = NSFilterConfigurationCheckedCopy(configuration, YES, NULL);
+    CHECK(copy && copy != configuration);
+    [nested addObject:@"changed source"];
+    CHECK([fields[@"vendor"][@"nested"] count] == 1);
+    CHECK([copy.vendorConfiguration[@"nested"] count] == 1);
+    CHECK(!NSFilterConfigurationValidate(configuration, fields, YES, NULL));
+    BootDefaults *defaults = [BootDefaults new];
+    for (id malformed in @[ @"bad", @[ @42 ], @[ @"duplicate", @"duplicate" ] ]) {
+        defaults.record = malformed;
+        NSError *error = nil;
+        CHECK(!NSFilterBootPolicyClaimMigration(defaults, @"new", &error) && error);
+        CHECK(defaults.record == malformed);
+    }
+}
+
 void NSRunBootPolicyTests(void) {
+    TestBootSnapshotIndependence();
+    TestExternalConfigurationReplacement();
     TestBootAdapter();
     TestBootPreflight();
     TestBootTransactions();

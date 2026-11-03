@@ -467,7 +467,7 @@ static void TestActivityGrouping(void) {
     [separate addObject:ActivityEvent(@"app", peer, @"outbound", @"permission-block", 8, 0, 0)];
     groups = NSGroupedActivity(separate);
     CHECK(groups.count == 3 && [groups[0][@"connections"] integerValue] == 6);
-    CHECK([groups[0][@"action"] isEqual:@"block"]);
+    CHECK([groups[0][@"action"] isEqual:@"mixed"]);
     CHECK([groups[0][@"time"] isEqual:separate.lastObject[@"time"]]);
     CHECK([groups[0][@"bytesIn"] integerValue] == 42);
     for (NSNumber *port in @[ @80, @443 ]) {
@@ -507,7 +507,10 @@ static void TestActivityGrouping(void) {
     CHECK([linked[0][@"bytesIn"] integerValue] == 90);
     CHECK([linked[0][@"bytesOut"] integerValue] == 120);
     CHECK([linked[0][@"destination"] isEqual:byIP[@"destination"]]);
-    CHECK([linked[0][@"action"] isEqual:@"block"]);
+    CHECK([linked[0][@"action"] isEqual:@"mixed"]);
+    CHECK([linked[0][@"outcomeCounts"][@"block"] isEqual:@1]);
+    CHECK([linked[0][@"outcomeCounts"][@"allow"] isEqual:@2]);
+    CHECK([linked[0][@"hostCount"] isEqual:@2]);
     CHECK([linked isEqual:NSGroupedActivity(@[ byIP, bridge, byDomain ])]);
     CHECK(NSGroupedActivity(@[ byDomain, byIP ]).count == 2);
     NSArray *hostOnly = NSGroupedActivity(@[
@@ -519,7 +522,7 @@ static void TestActivityGrouping(void) {
     ]);
     CHECK(hostOnly.count == 4);
     CHECK([hostOnly[3][@"connections"] integerValue] == 2);
-    CHECK([hostOnly[3][@"action"] isEqual:@"allow"]);
+    CHECK([hostOnly[3][@"action"] isEqual:@"mixed"]);
     CHECK(![hostOnly[0][@"groupKey"] isEqual:hostOnly[1][@"groupKey"]]);
     CHECK([NSGroupedActivity(@[ ActivityEvent(@"", @{}, @"unknown", @"other", 0, 0, 0) ])[0][@"action"]
         isEqual:@"other"]);
@@ -1641,7 +1644,7 @@ static void TestLateNotifications(void) {
     [old updateRequests:@[] policy:NSReadPolicy(NULL) retryRevision:nil];
     [center.removed removeAllObjects];
     [center finish:0 error:nil];
-    CHECK([center.removed containsObject:@"old-token"]);
+    CHECK([center.removed containsObject:((UNNotificationRequest *)center.requests[0]).identifier]);
     CHECK(old.deliveryIssue.length == 0);
 
     NSPermissionNotifications *current = [[NSPermissionNotifications alloc] initWithCenter:center];
@@ -1660,7 +1663,7 @@ static void TestLateNotifications(void) {
     [stopped stop];
     [center.removed removeAllObjects];
     [center finish:2 error:[NSError errorWithDomain:@"test" code:1 userInfo:nil]];
-    CHECK([center.removed containsObject:@"old-token"]);
+    CHECK([center.removed containsObject:((UNNotificationRequest *)center.requests[2]).identifier]);
     CHECK(stopped.deliveryIssue.length == 0);
 
     NSPermissionNotifications *released = [[NSPermissionNotifications alloc] initWithCenter:center];
@@ -1668,7 +1671,7 @@ static void TestLateNotifications(void) {
     released = nil;
     [center.removed removeAllObjects];
     [center finish:3 error:nil];
-    CHECK([center.removed containsObject:@"old-token"]);
+    CHECK([center.removed containsObject:((UNNotificationRequest *)center.requests[3]).identifier]);
     [old stop];
 }
 static void TestDirectionalNotifications(void) {
@@ -1688,12 +1691,14 @@ static void TestDirectionalNotifications(void) {
     CHECK(center.requests.count == 2);
     CHECK([((UNNotificationRequest *)center.requests[1]).content.categoryIdentifier
         isEqual:NSPermissionCategoryForDirection(@"outbound")]);
+    void (^duplicate)(NSError *) = center.completions[1];
     [center finish:0 error:nil];
     [center finish:1 error:nil];
-    CHECK(![center.removed containsObject:@"mixed-token"]);
+    duplicate(nil);
+    CHECK(![center.removed containsObject:((UNNotificationRequest *)center.requests[1]).identifier]);
     CHECK(center.settingsCompletions.count == 1);
     [notifications updateRequests:@[ incoming ] policy:NSReadPolicy(NULL) retryRevision:nil];
-    CHECK([center.removed containsObject:@"mixed-token"]);
+    CHECK([center.removed containsObject:((UNNotificationRequest *)center.requests[1]).identifier]);
     [notifications stop];
     for (NSString *action in @[ @"block-inbound", @"block-outbound" ]) {
         NSMutableDictionary *document = [[NSPolicy defaultDocument] mutableCopy];
@@ -1706,15 +1711,63 @@ static void TestDirectionalNotifications(void) {
                                      policy:NSReadPolicy(NULL)
                               retryRevision:nil];
         CHECK(globalCenter.requests.count == 1);
-        CHECK(![globalCenter.removed containsObject:@"mixed-token"]);
+        CHECK(![globalCenter.removed
+            containsObject:((UNNotificationRequest *)globalCenter.requests[0]).identifier]);
         document[@"globalRules"] = @{NSCustomGlobalRuleKey(@"mixed.app", @"", @"", @"any") : @"block"};
         CHECK(NSWriteDocument(document, NSPolicyFile, NULL));
         [globalNotifications updateRequests:@[ incoming, outgoing ]
                                      policy:NSReadPolicy(NULL)
                               retryRevision:nil];
-        CHECK([globalCenter.removed containsObject:@"mixed-token"]);
+        CHECK([globalCenter.removed
+            containsObject:((UNNotificationRequest *)globalCenter.requests[0]).identifier]);
         [globalNotifications stop];
     }
+}
+
+// H01: all transitions happen before the old center callback; no timing sleeps.
+static void TestNotificationGenerations(void) {
+    CHECK(NSWriteDocument([NSPolicy defaultDocument], NSPolicyFile, NULL));
+    __block NSTimeInterval now = 100;
+    FakeNotificationCenter *center = [FakeNotificationCenter new];
+    NSPermissionNotifications *notifications = [[NSPermissionNotifications alloc] initWithCenter:center
+                                                                                           clock:^{
+                                                                                               return now;
+                                                                                           }];
+    NSDictionary *request = @{@"token" : @"retry-token", @"identity" : @"retry.app"};
+    [notifications updateRequests:@[ request ] policy:NSReadPolicy(NULL) retryRevision:@"1"];
+    [notifications updateRequests:@[ request ] policy:NSReadPolicy(NULL) retryRevision:@"2"];
+    CHECK(center.requests.count == 2);
+    NSString *oldID = ((UNNotificationRequest *)center.requests[0]).identifier;
+    NSString *newID = ((UNNotificationRequest *)center.requests[1]).identifier;
+    CHECK(![oldID isEqual:newID]);
+    [center.removed removeAllObjects];
+    [center finish:0 error:nil];
+    CHECK([center.removed containsObject:oldID]);
+    CHECK(![center.removed containsObject:newID]);
+    [notifications updateRequests:@[] policy:NSReadPolicy(NULL) retryRevision:@"2"];
+    [notifications updateRequests:@[ request ] policy:NSReadPolicy(NULL) retryRevision:@"2"];
+    CHECK(center.requests.count == 3);
+    [center.removed removeAllObjects];
+    [center finish:1 error:nil];
+    NSString *thirdID = ((UNNotificationRequest *)center.requests[2]).identifier;
+    CHECK(![center.removed containsObject:thirdID]);
+    // Missing completion is retired at the bounded deadline and gets a new ID.
+    now += 10;
+    [notifications updateRequests:@[ request ] policy:NSReadPolicy(NULL) retryRevision:@"2"];
+    CHECK(center.requests.count == 4);
+    [center.removed removeAllObjects];
+    [center finish:2 error:nil];
+    CHECK(![center.removed containsObject:((UNNotificationRequest *)center.requests[3]).identifier]);
+    now += 10;
+    [notifications updateRequests:@[ request ] policy:NSReadPolicy(NULL) retryRevision:@"2"];
+    CHECK(center.requests.count == 5);
+    now += 10;
+    [notifications updateRequests:@[ request ] policy:NSReadPolicy(NULL) retryRevision:@"2"];
+    CHECK(center.requests.count == 5); // three attempts, including missing callbacks
+    [notifications stop];
+    [center finish:3 error:nil];
+    [center finish:4 error:nil];
+    CHECK(notifications.deliveryIssue.length == 0);
 }
 
 @interface FakeFilterRemovalManager : NSObject <NSFilterRemovalManager>
@@ -1802,6 +1855,12 @@ static void TestSharedStateCleanupRetries(void) {
             NSURL *exportURL = NSStageRulesAndActivityExport([@"{}" dataUsingEncoding:NSUTF8StringEncoding],
                                                              NSSharedURL(@""), NULL);
             CHECK(exportURL != nil);
+            CHECK(NSRemoveStagedExport(NSSharedURL(@""), exportURL, NULL));
+            CHECK([NSFileManager.defaultManager createDirectoryAtURL:exportURL.URLByDeletingLastPathComponent
+                                         withIntermediateDirectories:YES
+                                                          attributes:nil
+                                                               error:NULL]);
+            CHECK([[@"{}" dataUsingEncoding:NSUTF8StringEncoding] writeToURL:exportURL atomically:YES]);
             NSURL *sentinel = NSSharedURL(@"Library/Caches/NetShield2/keep.json");
             CHECK([[@"keep" dataUsingEncoding:NSUTF8StringEncoding] writeToURL:sentinel atomically:YES]);
             NSStoreLock *held = [NSStoreLock tryLockURL:NSSharedURL(lockName) error:NULL];
@@ -1874,6 +1933,8 @@ static void TestSharedStateCleanupRetries(void) {
 }
 
 extern void NSRunRecoveryTests(void);
+extern void NSRunConfigurationTests(void);
+extern void NSRunHardeningTests(void);
 
 int main(void) {
     @autoreleasepool {
@@ -1908,9 +1969,12 @@ int main(void) {
         TestAppPreferences();
         TestLateNotifications();
         TestDirectionalNotifications();
+        TestNotificationGenerations();
         TestFilterRemoval();
         TestSharedStateCleanupRetries();
         NSRunRecoveryTests();
+        NSRunConfigurationTests();
+        NSRunHardeningTests();
         CHECK([NSFileManager.defaultManager removeItemAtURL:root error:NULL]);
         NSLog(@"Passed %lu regression checks", (unsigned long)checks);
     }

@@ -1,7 +1,25 @@
 #!/bin/sh
 set -eu
+# Supersede older detached workers, including reinstall of the same version.
+# Failure to allocate a marker leaves installation/cleanup successful but skips
+# automatic respring. The directory and marker are private to package scripts.
+state=/var/jb/var/lib/netshield2-lifecycle
+new_generation() {
+    umask 077
+    [ ! -L "$state" ] && mkdir -p "$state" || return 1
+    marker=$(mktemp "$state/generation.XXXXXXXX") || return 1
+    if ! printf '%s\n' "$marker" > "$marker" || ! mv -f "$marker" "$state/current"; then
+        rm -f "$marker"
+        return 1
+    fi
+    printf '%s\n' "$marker"
+}
 case "${1:-}" in
+    upgrade)
+        new_generation >/dev/null 2>&1 || true
+        ;;
     remove|deconfigure)
+        generation=$(new_generation 2>/dev/null) || generation=
         # Capture startup output too: injected tweaks can log before main().
         # Successful cleanup is silent; retain our own diagnostics on failure.
         if cleanup_output=$(/var/jb/Applications/NetShield2.app/NetShield2 --remove-filter 2>&1); then
@@ -23,7 +41,8 @@ case "${1:-}" in
                 exit 0
             fi
             reload=/var/jb/usr/bin/sbreload
-            if [ -x "$reload" ]; then
+            query=/var/jb/usr/bin/dpkg-query
+            if [ -x "$reload" ] && [ -x "$query" ] && [ -n "$generation" ]; then
                 package_manager_pid=$PPID
                 # Wait outside dpkg so a successful removal is never retried just because
                 # SpringBoard could not be reloaded. All descriptors are detached.
@@ -43,12 +62,29 @@ case "${1:-}" in
                         sleep 1
                         attempts=$((attempts + 1))
                     done
+                    # Absence and residual config-files state are distinct from
+                    # a failed query or a replacement package already installed.
+                    if observed=$(LC_ALL=C "$query" -W -f='${Status} ${Version}' com.eolnmsuk.netshield 2>&1); then
+                        case "$observed" in
+                            'deinstall ok config-files @NETSHIELD_PACKAGE_VERSION@'|*' ok not-installed'*) ;;
+                            *) report_reload_failure 'Uninstall respring skipped: package removal is unverified.'; exit 0 ;;
+                        esac
+                    else
+                        case "$observed" in
+                            *'no packages found matching com.eolnmsuk.netshield') ;;
+                            *) report_reload_failure 'Uninstall respring skipped: package state could not be read.'; exit 0 ;;
+                        esac
+                    fi
+                    if [ "$(cat "$state/current" 2>/dev/null)" != "$generation" ]; then
+                        report_reload_failure 'Uninstall respring skipped: a newer package operation superseded it.'
+                        exit 0
+                    fi
                     if ! "$reload"; then
                         report_reload_failure 'Uninstall respring failed to start.'
                     fi
                 ) </dev/null >/dev/null 2>&1 &
             elif command -v logger >/dev/null 2>&1; then
-                logger -t NetShield2 'Uninstall completed, but sbreload is unavailable; respring manually.' || true
+                logger -t NetShield2 'Uninstall completed, but sbreload is unavailable or package state cannot be verified; respring manually.' || true
             fi
         elif command -v logger >/dev/null 2>&1; then
             logger -t NetShield2 'Uninstall completed, but icon-cache invalidation failed; respring was not scheduled.' || true
