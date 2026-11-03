@@ -1,23 +1,14 @@
-"""Check the actual CodeDirectory identifier in a packaged executable on macOS."""
+"""Check packaged CodeDirectory identifiers using the same verifier as CI."""
+import argparse
 import pathlib
-import plistlib
-import subprocess
-import sys
-
-
-def check_identifier(output, expected):
-    identifiers = [line.removeprefix('Identifier=') for line in output.splitlines()
-                   if line.startswith('Identifier=')]
-    if identifiers != [expected]:
-        raise ValueError(f'Signing identifier mismatch: expected {expected!r}, got {identifiers!r}')
+from check_macho import inspect_file
 
 
 def main():
-    executable = pathlib.Path(sys.argv[1])
-    info = plistlib.loads((executable.parent / 'Info.plist').read_bytes())
-    result = subprocess.run(['codesign', '--display', '--verbose=4', str(executable)],
-                            capture_output=True, text=True, check=True)
-    check_identifier(result.stdout + '\n' + result.stderr, info['CFBundleIdentifier'])
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('executable', type=pathlib.Path)
+    executable = parser.parse_args().executable
+    inspect_file(executable)
     print(f'Validated signing identifier for {executable.name}')
 
 

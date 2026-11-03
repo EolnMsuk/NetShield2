@@ -1,7 +1,7 @@
-"""Inspect real thin arm64 iOS executables and verify embedded code-page hashes.
+"""Verify the CodeDirectories and content hashes of thin arm64 iOS executables.
 
-This verifies content integrity, not Apple trust or jailbreak acceptance. The
-workflow also invokes codesign and checks signed identifiers and entitlements.
+This checks Theos/ldid output. Certificate trust and device acceptance are
+separate from these checks. CI also compares ldid's extracted XML entitlements.
 """
 import argparse
 import hashlib
@@ -41,21 +41,38 @@ def verify_signature(raw, offset, size, identifier, special_files):
                 'Overlapping signature blobs')
         ranges.append((start, start + blob_size))
         blobs[kind] = (blob_magic, signature[start:start + blob_size])
-    directories = [blob for magic, blob in blobs.values() if magic == 0xfade0c02]
-    require(directories, 'Missing CodeDirectory')
+    directories = sorted(slot for slot, (magic, _) in blobs.items()
+                         if slot == 0 or 0x1000 <= slot < 0x1005 or magic == 0xfade0c02)
+    require(directories and len(directories) <= 6 and
+            directories == [0, *range(0x1000, 0x1000 + len(directories) - 1)],
+            'Missing primary CodeDirectory or invalid alternate slots')
+    required_entitlements = {5: 0xfade7171}  # XML entitlements
+    if 7 in blobs:
+        required_entitlements[7] = 0xfade7172  # DER entitlements, when emitted
+    for slot, magic in required_entitlements.items():
+        blob_magic, payload = blobs.get(slot, (None, b''))
+        require(blob_magic == magic and len(payload) > 8, f'Missing or invalid entitlement blob in slot {slot}')
     algorithms = {1: ('sha1', 20), 2: ('sha256', 32), 3: ('sha256', 20), 4: ('sha384', 48)}
-    for directory in directories:
-        require(len(directory) >= 44, 'Truncated CodeDirectory')
+    hash_types = set()
+    for slot in directories:
+        magic, directory = blobs[slot]
+        require(magic == 0xfade0c02 and len(directory) >= 44, 'Invalid CodeDirectory blob')
         _, _, version, flags, hashes, ident, special, slots, limit = struct.unpack_from('>9I', directory)
         hash_size, hash_type, platform, page = struct.unpack_from('4B', directory, 36)
         require(hash_type in algorithms and hash_size == algorithms[hash_type][1],
                 'Unsupported CodeDirectory hash')
+        require(hash_type not in hash_types, 'Duplicate CodeDirectory hash type')
+        hash_types.add(hash_type)
+        if version >= 0x20100:
+            require(len(directory) >= 48 and struct.unpack_from('>I', directory, 44)[0] == 0,
+                    'Truncated or scattered CodeDirectory')
         require(10 <= page <= 20 and 0 < limit == offset, 'Invalid code-page limit')
         require(slots == (limit + (1 << page) - 1) >> page, 'Code-slot count mismatch')
         require(special <= 64 and hashes - special * hash_size >= 44 and
                 hashes + slots * hash_size <= len(directory), 'Invalid hash table')
-        require(cstring(directory, ident, hashes - special * hash_size) == identifier,
+        require(ident >= 44 and cstring(directory, ident, hashes - special * hash_size) == identifier,
                 'CodeDirectory identifier mismatch')
+        require(special >= max(required_entitlements), 'Missing CodeDirectory entitlement hashes')
         algorithm = algorithms[hash_type][0]
         digest = lambda data: hashlib.new(algorithm, data).digest()[:hash_size]
         for slot in range(slots):
@@ -65,6 +82,7 @@ def verify_signature(raw, offset, size, identifier, special_files):
         for slot in range(1, special + 1):
             expected = directory[hashes - slot * hash_size:hashes - (slot - 1) * hash_size]
             if not any(expected):
+                require(slot not in required_entitlements, f'Unbound entitlement blob in special slot {slot}')
                 continue
             value = special_files.get(slot)
             if slot in blobs:
@@ -119,18 +137,22 @@ def inspect(raw, identifier, special_files=None):
             'verified_code_directories': directories}
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('executable', type=pathlib.Path)
-    args = parser.parse_args()
-    bundle = args.executable.parent
+def inspect_file(executable):
+    bundle = executable.parent
     info_bytes = (bundle / 'Info.plist').read_bytes()
     special = {1: info_bytes}
     resources = bundle / '_CodeSignature/CodeResources'
     if resources.is_file():
         special[3] = resources.read_bytes()
-    result = inspect(args.executable.read_bytes(), plistlib.loads(info_bytes)['CFBundleIdentifier'], special)
-    print(f'Validated Mach-O and embedded content hashes: {args.executable.name}: {result}')
+    return inspect(executable.read_bytes(), plistlib.loads(info_bytes)['CFBundleIdentifier'], special)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('executable', type=pathlib.Path)
+    args = parser.parse_args()
+    result = inspect_file(args.executable)
+    print(f'Validated Mach-O, CodeDirectory identifiers and embedded hashes: {args.executable.name}: {result}')
 
 
 if __name__ == '__main__':
