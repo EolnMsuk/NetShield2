@@ -115,7 +115,7 @@ static void TestBoundedResolver(void) {
     dispatch_queue_t queue = dispatch_queue_create("test.dns", DISPATCH_QUEUE_SERIAL);
     NSMutableArray<TestDNSOperation *> *operations = [NSMutableArray new];
     __block NSTimeInterval clock = 100;
-    __block NSUInteger delivered = 0;
+    __block NSUInteger delivered = 0, failed = 0;
     NSDomainResolver *resolver = [[NSDomainResolver alloc] initWithQueue:queue
         clock:^NSTimeInterval {
             return clock;
@@ -130,6 +130,10 @@ static void TestBoundedResolver(void) {
         }
         completion:^(NSString *key, NSString *rule, NSDictionary *result, NSError *error) {
             delivered++;
+            if (error) {
+                VERIFY(!result);
+                failed++;
+            }
         }];
     NSMutableDictionary *rules = [NSMutableDictionary new];
     for (NSUInteger i = 0; i < 6; i++) {
@@ -138,6 +142,7 @@ static void TestBoundedResolver(void) {
     [resolver refreshRules:rules];
     dispatch_sync(queue, ^{
         VERIFY(operations.count == 4);
+        VERIFY([resolver.coverageIssue hasPrefix:@"2 domain refreshes waiting"]);
     });
     NSDictionary *answer =
         @{@"addresses" : @[ @"ip:192.0.2.1" ],
@@ -148,6 +153,22 @@ static void TestBoundedResolver(void) {
     });
     dispatch_sync(queue, ^{
         VERIFY(operations.count == 5 && delivered == 1);
+        VERIFY([resolver.coverageIssue hasPrefix:@"1 domain refreshes waiting"]);
+        // Make the first refresh due while one domain has never been attempted.
+        clock += 61;
+        NSMutableDictionary *invalidLifetime = [answer mutableCopy];
+        invalidLifetime[@"lifetime"] = @{@"issued" : @100, @"expires" : @100, @"boot" : @""};
+        operations[1].completion(invalidLifetime, nil);
+    });
+    dispatch_sync(queue, ^{
+        VERIFY(operations.count == 6 && delivered == 2 && failed == 1);
+        VERIFY([operations.lastObject.key isEqual:operations[0].key]);
+        operations.lastObject.completion(answer, nil);
+    });
+    dispatch_sync(queue, ^{
+        VERIFY(operations.count == 7 && delivered == 3);
+        VERIFY([operations.lastObject.key isEqual:@"domain:d5.test"]);
+        VERIFY(!resolver.coverageIssue.length);
     });
     [resolver refreshRules:@{}];
     dispatch_sync(queue, ^{
@@ -155,31 +176,37 @@ static void TestBoundedResolver(void) {
             VERIFY(operations[i].cancelled);
             operations[i].completion(answer, nil);
         }
-        VERIFY(delivered == 1);
+        VERIFY(delivered == 3);
     });
     [resolver refreshRules:@{@"domain:retry.test" : @"block"}];
     dispatch_sync(queue, ^{
-        VERIFY(operations.count == 6);
+        VERIFY(operations.count == 8);
         operations.lastObject.completion(nil, [NSError errorWithDomain:@"test" code:1 userInfo:nil]);
     });
     dispatch_sync(queue, ^{
-        VERIFY(delivered == 2);
+        VERIFY(delivered == 4 && failed == 2);
     });
     [resolver refreshRules:@{@"domain:retry.test" : @"block"}];
     dispatch_sync(queue, ^{
-        VERIFY(operations.count == 6);
+        VERIFY(operations.count == 8);
         clock += 6;
     });
     [resolver refreshRules:@{@"domain:retry.test" : @"block"}];
     dispatch_sync(queue, ^{
-        VERIFY(operations.count == 7);
+        VERIFY(operations.count == 9);
+    });
+    [resolver invalidateNetwork];
+    dispatch_sync(queue, ^{
+        VERIFY(operations.count == 10 && operations[8].cancelled);
+        VERIFY([operations.lastObject.key isEqual:@"domain:retry.test"]);
+        operations[8].completion(answer, nil);
     });
     [resolver stop];
     [resolver refreshRules:rules];
     dispatch_sync(queue, ^{
-        VERIFY(operations.lastObject.cancelled && operations.count == 7);
+        VERIFY(operations.lastObject.cancelled && operations.count == 10);
         operations.lastObject.completion(answer, nil);
-        VERIFY(delivered == 2);
+        VERIFY(delivered == 4);
     });
 }
 

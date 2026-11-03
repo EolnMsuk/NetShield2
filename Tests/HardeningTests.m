@@ -166,13 +166,14 @@ static void TestDNSLifetime(void) {
 }
 static void TestEarlyDNSFactories(void) {
     for (NSUInteger sizeIndex = 0; sizeIndex < 4; sizeIndex++) {
-        NSUInteger count = (NSUInteger[]){1, 64, 256, 4096}[sizeIndex];
+        NSUInteger count = (NSUInteger[]){1, 64, 256, NSMaximumRules}[sizeIndex];
         dispatch_queue_t queue = dispatch_queue_create("test.dns.early", DISPATCH_QUEUE_SERIAL);
         NSMutableDictionary *rules = [NSMutableDictionary new];
         for (NSUInteger i = 0; i < count; i++) {
             rules[[NSString stringWithFormat:@"domain:d%lu.test", (unsigned long)i]] = @"block";
         }
-        __block NSUInteger delivered = 0, factories = 0;
+        NSMutableSet<NSString *> *delivered = [NSMutableSet new];
+        __block NSUInteger factories = 0;
         dispatch_semaphore_t complete = dispatch_semaphore_create(0);
         NSDomainResolver *resolver = [[NSDomainResolver alloc] initWithQueue:queue
             clock:^{
@@ -181,21 +182,29 @@ static void TestEarlyDNSFactories(void) {
             lookup:^id<NSDNSOperation>(NSString *key, dispatch_queue_t unused,
                                        void (^finished)(NSDictionary *, NSError *)) {
                 factories++;
-                // Both synchronous callback and nil operation; one terminal result.
-                finished(nil, [NSError errorWithDomain:@"test" code:1 userInfo:nil]);
-                finished(nil, nil);
+                // Only the one-rule case returns nil without invoking the callback.
+                if (count > 1) {
+                    finished(nil, [NSError errorWithDomain:@"test" code:1 userInfo:nil]);
+                    finished(nil, nil);
+                }
                 return nil;
             }
             completion:^(NSString *key, NSString *rule, NSDictionary *result, NSError *error) {
-                EXPECT(error && !result);
-                if (++delivered == count) {
+                EXPECT(!result && [error.domain isEqual:count > 1 ? @"test" : @"NetShield2.DNS"]);
+                EXPECT([rules[key] isEqual:rule] && ![delivered containsObject:key]);
+                [delivered addObject:key];
+                if (delivered.count == count) {
                     dispatch_semaphore_signal(complete);
                 }
             }];
         [resolver refreshRules:rules];
-        EXPECT(dispatch_semaphore_wait(complete, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC)) == 0);
+        long wait = dispatch_semaphore_wait(complete, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC));
+        if (wait) {
+            NSLog(@"DNS factory fixture timed out with %lu rules", (unsigned long)count);
+        }
+        EXPECT(wait == 0);
         dispatch_sync(queue, ^{
-            EXPECT(delivered == count && factories == count);
+            EXPECT(delivered.count == count && factories == count);
         });
         [resolver refreshRules:rules];
         dispatch_sync(queue, ^{
