@@ -72,6 +72,16 @@ static void TestPolicyAndCache(void) {
     CHECK([NSReadPolicy(NULL).document[@"rules"][@"test.app"] isEqual:NSAppRuleRecord(@"block")]);
 }
 
+static NSURL *StageExport(NSData *data, NSURL *container) {
+    NSError *error = nil;
+    NSURL *url = NSStageRulesAndActivityExport(data, container, &error);
+    if (!url) {
+        NSLog(@"Export staging failed: %@", error);
+    }
+    CHECK(url != nil);
+    return url;
+}
+
 static void TestRulesAndActivityExport(void) {
     NSArray *systemIdentities = @[ @"com.apple.test", @".com.apple.test", @"Apple.com.apple.test" ];
     CHECK(!NSIsAppleSystemIdentity(nil));
@@ -137,9 +147,9 @@ static void TestRulesAndActivityExport(void) {
     CHECK(error != nil);
     error = nil;
     CHECK(NSStageRulesAndActivityExport(empty, sentinel, &error) == nil && error != nil);
-    NSURL *first = NSStageRulesAndActivityExport(empty, container, NULL);
-    NSURL *second = NSStageRulesAndActivityExport(empty, container, NULL);
-    CHECK(first && second && ![first isEqual:second]);
+    NSURL *first = StageExport(empty, container);
+    NSURL *second = StageExport(empty, container);
+    CHECK(![first isEqual:second]);
     CHECK([first.lastPathComponent isEqual:@"NetShield2-Rules-and-Recent-Activity.json"]);
     CHECK([[NSData dataWithContentsOfURL:first] isEqual:empty]);
     CHECK(NSRemoveStagedExport(container, first, NULL));
@@ -155,8 +165,7 @@ static void TestRulesAndActivityExport(void) {
                                     error:NULL]);
     NSURL *aliasedContainer = [parentAlias URLByAppendingPathComponent:container.lastPathComponent
                                                            isDirectory:YES];
-    NSURL *aliased = NSStageRulesAndActivityExport(empty, aliasedContainer, NULL);
-    CHECK(aliased != nil);
+    NSURL *aliased = StageExport(empty, aliasedContainer);
 
     NSURL *cache = NSExportCacheURL(container, NO, NULL);
     NSURL *abandoned = [cache
@@ -169,8 +178,7 @@ static void TestRulesAndActivityExport(void) {
     CHECK([files setAttributes:old ofItemAtPath:abandoned.path error:NULL]);
     CHECK([files setAttributes:old ofItemAtPath:second.URLByDeletingLastPathComponent.path error:NULL]);
     CHECK([files setAttributes:old ofItemAtPath:aliased.URLByDeletingLastPathComponent.path error:NULL]);
-    NSURL *third = NSStageRulesAndActivityExport(empty, container, NULL);
-    CHECK(third != nil);
+    NSURL *third = StageExport(empty, container);
     CHECK(![files fileExistsAtPath:abandoned.path]);
     CHECK([files fileExistsAtPath:second.path]);
     CHECK([files fileExistsAtPath:aliased.path]);
@@ -1405,9 +1413,8 @@ static void TestAnswersAndReset(void) {
     CHECK([NSReadPolicy(NULL).document[@"rules"][@"edited"] isEqual:NSAppRuleRecord(@"block")]);
     CHECK(!NSAnswerPermissionRequest(request, NO, NULL));
     NSString *revision = NSReadPolicy(NULL).document[@"revision"];
-    NSURL *exportURL =
-        NSStageRulesAndActivityExport([@"{}" dataUsingEncoding:NSUTF8StringEncoding], NSSharedURL(@""), NULL);
-    CHECK(exportURL != nil);
+    NSURL *container = NSSharedURL(@"");
+    NSURL *exportURL = StageExport([@"{}" dataUsingEncoding:NSUTF8StringEncoding], container);
     NSStoreLock *running = NSAcquireProviderLock(NULL);
     CHECK(running != nil);
     CHECK(NSWriteDocument(Monitor(@[], YES, NSEngineVersion, [NSDate dateWithTimeIntervalSinceNow:-60]),
@@ -1418,9 +1425,15 @@ static void TestAnswersAndReset(void) {
     CHECK([NSFileManager.defaultManager removeItemAtURL:NSSharedURL(NSMonitorFile) error:NULL]);
     CHECK(!NSResetSharedState(NO, NULL));
     [running unlock];
+    NSError *error = nil;
+    CHECK(!NSResetSharedState(NO, &error));
+    CHECK([error.domain isEqual:NSPOSIXErrorDomain] && error.code == EWOULDBLOCK);
+    CHECK(!NSRemoveSharedStateAfterFilterRemoval(NULL));
+    CHECK([NSReadPolicy(NULL).document[@"revision"] isEqual:revision]);
+    CHECK([NSFileManager.defaultManager fileExistsAtPath:exportURL.path]);
+    CHECK(NSRemoveStagedExport(container, exportURL, NULL));
     CHECK(NSResetSharedState(NO, NULL));
     CHECK(![NSFileManager.defaultManager fileExistsAtPath:NSSharedURL(NSExportCacheDirectory).path]);
-    CHECK(NSRemoveStagedExport(NSSharedURL(@""), exportURL, NULL));
     CHECK([NSReadPolicy(NULL).document[@"rules"] count] == 0);
     CHECK(NSReadMonitor().count == 0);
     CHECK(!NSResetSharedState(YES, NULL));
@@ -1852,9 +1865,7 @@ static void TestSharedStateCleanupRetries(void) {
             for (NSString *name in files) {
                 CHECK(NSWriteDocument([NSPolicy defaultDocument], name, NULL));
             }
-            NSURL *exportURL = NSStageRulesAndActivityExport([@"{}" dataUsingEncoding:NSUTF8StringEncoding],
-                                                             NSSharedURL(@""), NULL);
-            CHECK(exportURL != nil);
+            NSURL *exportURL = StageExport([@"{}" dataUsingEncoding:NSUTF8StringEncoding], NSSharedURL(@""));
             CHECK(NSRemoveStagedExport(NSSharedURL(@""), exportURL, NULL));
             CHECK([NSFileManager.defaultManager createDirectoryAtURL:exportURL.URLByDeletingLastPathComponent
                                          withIntermediateDirectories:YES
@@ -1946,6 +1957,7 @@ int main(void) {
                                                       attributes:nil
                                                            error:NULL]);
         NSSetTestContainer(root);
+        CHECK([NSSharedURL(@"") isEqual:root]);
         TestPolicyAndCache();
         TestRulesAndActivityExport();
         TestStorageFailureAndRecovery();

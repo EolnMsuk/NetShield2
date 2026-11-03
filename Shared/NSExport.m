@@ -1,6 +1,7 @@
 #import "NSExport.h"
 #import "NSConstants.h"
 #import "NSStoreLock.h"
+#import <TargetConditionals.h>
 
 NSError *NSExportError(NSString *message) {
     return [NSError errorWithDomain:@"NetShield2.Export"
@@ -135,9 +136,16 @@ NSURL *NSStageRulesAndActivityExport(NSData *data, NSURL *container, NSError **e
             return nil;
         }
         NSURL *cache = NSExportCacheURL(container, YES, error);
-        if (!cache || ![cache setResourceValue:@YES forKey:NSURLIsExcludedFromBackupKey error:error]) {
+        if (!cache) {
             return nil;
         }
+#if TARGET_OS_IOS
+        // Require backup exclusion in the iOS app-group cache. macOS tests stage
+        // synthetic exports in a temporary directory and need no backup metadata.
+        if (![cache setResourceValue:@YES forKey:NSURLIsExcludedFromBackupKey error:error]) {
+            return nil;
+        }
+#endif
         NSPruneAbandonedExports(cache, active);
         NSURL *directory = [cache
             URLByAppendingPathComponent:[@"NetShield2-Export-" stringByAppendingString:NSUUID.UUID.UUIDString]

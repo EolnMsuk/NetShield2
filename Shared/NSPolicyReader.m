@@ -11,14 +11,15 @@ void NSSetTestContainer(NSURL *url) {
 }
 #endif
 NSURL *NSSharedURL(NSString *name) {
+    NSURL *root = nil;
 #ifdef NS_TESTING
-    if (NSTestContainer) {
-        return [NSTestContainer URLByAppendingPathComponent:name];
-    }
+    root = NSTestContainer;
 #endif
-    NSURL *root =
-        [NSFileManager.defaultManager containerURLForSecurityApplicationGroupIdentifier:NSGroupIdentifier];
-    return root ? [root URLByAppendingPathComponent:name] : nil;
+    if (!root) {
+        root = [NSFileManager.defaultManager
+            containerURLForSecurityApplicationGroupIdentifier:NSGroupIdentifier];
+    }
+    return name.length ? [root URLByAppendingPathComponent:name] : root;
 }
 static NSPolicyCache *NSSharedPolicyCache(void) {
     static NSPolicyCache *cache;
