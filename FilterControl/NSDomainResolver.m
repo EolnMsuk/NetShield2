@@ -3,7 +3,6 @@
 #import "../Shared/NSDNSCache.h"
 #include <dns_sd.h>
 #include <netinet/in.h>
-#include <float.h>
 
 // All methods, C callbacks and reference destruction belong to queue. Each
 // DNSServiceRef owns one retained callback context until deallocation on queue.
@@ -195,7 +194,8 @@ static void NSDNSAnswer(DNSServiceRef reference, DNSServiceFlags flags, uint32_t
 @property(nonatomic, copy) NSString *inputGeneration;
 @property(nonatomic, copy) NSString *generation;
 @property(nonatomic, copy) NSString *coverageStatus;
-@property(nonatomic, copy) NSArray *orderedKeys;
+@property(nonatomic, strong) NSMutableArray<NSString *> *unstartedKeys;
+@property(nonatomic, strong) NSMutableArray<NSString *> *retryKeys;
 @property(nonatomic, strong) NSMutableDictionary *failures;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, id<NSDNSOperation>> *active;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSString *> *lookupIDs;
@@ -229,6 +229,8 @@ static void NSDNSAnswer(DNSServiceRef reference, DNSServiceFlags flags, uint32_t
         _queue = queue;
         _clock = clock;
         _lookup = lookup;
+        _unstartedKeys = [NSMutableArray new];
+        _retryKeys = [NSMutableArray new];
         _active = [NSMutableDictionary new];
         _lookupIDs = [NSMutableDictionary new];
         _nextAttempt = [NSMutableDictionary new];
@@ -266,7 +268,8 @@ static void NSDNSAnswer(DNSServiceRef reference, DNSServiceFlags flags, uint32_t
         if (self.stopped) {
             return;
         }
-        if (![generation isEqual:self.generation ?: @""]) {
+        BOOL rebuildSchedule = ![generation isEqual:self.generation ?: @""];
+        if (rebuildSchedule) {
             for (id<NSDNSOperation> operation in self.active.allValues) {
                 [operation cancel];
             }
@@ -295,26 +298,79 @@ static void NSDNSAnswer(DNSServiceRef reference, DNSServiceFlags flags, uint32_t
                     }
                 }
                 self.rules = [wanted copy];
-                self.orderedKeys = [wanted.allKeys sortedArrayUsingSelector:@selector(compare:)];
+                rebuildSchedule = YES;
             }
+        }
+        if (rebuildSchedule) {
+            [self rebuildSchedule];
         }
         [self pump];
     });
 }
+- (NSComparisonResult)compareRetryKey:(NSString *)left toKey:(NSString *)right {
+    NSComparisonResult order = [self.nextAttempt[right] compare:self.nextAttempt[left]];
+    return order == NSOrderedSame ? [right compare:left] : order;
+}
+- (void)rebuildSchedule {
+    [self.unstartedKeys removeAllObjects];
+    [self.retryKeys removeAllObjects];
+    for (NSString *key in self.rules) {
+        if (!self.lookupIDs[key]) {
+            NSMutableArray *pending = self.nextAttempt[key] ? self.retryKeys : self.unstartedKeys;
+            [pending addObject:key];
+        }
+    }
+    // Reverse priority keeps the next key at the end of each array.
+    [self.unstartedKeys sortUsingComparator:^NSComparisonResult(NSString *left, NSString *right) {
+        return [right compare:left];
+    }];
+    [self.retryKeys sortUsingComparator:^NSComparisonResult(NSString *left, NSString *right) {
+        return [self compareRetryKey:left toKey:right];
+    }];
+}
+- (NSString *)takeNextKeyAt:(NSTimeInterval)now {
+    NSString *unstarted = self.unstartedKeys.lastObject;
+    NSString *retry = self.retryKeys.lastObject;
+    if (retry) {
+        NSTimeInterval due = self.nextAttempt[retry].doubleValue;
+        if (due <= now && (!unstarted || due < now || [retry compare:unstarted] == NSOrderedAscending)) {
+            [self.retryKeys removeLastObject];
+            return retry;
+        }
+    }
+    if (unstarted) {
+        [self.unstartedKeys removeLastObject];
+    }
+    return unstarted;
+}
+- (void)scheduleRetryForKey:(NSString *)key at:(NSTimeInterval)due {
+    self.nextAttempt[key] = @(due);
+    NSRange range = NSMakeRange(0, self.retryKeys.count);
+    NSUInteger index = [self.retryKeys indexOfObject:key
+                                       inSortedRange:range
+                                             options:NSBinarySearchingInsertionIndex
+                                     usingComparator:^NSComparisonResult(NSString *left, NSString *right) {
+                                         return [self compareRetryKey:left toKey:right];
+                                     }];
+    [self.retryKeys insertObject:key atIndex:index];
+}
+- (NSUInteger)backlogAt:(NSTimeInterval)now {
+    // Due retries are a suffix. Find its start without visiting every rule.
+    NSUInteger first = 0, end = self.retryKeys.count;
+    while (first < end) {
+        NSUInteger middle = first + (end - first) / 2;
+        if (self.nextAttempt[self.retryKeys[middle]].doubleValue > now) {
+            first = middle + 1;
+        } else {
+            end = middle;
+        }
+    }
+    return self.unstartedKeys.count + self.retryKeys.count - first;
+}
 - (void)pump {
     NSTimeInterval now = self.clock();
     while (!self.stopped && self.lookupIDs.count < 4) {
-        NSString *key = nil;
-        NSTimeInterval earliest = DBL_MAX;
-        // No per-heartbeat full sort. Select only the next bounded operation.
-        for (NSString *candidate in self.orderedKeys) {
-            NSTimeInterval due =
-                self.nextAttempt[candidate] ? [self.nextAttempt[candidate] doubleValue] : now;
-            if (!self.lookupIDs[candidate] && due <= now && due < earliest) {
-                key = candidate;
-                earliest = due;
-            }
-        }
+        NSString *key = [self takeNextKeyAt:now];
         if (!key) {
             break;
         }
@@ -346,14 +402,14 @@ static void NSDNSAnswer(DNSServiceRef reference, DNSServiceFlags flags, uint32_t
                         valid = NO;
                     }
                 }
-                NSUInteger failures = valid ? 0 : MIN(5, [owner.failures[key] unsignedIntegerValue] + 1);
-                owner.failures[key] = @(failures);
-                double jitter = 0.8 + (key.hash % 41) / 100.0;
                 NSDictionary *lifetime = valid ? result[@"lifetime"] : nil;
                 if (lifetime && !NSDNSLifetimeIsLive(lifetime, NSProcessInfo.processInfo.systemUptime,
                                                      NSBootSessionIdentifier())) {
                     valid = NO;
                 }
+                NSUInteger failures = valid ? 0 : MIN(5, [owner.failures[key] unsignedIntegerValue] + 1);
+                owner.failures[key] = @(failures);
+                double jitter = 0.8 + (key.hash % 41) / 100.0;
                 NSTimeInterval ttl =
                     !valid
                         ? 0
@@ -361,7 +417,7 @@ static void NSDNSAnswer(DNSServiceRef reference, DNSServiceFlags flags, uint32_t
                                     : [result[@"expires"] timeIntervalSinceNow]);
                 NSTimeInterval delay =
                     valid ? MIN(60, MAX(1, ttl / 2)) : MIN(60, 5 * (1u << (failures - 1))) * jitter;
-                owner.nextAttempt[key] = @(owner.clock() + delay);
+                [owner scheduleRetryForKey:key at:owner.clock() + delay];
                 if ([owner.rules[key] isEqual:rule] && owner.completion) {
                     NSMutableDictionary *tagged = valid ? [result mutableCopy] : nil;
                     tagged[@"generation"] = generation;
@@ -379,12 +435,7 @@ static void NSDNSAnswer(DNSServiceRef reference, DNSServiceFlags flags, uint32_t
             finished(nil, NSDNSError(4, @"DNS operation could not be allocated."));
         }
     }
-    NSUInteger backlog = 0;
-    for (NSString *key in self.orderedKeys) {
-        if (!self.lookupIDs[key] && [self.nextAttempt[key] doubleValue] <= now) {
-            backlog++;
-        }
-    }
+    NSUInteger backlog = [self backlogAt:now];
     @synchronized(self) {
         self.coverageStatus =
             backlog ? [NSString
@@ -409,6 +460,7 @@ static void NSDNSAnswer(DNSServiceRef reference, DNSServiceFlags flags, uint32_t
         [self.lookupIDs removeAllObjects];
         [self.nextAttempt removeAllObjects];
         [self.failures removeAllObjects];
+        [self rebuildSchedule];
         if (completion) {
             completion();
         }
@@ -429,7 +481,8 @@ static void NSDNSAnswer(DNSServiceRef reference, DNSServiceFlags flags, uint32_t
         [self.lookupIDs removeAllObjects];
         [self.nextAttempt removeAllObjects];
         self.rules = @{};
-        self.orderedKeys = @[];
+        [self.unstartedKeys removeAllObjects];
+        [self.retryKeys removeAllObjects];
         [self.failures removeAllObjects];
         if (completion) {
             completion();
