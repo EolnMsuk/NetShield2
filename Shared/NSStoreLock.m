@@ -16,66 +16,66 @@
     return self;
 }
 
-+ (instancetype)tryLockURL:(NSURL *)url error:(NSError **)error {
-    NSStoreLock *lock = [self new];
-    int parent = -1, code = 0;
-    if (!url.isFileURL || !url.lastPathComponent.length ||
-        ![url.path isEqual:url.URLByStandardizingPath.path]) {
-        code = EINVAL;
-    }
-    if (!code) {
-        do {
-            parent = open(url.URLByDeletingLastPathComponent.fileSystemRepresentation,
-                          O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-        } while (parent < 0 && errno == EINTR);
-        if (parent < 0) {
-            code = errno;
-        }
-    }
-    if (!code) {
-        do {
-            lock->_descriptor = openat(parent, url.lastPathComponent.fileSystemRepresentation,
-                                       O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK, 0600);
-        } while (lock->_descriptor < 0 && errno == EINTR);
-        if (lock->_descriptor < 0) {
-            code = errno;
-        }
-    }
-    struct stat info = {0}, named = {0};
-    if (!code && fstat(lock->_descriptor, &info)) {
-        code = errno;
-    }
-    if (!code && (!S_ISREG(info.st_mode) || info.st_nlink != 1)) {
-        code = EINVAL;
-    }
-    if (!code && flock(lock->_descriptor, LOCK_EX | LOCK_NB)) {
-        code = errno;
-    }
-    if (!code &&
-        fstatat(parent, url.lastPathComponent.fileSystemRepresentation, &named, AT_SYMLINK_NOFOLLOW)) {
-        code = errno;
-    }
-    if (!code && (info.st_ino != named.st_ino || info.st_dev != named.st_dev)) {
-        code = EAGAIN;
-    }
-    if (!code && fchmod(lock->_descriptor, 0600)) {
-        code = errno;
-    }
-    if (parent >= 0) {
-        close(parent);
-    }
-    if (code) {
-        if (error) {
-            *error = [NSError errorWithDomain:NSPOSIXErrorDomain
-                                         code:code
-                                     userInfo:@{
-                                         NSLocalizedDescriptionKey :
-                                             @"Shared state is busy or unavailable. Try again shortly."
-                                     }];
-        }
++ (instancetype)tryLockRoot:(NSURL *)root leaf:(NSString *)leaf error:(NSError **)error {
+    if (!NSKnownLockLeaf(leaf)) {
+        NSFileFailure(@"Validate lock name", @"unknown lock", EINVAL, error);
         return nil;
     }
-    return lock;
+    NSSharedDirectory *directory = [NSSharedDirectory openRoot:root leaf:leaf error:error];
+    return directory ? [self tryLockInDirectory:directory leaf:leaf error:error] : nil;
+}
++ (instancetype)tryLockInDirectory:(NSSharedDirectory *)directory
+                              leaf:(NSString *)leaf
+                             error:(NSError **)error {
+    if (!NSKnownLockLeaf(leaf)) {
+        NSFileFailure(@"Validate lock name", @"unknown lock", EINVAL, error);
+        return nil;
+    }
+    if (![directory validateForLeaf:leaf error:error]) {
+        return nil;
+    }
+    NSStoreLock *lock = [self new];
+    lock->_directory = directory;
+    int parent = directory.descriptor;
+    const char *name = leaf.fileSystemRepresentation;
+    do {
+        lock->_descriptor =
+            openat(parent, name, O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK, 0600);
+    } while (lock->_descriptor < 0 && errno == EINTR);
+    if (lock->_descriptor < 0) {
+        NSFileFailure(@"Open lock", leaf, errno, error);
+        return nil;
+    }
+    struct stat info, named;
+    if (fstat(lock->_descriptor, &info)) {
+        NSFileFailure(@"Stat lock", leaf, errno, error);
+        return nil;
+    }
+    if (!S_ISREG(info.st_mode) || info.st_nlink != 1) {
+        NSFileFailure(@"Validate lock type and link count", leaf, EINVAL, error);
+        return nil;
+    }
+    int result;
+    do {
+        result = flock(lock->_descriptor, LOCK_EX | LOCK_NB);
+    } while (result && errno == EINTR);
+    if (result) {
+        NSFileFailure(@"Acquire lock", leaf, errno, error);
+        return nil;
+    }
+    if (fchmod(lock->_descriptor, 0600)) {
+        NSFileFailure(@"Set lock mode", leaf, errno, error);
+        return nil;
+    }
+    if (fstatat(parent, name, &named, AT_SYMLINK_NOFOLLOW)) {
+        NSFileFailure(@"Recheck lock", leaf, errno, error);
+        return nil;
+    }
+    if (info.st_ino != named.st_ino || info.st_dev != named.st_dev || named.st_nlink != 1) {
+        NSFileFailure(@"Lock file changed", leaf, ESTALE, error);
+        return nil;
+    }
+    return [directory validateForLeaf:leaf error:error] ? lock : nil;
 }
 
 - (void)unlock {

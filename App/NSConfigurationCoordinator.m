@@ -1,6 +1,8 @@
 #import "NSConfigurationCoordinator.h"
 #import "../Shared/NSStore.h"
 #include <errno.h>
+#import <CommonCrypto/CommonDigest.h>
+#import "../Shared/NSValidation.h"
 #import "../Shared/NSBootSession.h"
 
 @protocol NSConfigurationPreferences <NSObject>
@@ -17,31 +19,225 @@
 @property(nonatomic) BOOL readOnly;
 @property(nonatomic) BOOL pendingWrite;
 @property(nonatomic, readwrite) BOOL uncertain;
+@property(nonatomic, readwrite) BOOL reconciledMarker;
+@property(nonatomic, readwrite) NSError *acknowledgementError;
 @property(nonatomic, strong) dispatch_source_t phaseTimer;
 @property(nonatomic, strong) dispatch_source_t overallTimer;
 @end
 
-static NSString *const NSPendingConfigurationFile = @"configuration-pending.plist";
+NSNotificationName const NSConfigurationLateAcknowledgement = @"NSConfigurationLateAcknowledgement";
+static const NSUInteger NSMarkerDecodeLimit = 8192;
 static NSError *NSConfigurationError(NSInteger code, NSString *message) {
     return [NSError errorWithDomain:@"NetShield2.Configuration"
                                code:code
                            userInfo:@{NSLocalizedDescriptionKey : message}];
 }
+static NSError *NSMarkerError(NSString *message, NSError *underlying) {
+    NSMutableDictionary *info = [@{NSLocalizedDescriptionKey : message} mutableCopy];
+    if (underlying) {
+        info[NSLocalizedDescriptionKey] =
+            [NSString stringWithFormat:@"%@ %@ (%@ %ld).", message, underlying.localizedDescription,
+                                       underlying.domain, (long)underlying.code];
+        info[NSUnderlyingErrorKey] = underlying;
+    }
+    return [NSError errorWithDomain:@"NetShield2.Configuration"
+                               code:underlying ? underlying.code : EINVAL
+                           userInfo:info];
+}
+static NSString *NSNormalizedUUID(id value) {
+    return NSBoundedString(value, 36, YES) ? [[NSUUID alloc] initWithUUIDString:value].UUIDString : nil;
+}
+static NSDictionary *NSDecodeMarker(NSData *data) {
+    if (!data || data.length > NSMarkerDecodeLimit) {
+        return nil;
+    }
+    id document = [NSPropertyListSerialization propertyListWithData:data
+                                                            options:NSPropertyListImmutable
+                                                             format:NULL
+                                                              error:NULL];
+    return [document isKindOfClass:NSDictionary.class] ? document : nil;
+}
+static NSData *NSMarkerFingerprint(NSData *data) {
+    unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+    CC_SHA256(data.bytes, (CC_LONG)data.length, digest);
+    return [NSData dataWithBytes:digest length:sizeof(digest)];
+}
+static BOOL NSVersionOne(id version) {
+    return NSUnsignedInteger(version, 1) && [version unsignedIntegerValue] == 1;
+}
+
+// If writing the acknowledgement itself failed, retain evidence of this exact
+// submitted record in this process. Only one write can own the lock at a time.
+static NSDictionary *NSLocalAcknowledgement;
+static struct stat NSAcknowledgedDirectory;
+static BOOL NSMatchesLocalAcknowledgement(NSDictionary *record, NSSharedDirectory *directory) {
+    struct stat info;
+    return NSLocalAcknowledgement && [NSLocalAcknowledgement isEqual:record] &&
+           !fstat(directory.descriptor, &info) && info.st_ino == NSAcknowledgedDirectory.st_ino &&
+           info.st_dev == NSAcknowledgedDirectory.st_dev;
+}
 
 @implementation NSConfigurationCoordinator
-+ (BOOL)hasUnacknowledgedWrite {
-    NSURL *url = NSSharedURL(NSPendingConfigurationFile);
-    return url && [NSFileManager.defaultManager fileExistsAtPath:url.path];
-}
 - (instancetype)init {
     if ((self = [super init])) {
         _durableFence = YES;
         _acquireLock = ^NSStoreLock *(NSError **error) {
-            NSURL *url = NSSharedURL(@"configuration.lock");
-            return url ? [NSStoreLock tryLockURL:url error:error] : nil;
+            return [NSStoreLock tryLockRoot:NSSharedURL(@"") leaf:NSConfigurationLockFile error:error];
+        };
+        _bootIdentifier = ^{
+            return NSBootSessionIdentifier();
+        };
+        _retireDocument = ^BOOL(NSSharedDirectory *directory, NSString *leaf, NSError **error) {
+            return NSUnlinkBoundedFile(directory, leaf, error);
         };
     }
     return self;
+}
+- (NSSharedDirectory *)directory {
+    return self.lock.directory;
+}
+- (NSError *)writeErrorWithPreferenceError:(NSError *)preferenceError readbackError:(NSError *)readbackError {
+    NSError *primary = preferenceError ?: self.acknowledgementError ?: readbackError;
+    if ((!self.acknowledgementError || primary == self.acknowledgementError) &&
+        (!readbackError || primary == readbackError)) {
+        return primary;
+    }
+    NSMutableDictionary *info = [primary.userInfo mutableCopy] ?: [NSMutableDictionary new];
+    NSMutableArray *details = [NSMutableArray arrayWithObject:primary.localizedDescription];
+    if (self.acknowledgementError && primary != self.acknowledgementError) {
+        info[@"acknowledgementError"] = self.acknowledgementError;
+        [details addObject:self.acknowledgementError.localizedDescription];
+    }
+    if (readbackError && primary != readbackError) {
+        info[@"readbackError"] = readbackError;
+        [details addObject:[NSString stringWithFormat:@"Saved preference readback: %@ (%@ %ld).",
+                                                      readbackError.localizedDescription,
+                                                      readbackError.domain, (long)readbackError.code]];
+    }
+    info[NSLocalizedDescriptionKey] = [details componentsJoinedByString:@" "];
+    return [NSError errorWithDomain:primary.domain code:primary.code userInfo:info];
+}
+- (BOOL)retireMarker:(NSError **)error {
+    if (!self.retireDocument(self.directory, NSPendingConfigurationFile, error)) {
+        return NO;
+    }
+    NSLocalAcknowledgement = nil;
+    return self.retireDocument(self.directory, NSConfigurationRecoveryFile, error);
+}
+- (NSConfigurationMarkerState)reconcile:(NSError **)error {
+    if (!self.durableFence) {
+        return NSConfigurationMarkerNone;
+    }
+    NSError *storageError = nil;
+    NSData *bytes = NSReadBoundedFile(self.directory, NSPendingConfigurationFile, &storageError);
+    if (!bytes) {
+        if (NSFileIsAbsent(storageError)) {
+            if (self.retireDocument(self.directory, NSConfigurationRecoveryFile, &storageError)) {
+                return NSConfigurationMarkerNone;
+            }
+            if (error) {
+                *error = NSMarkerError(@"Clear the remaining local preference recovery record, then refresh.",
+                                       storageError);
+            }
+            return NSConfigurationMarkerAcknowledged;
+        }
+        if (error) {
+            *error = NSMarkerError(@"The pending preference record is unreadable. Restore shared storage "
+                                   @"access and refresh. Filter settings remain available in iOS Settings.",
+                                   storageError);
+        }
+        return NSConfigurationMarkerInvalid;
+    }
+    NSDictionary *marker = NSDecodeMarker(bytes);
+    BOOL legacy = marker[@"version"] == nil;
+    if (!legacy && !NSVersionOne(marker[@"version"])) {
+        if (error) {
+            *error = NSMarkerError(@"The pending preference record uses an unsupported format. Open it with "
+                                   @"a compatible NetShield2 version or check the filter in iOS Settings.",
+                                   nil);
+        }
+        return NSConfigurationMarkerInvalid;
+    }
+    NSString *boot = NSNormalizedUUID(self.bootIdentifier());
+    NSString *recordedBoot = NSNormalizedUUID(marker[@"boot"]);
+    BOOL acknowledged = [marker[@"state"] isEqual:@"acknowledged"];
+    BOOL valid = NSNormalizedUUID(marker[@"operation"]) &&
+                 NSUnsignedInteger(marker[@"phase"], NSUIntegerMax) &&
+                 [marker[@"phase"] unsignedIntegerValue] > 0 &&
+                 (legacy || (([marker[@"kind"] isEqual:@"save"] || [marker[@"kind"] isEqual:@"remove"]) &&
+                             (acknowledged || [marker[@"state"] isEqual:@"pending"]) &&
+                             ((recordedBoot && [marker[@"bootState"] isEqual:@"known"]) ||
+                              (!marker[@"boot"] && [marker[@"bootState"] isEqual:@"unavailable"]))));
+    NSConfigurationMarkerState state = NSConfigurationMarkerInvalid;
+    if (valid && ((!legacy && acknowledged) || NSMatchesLocalAcknowledgement(marker, self.directory))) {
+        state = NSConfigurationMarkerAcknowledged;
+    } else if (valid && recordedBoot) {
+        state = boot && ![recordedBoot isEqual:boot] ? NSConfigurationMarkerPriorBoot
+                                                     : NSConfigurationMarkerUnresolved;
+    } else {
+        if (valid && !legacy) {
+            state = NSConfigurationMarkerUnresolved;
+        }
+        NSData *fingerprint = NSMarkerFingerprint(bytes);
+        NSError *witnessError = nil;
+        NSData *witnessBytes = NSReadBoundedFile(self.directory, NSConfigurationRecoveryFile, &witnessError);
+        NSDictionary *witness = NSDecodeMarker(witnessBytes);
+        NSString *witnessBoot = NSVersionOne(witness[@"version"]) ? NSNormalizedUUID(witness[@"boot"]) : nil;
+        BOOL sameMarker = witnessBoot && [fingerprint isEqual:witness[@"fingerprint"]];
+        if (!witnessBytes && !NSFileIsAbsent(witnessError)) {
+            if (error) {
+                *error = NSMarkerError(@"Read the preference recovery witness failed. Restore shared storage "
+                                       @"access and refresh.",
+                                       witnessError);
+            }
+            return NSConfigurationMarkerInvalid;
+        }
+        if (boot && sameMarker && ![witnessBoot isEqual:boot]) {
+            state = NSConfigurationMarkerPriorBoot;
+        } else if (boot && !sameMarker &&
+                   !NSWriteDocumentIn(self.directory,
+                                      @{@"version" : @1, @"fingerprint" : fingerprint, @"boot" : boot},
+                                      NSConfigurationRecoveryFile, &witnessError)) {
+            if (error) {
+                *error = NSMarkerError(@"Record the kernel boot for preference recovery failed. "
+                                       @"Restore shared storage access and refresh.",
+                                       witnessError);
+            }
+            return NSConfigurationMarkerInvalid;
+        }
+    }
+    if (state == NSConfigurationMarkerAcknowledged || state == NSConfigurationMarkerPriorBoot) {
+        // Match the same record under the configuration lock before unlinking.
+        NSData *current = NSReadBoundedFile(self.directory, NSPendingConfigurationFile, &storageError);
+        if ([bytes isEqual:current] && [self retireMarker:&storageError]) {
+            self.reconciledMarker = YES;
+            return NSConfigurationMarkerNone;
+        }
+        if (error) {
+            *error = NSMarkerError(
+                state == NSConfigurationMarkerAcknowledged
+                    ? @"The OS acknowledged the preference write. Local cleanup is pending. Refresh to retry."
+                    : @"A prior kernel boot was verified. Local preference record cleanup is pending. "
+                      @"Refresh to retry.",
+                storageError);
+        }
+        return state;
+    }
+    if (error) {
+        NSString *message;
+        if (!boot) {
+            message = @"The kernel boot identity is unavailable. The preference write cannot be ruled out. "
+                      @"Check the filter in iOS Settings and refresh when boot identity is available.";
+        } else if (state == NSConfigurationMarkerUnresolved && recordedBoot) {
+            message = @"An earlier preference write may still complete. Wait for its callback or reboot "
+                      @"the device, then refresh. The filter is also accessible in iOS Settings.";
+        } else {
+            message = @"The pending preference record has no usable boot evidence. This boot has been "
+                      @"recorded for recovery. Reboot the device, then refresh. A respring is insufficient.";
+        }
+        *error = NSMarkerError(message, nil);
+    }
+    return state;
 }
 - (void)deadline:(NSTimeInterval)delay overall:(BOOL)overall work:(void (^)(void))work {
     if (self.schedule) {
@@ -79,46 +275,27 @@ static NSError *NSConfigurationError(NSInteger code, NSString *message) {
         }
         return NO;
     }
+    self.reconciledMarker = NO;
     self.lock = self.acquireLock(error);
     if (!self.lock) {
         if (error && !*error) {
-            *error = NSConfigurationError(EBUSY, @"Another app/helper configuration operation is pending.");
+            *error = NSConfigurationError(EBUSY, @"Configuration ownership is unavailable.");
         }
         return NO;
     }
-    // A previous process may have died while the OS still owned a write. Reads
-    // and Settings remain available; a read alone cannot prove that write ended.
-    if (self.durableFence && [NSConfigurationCoordinator hasUnacknowledgedWrite]) {
-        NSDictionary *pending = NSReadDocument(NSPendingConfigurationFile, NULL);
-        NSString *boot = NSBootSessionIdentifier();
-        if (boot &&
-            [[NSUUID alloc] initWithUUIDString:[pending[@"boot"] isKindOfClass:NSString.class]
-                                                   ? pending[@"boot"]
-                                                   : @""] &&
-            ![pending[@"boot"] isEqual:boot]) {
-            // An OS operation cannot remain in flight across a kernel reboot.
-            // The transaction will still reload actual saved preferences.
-            [NSFileManager.defaultManager removeItemAtURL:NSSharedURL(NSPendingConfigurationFile) error:NULL];
-        }
-    }
-    if (self.durableFence && [NSConfigurationCoordinator hasUnacknowledgedWrite]) {
+    if ([self reconcile:error] != NSConfigurationMarkerNone) {
         [self.lock unlock];
         self.lock = nil;
-        if (error) {
-            *error = NSConfigurationError(
-                EBUSY, @"An earlier preference write was not acknowledged. Saved state is unverified. "
-                       @"Resolve the filter in Settings and restart the device before further app/helper "
-                       @"changes; do not retry automatically.");
-        }
         return NO;
     }
+    self.acknowledgementError = nil;
     self.readOnly = NO;
     self.operation = NSUUID.UUID.UUIDString;
     self.active = YES;
     self.uncertain = NO;
     NSString *operation = self.operation;
     __weak typeof(self) weakSelf = self;
-    [self deadline:90
+    [self deadline:120
            overall:YES
               work:^{
                   NSConfigurationCoordinator *owner = weakSelf;
@@ -134,38 +311,73 @@ static NSError *NSConfigurationError(NSInteger code, NSString *message) {
               }];
     return self.active;
 }
-- (void)beginReadOnly {
+- (NSConfigurationMarkerState)beginReadOnly:(NSError **)error {
     NSAssert(NSThread.isMainThread, @"Configuration state belongs to the main queue");
+    if (self.active || self.pendingWrite) {
+        if (error) {
+            *error = NSConfigurationError(EBUSY, @"Configuration inspection is busy.");
+        }
+        return NSConfigurationMarkerUnavailable;
+    }
+    self.reconciledMarker = NO;
+    self.lock = self.acquireLock(error);
     self.readOnly = YES;
     self.active = YES;
     self.uncertain = NO;
+    return self.lock ? [self reconcile:error] : NSConfigurationMarkerUnavailable;
 }
+
+- (NSError *)acknowledge:(NSDictionary *)expected {
+    if (!fstat(self.directory.descriptor, &NSAcknowledgedDirectory)) {
+        NSLocalAcknowledgement = expected;
+    }
+    NSError *error = nil;
+    NSDictionary *pending = NSReadDocumentIn(self.directory, NSPendingConfigurationFile, &error);
+    // Equality includes the captured operation ID and phase, even after a timeout.
+    if (![expected isEqual:pending]) {
+        return NSMarkerError(@"The OS acknowledged the write, but its local preference record could "
+                             @"not be matched. Refresh to inspect it again.",
+                             error);
+    }
+    NSMutableDictionary *acknowledged = [expected mutableCopy];
+    acknowledged[@"state"] = @"acknowledged";
+    NSError *writeError = nil;
+    if (!NSWriteDocumentIn(self.directory, acknowledged, NSPendingConfigurationFile, &writeError)) {
+        // A failed publication can leave either representation. Never remove
+        // a record belonging to another phase or operation.
+        pending = NSReadDocumentIn(self.directory, NSPendingConfigurationFile, &error);
+        if (![expected isEqual:pending] && ![acknowledged isEqual:pending]) {
+            return NSMarkerError(@"The OS acknowledged the write, but its acknowledgement could not "
+                                 @"be stored or matched. Refresh to retry.",
+                                 error ?: writeError);
+        }
+    }
+    if (![self retireMarker:&error]) {
+        return NSMarkerError(@"The OS acknowledged the preference write. Local cleanup is pending. "
+                             @"Refresh to retry.",
+                             error ?: writeError);
+    }
+    return nil;
+}
+
 - (void)perform:(NSUInteger)kind
-        manager:(id<NSConfigurationPreferences>)manager
-     completion:(void (^)(NSError *))completion {
+    authorization:(BOOL)authorization
+          manager:(id<NSConfigurationPreferences>)manager
+       completion:(void (^)(NSError *))completion {
     NSAssert(NSThread.isMainThread, @"Configuration state belongs to the main queue");
+    if (kind && self.acknowledgementError) {
+        completion(self.acknowledgementError);
+        return;
+    }
     if (!self.active || self.pendingWrite || self.uncertain || (kind && self.readOnly)) {
         completion(NSConfigurationError(EBUSY, @"Configuration is busy or an earlier result is unverified."));
         return;
     }
     NSUInteger phase = ++self.phase;
-    if (kind) {
-        NSError *error = nil;
-        if (self.durableFence && !NSWriteDocument(@{
-                @"operation" : self.operation,
-                @"phase" : @(phase),
-                @"boot" : NSBootSessionIdentifier() ?: @""
-            },
-                                                  NSPendingConfigurationFile, &error)) {
-            completion(error);
-            return;
-        }
-        self.pendingWrite = YES;
-    }
     __block BOOL acknowledged = NO;
     __weak typeof(self) weakSelf = self;
     [self
-        deadline:10
+        deadline:authorization ? 60 : 10
          overall:NO
             work:^{
                 NSConfigurationCoordinator *owner = weakSelf;
@@ -173,38 +385,66 @@ static NSError *NSConfigurationError(NSInteger code, NSString *message) {
                     owner.phase++;
                     owner.uncertain = YES;
                     [owner cancelPhaseTimer];
-                    completion(NSConfigurationError(
-                        ETIMEDOUT, kind ? @"Preference write timed out and may still complete. No recovery "
-                                          @"write is authorized; saved state is unknown/unverified."
-                                        : @"Preference load timed out; saved state is unknown/unverified."));
+                    NSString *message =
+                        owner.pendingWrite
+                            ? @"Preference write timed out and may still complete. Saved state is unverified."
+                            : (kind ? @"The preference write deadline expired before dispatch."
+                                    : @"Preference load timed out. Saved state is unverified.");
+                    completion(NSConfigurationError(ETIMEDOUT, message));
                 }
             }];
     if (!self.active || self.phase != phase) {
         return;
     }
-    // The OS callback deliberately retains the owner and its lock while a write
-    // remains pending. A late callback reconciles bookkeeping, never starts work.
+    NSDictionary *record = nil;
+    if (kind && self.durableFence) {
+        NSString *boot = NSNormalizedUUID(self.bootIdentifier());
+        NSMutableDictionary *prepared = [@{
+            @"version" : @1,
+            @"operation" : self.operation,
+            @"phase" : @(phase),
+            @"kind" : kind == 1 ? @"save" : @"remove",
+            @"state" : @"pending",
+            @"bootState" : boot ? @"known" : @"unavailable"
+        } mutableCopy];
+        prepared[@"boot"] = boot;
+        record = [prepared copy];
+        NSError *prepareError = nil;
+        BOOL published = NSWriteDocumentIn(self.directory, record, NSPendingConfigurationFile, &prepareError);
+        NSError *readError = nil;
+        NSDictionary *checked = NSReadDocumentIn(self.directory, NSPendingConfigurationFile, &readError);
+        if (!published || ![record isEqual:checked]) {
+            // No OS call happened. Retire only our own preparation, if it is identifiable.
+            NSError *cleanupError = nil;
+            if ([record isEqual:checked] && ![self retireMarker:&cleanupError] &&
+                !fstat(self.directory.descriptor, &NSAcknowledgedDirectory)) {
+                NSLocalAcknowledgement = record;
+            }
+            self.phase++;
+            [self cancelPhaseTimer];
+            NSError *failure =
+                NSMarkerError(@"Prepare preference write failed before dispatch.", prepareError ?: readError);
+            self.acknowledgementError =
+                cleanupError
+                    ? NSMarkerError(@"Local preference preparation cleanup is pending. Refresh to retry.",
+                                    cleanupError)
+                    : nil;
+            completion(failure);
+            return;
+        }
+    }
+    // Only the actual OS call owns a pending in-process write. A callback after
+    // terminal delivery may acknowledge its record but cannot start another phase.
     void (^callback)(NSError *) = ^(NSError *error) {
         void (^deliver)(void) = ^{
-            NSError *result = error;
             if (acknowledged) {
                 return;
             }
             acknowledged = YES;
             if (kind) {
                 self.pendingWrite = NO;
-                if (self.durableFence) {
-                    NSError *removeError = nil;
-                    NSDictionary *pending = NSReadDocument(NSPendingConfigurationFile, &removeError);
-                    if (![pending[@"operation"] isEqual:self.operation] ||
-                        ![NSFileManager.defaultManager removeItemAtURL:NSSharedURL(NSPendingConfigurationFile)
-                                                                 error:&removeError]) {
-                        self.uncertain = YES;
-                        result =
-                            removeError
-                                ?: NSConfigurationError(EBUSY, @"The pending-write fence could not be "
-                                                               @"reconciled. Saved state is unverified.");
-                    }
+                if (record) {
+                    self.acknowledgementError = [self acknowledge:record];
                 }
             }
             if (!self.active || self.phase != phase) {
@@ -212,11 +452,16 @@ static NSError *NSConfigurationError(NSInteger code, NSString *message) {
                     [self.lock unlock];
                     self.lock = nil;
                 }
+                if (kind) {
+                    [NSNotificationCenter.defaultCenter
+                        postNotificationName:NSConfigurationLateAcknowledgement
+                                      object:nil];
+                }
                 return;
             }
             self.phase++;
             [self cancelPhaseTimer];
-            completion(result);
+            completion(error);
         };
         if (NSThread.isMainThread) {
             deliver();
@@ -224,6 +469,7 @@ static NSError *NSConfigurationError(NSInteger code, NSString *message) {
             dispatch_async(dispatch_get_main_queue(), deliver);
         }
     };
+    self.pendingWrite = kind != 0;
     if (kind == 1) {
         [manager saveToPreferencesWithCompletionHandler:callback];
     } else if (kind == 2) {
@@ -233,13 +479,16 @@ static NSError *NSConfigurationError(NSInteger code, NSString *message) {
     }
 }
 - (void)load:(id)manager completion:(void (^)(NSError *))completion {
-    [self perform:0 manager:manager completion:completion];
+    [self perform:0 authorization:NO manager:manager completion:completion];
 }
 - (void)save:(id)manager completion:(void (^)(NSError *))completion {
-    [self perform:1 manager:manager completion:completion];
+    [self perform:1 authorization:NO manager:manager completion:completion];
+}
+- (void)saveWithAuthorization:(id)manager completion:(void (^)(NSError *))completion {
+    [self perform:1 authorization:YES manager:manager completion:completion];
 }
 - (void)remove:(id)manager completion:(void (^)(NSError *))completion {
-    [self perform:2 manager:manager completion:completion];
+    [self perform:2 authorization:NO manager:manager completion:completion];
 }
 - (void)finish {
     NSAssert(NSThread.isMainThread, @"Configuration state belongs to the main queue");

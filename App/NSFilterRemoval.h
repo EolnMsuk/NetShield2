@@ -18,6 +18,8 @@ FOUNDATION_EXPORT void NSRemoveSharedStateAfterFilterRemovalWithRetry(NSTimeInte
                                                                       void (^completion)(NSError *error));
 
 // The helper uses the same transaction for verified preference removal and cleanup.
+FOUNDATION_EXPORT NSString *const NSUninstallCleanupPendingKey;
 FOUNDATION_EXPORT void NSRemoveInstalledFilterAndSharedState(id<NSFilterRemovalManager> manager,
                                                              NSTimeInterval deadline,
+                                                             void (^clearAppState)(void),
                                                              void (^completion)(NSError *));

@@ -186,10 +186,16 @@
         self.monitor[@"dnsIssue"] ?: @"",
         self.monitor[@"notificationDeliveryIssue"] ?: @"",
         @([self hasFreshMonitor]),
-        @(self.loaded),
+        @(self.preferencesLoaded),
+        @(self.hasSavedPreferences),
+        @(self.configurationReady),
         @(self.busy),
-        @(NEFilterManager.sharedManager.enabled),
-        @(NEFilterManager.sharedManager.providerConfiguration.filterSockets),
+        @(self.savedEnabled),
+        @(self.savedSocketFiltering),
+        @(self.savedBrowserFiltering),
+        self.preferenceReadError ?: @"",
+        self.configurationRecoveryError ?: @"",
+        self.configurationOperationError ?: @"",
         self.message ?: @"",
         self.bootPolicyStatus ?: @"",
         self.notificationStatus ?: @"",
@@ -560,9 +566,14 @@
     }
     if (cached) {
         UISwitch *toggle = (UISwitch *)cached.accessoryView;
-        BOOL on = path.row == 0 ? self.loaded && NEFilterManager.sharedManager.enabled
-                                : [self.policy.document[@"allowAppleSystemProcesses"] boolValue];
-        BOOL enabled = (path.row == 0 ? self.loaded : self.policy != nil) && !self.busy;
+        BOOL firewall = path.row == 0;
+        BOOL on =
+            firewall ? self.savedEnabled : [self.policy.document[@"allowAppleSystemProcesses"] boolValue];
+        BOOL ready = firewall ? (self.preferencesLoaded && self.configurationReady &&
+                                 (self.savedEnabled || self.policy != nil))
+                              : self.policy != nil;
+        BOOL enabled = ready && !self.busy;
+        toggle.hidden = firewall && !self.hasSavedPreferences;
         if (toggle.on != on) {
             [toggle setOn:on animated:NO];
         }
@@ -591,10 +602,10 @@
         cell.detailTextLabel.text = @"Control internet access for your apps";
         cell.imageView.image = [UIImage systemImageNamed:@"shield.lefthalf.filled"];
         UISwitch *toggle = [UISwitch new];
-        if (self.loaded && NEFilterManager.sharedManager.enabled) {
-            [toggle setOn:YES animated:NO];
-        }
-        toggle.enabled = self.loaded && !self.busy;
+        toggle.on = self.savedEnabled;
+        toggle.hidden = !self.hasSavedPreferences;
+        toggle.enabled = self.preferencesLoaded && self.configurationReady &&
+                         (self.savedEnabled || self.policy != nil) && !self.busy;
         toggle.accessibilityLabel = @"Firewall";
         [toggle addTarget:self
                       action:@selector(firewallChanged:)
@@ -602,66 +613,87 @@
         cell.accessoryView = toggle;
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
     } else if (path.section == NSDashboardSectionFirewall && path.row == 3) {
-        BOOL enabled = self.loaded && NEFilterManager.sharedManager.enabled;
+        BOOL enabled = self.preferencesLoaded && self.savedEnabled;
         BOOL healthy =
             enabled && self.policy && [self hasFreshMonitor] && ![self.monitor[@"policyError"] length];
+        NSString *detail = nil;
         if (self.busy) {
             cell.textLabel.text = @"Updating...";
-        } else if (!self.loaded) {
-            cell.textLabel.text = @"Unable to read firewall status";
+        } else if (!self.preferencesLoaded) {
+            cell.textLabel.text = @"Saved preferences unavailable";
+            if (self.hasSavedPreferences) {
+                detail = self.savedEnabled ? @"Last successful read showed Firewall on."
+                                           : @"Last successful read showed Firewall off.";
+            }
+        } else if (!self.configurationReady) {
+            cell.textLabel.text =
+                self.savedEnabled ? @"Saved On. Changes paused." : @"Saved Off. Changes paused.";
         } else if (!enabled) {
             cell.textLabel.text = @"Off";
+            if (self.policy) {
+                detail = @"Turn on Firewall to apply your rules.";
+            }
         } else {
             cell.textLabel.text = healthy ? @"Control provider responding" : @"Needs attention";
-        }
-        cell.textLabel.textColor = healthy ? UIColor.systemGreenColor : UIColor.labelColor;
-        NSString *detail =
-            @"The filter has not reported a healthy status. Turn Firewall off and on if this continues.";
-        if (!self.loaded) {
-            detail = @"The saved filter state is unknown. Reload preferences while jailbroken before "
-                     @"relying on its state.";
-        } else if (!enabled) {
-            detail = @"Turn on Firewall to apply your rules.";
-        } else if (healthy) {
-            NEFilterProviderConfiguration *configuration =
-                NEFilterManager.sharedManager.providerConfiguration;
-            if (configuration.filterBrowsers && configuration.filterSockets) {
+            if (!healthy) {
+                detail = @"Saved On. Waiting for a healthy report from the current control provider.";
+            } else if (self.savedBrowserFiltering && self.savedSocketFiltering) {
                 detail = @"Browser and socket filtering configured.";
-            } else if (configuration.filterBrowsers) {
-                detail = @"Browser filtering configured. Enable Filter System Sockets below Firewall for "
-                         @"other app connections.";
-            } else if (configuration.filterSockets) {
-                detail = @"Socket filtering configured; browser filtering is not configured.";
+            } else if (self.savedBrowserFiltering) {
+                detail =
+                    @"Browser filtering configured. Enable Filter System Sockets for other app connections.";
+            } else if (self.savedSocketFiltering) {
+                detail = @"Socket filtering configured. Browser filtering is off.";
             } else {
-                detail = @"Browser and socket filtering are not configured. Restart Firewall to apply scope.";
+                detail = @"Both filtering scopes are off. Restart Firewall to apply scope.";
             }
-            detail = [detail stringByAppendingString:@" Control health does not verify every connection."];
         }
-        if (enabled && NEFilterManager.sharedManager.providerConfiguration.filterSockets !=
-                           [self.policy.document[@"filterSockets"] boolValue]) {
-            detail = [detail stringByAppendingString:
-                                 @" Pending: toggle Firewall off and on to apply the saved socket setting."];
+        cell.textLabel.textColor =
+            healthy && self.configurationReady && !self.busy ? UIColor.systemGreenColor : UIColor.labelColor;
+        NSMutableArray<NSString *> *details = [NSMutableArray new];
+        if (detail) {
+            [details addObject:detail];
         }
-        if ([self.monitor[@"policyError"] length]) {
-            detail = self.monitor[@"policyError"];
+        if (self.preferenceReadError.length) {
+            [details addObject:[@"Saved preferences: " stringByAppendingString:self.preferenceReadError]];
         }
-        if ([self.monitor[@"dnsIssue"] length]) {
-            detail = [detail stringByAppendingFormat:@"\n%@", self.monitor[@"dnsIssue"]];
-        }
-        if (healthy && [self.monitor[@"droppedWorkCount"] unsignedLongLongValue]) {
-            detail = [NSString stringWithFormat:@"%@ Control work skipped under load: %@.", detail ?: @"",
-                                                self.monitor[@"droppedWorkCount"]];
-        }
-        if (self.monitorReadError.length) {
-            detail = [NSString stringWithFormat:@"Provider report unavailable: %@", self.monitorReadError];
+        if (self.configurationRecoveryError.length) {
+            [details addObject:self.configurationRecoveryError];
+        } else if (self.configurationOperationError.length) {
+            [details addObject:self.configurationOperationError];
         }
         if (self.policyReadError.length) {
-            detail = self.policyReadError;
+            [details addObject:[@"Policy storage: " stringByAppendingString:self.policyReadError]];
         }
-        cell.detailTextLabel.text =
-            [self.message length] ? [NSString stringWithFormat:@"%@\n%@", detail, self.message] : detail;
-        cell.accessoryType = UITableViewCellAccessoryNone;
-        cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        if (enabled && self.monitorReadError.length) {
+            [details addObject:[@"Provider report: " stringByAppendingString:self.monitorReadError]];
+        } else if (enabled && [self.monitor[@"policyError"] length] && [self hasFreshMonitor]) {
+            [details addObject:[@"Provider policy: " stringByAppendingString:self.monitor[@"policyError"]]];
+        }
+        if (enabled && self.policy &&
+            self.savedSocketFiltering != [self.policy.document[@"filterSockets"] boolValue]) {
+            [details addObject:@"Toggle Firewall off and on to apply the saved socket setting."];
+        }
+        if (healthy && [self.monitor[@"dnsIssue"] length]) {
+            [details addObject:self.monitor[@"dnsIssue"]];
+        }
+        if (healthy && [self.monitor[@"droppedWorkCount"] unsignedLongLongValue]) {
+            [details addObject:[NSString stringWithFormat:@"Control work skipped under load: %@.",
+                                                          self.monitor[@"droppedWorkCount"]]];
+        }
+        if (healthy) {
+            [details addObject:@"Control health does not verify every connection."];
+        }
+        if (self.message.length && !self.configurationRecoveryError.length) {
+            [details addObject:self.message];
+        }
+        if (self.busy) {
+            cell.accessoryType = UITableViewCellAccessoryNone;
+            cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        } else {
+            [details addObject:@"Tap to refresh saved preferences and policy."];
+        }
+        cell.detailTextLabel.text = [details componentsJoinedByString:@"\n"];
     } else if (path.section == NSDashboardSectionFirewall && path.row == 2) {
         cell.textLabel.text = @"Allow all iOS system traffic";
         cell.detailTextLabel.text = @"Allow Apple identities unless a global rule matches";
@@ -682,7 +714,8 @@
             @"Required to filter all app network. Only disable if an app crashes on launch";
         UISwitch *toggle = [UISwitch new];
         toggle.on = [self.policy.document[@"filterSockets"] boolValue];
-        toggle.enabled = self.policy != nil && self.loaded && !self.busy;
+        toggle.enabled =
+            self.policy != nil && self.preferencesLoaded && self.configurationReady && !self.busy;
         toggle.accessibilityLabel = cell.textLabel.text;
         [toggle addTarget:self
                       action:@selector(socketFilteringChanged:)
@@ -824,7 +857,9 @@
     if (self.busy) {
         return;
     }
-    if (path.section == NSDashboardSectionFirewall && path.row == 5) {
+    if (path.section == NSDashboardSectionFirewall && path.row == 3) {
+        [self refreshSavedState];
+    } else if (path.section == NSDashboardSectionFirewall && path.row == 5) {
         [self chooseActionForIdentity:nil defaultKey:@"default"];
     } else if (path.section == NSDashboardSectionRequests && [self.monitor[@"requests"] count]) {
         [self presentRequest:self.monitor[@"requests"][path.row]];

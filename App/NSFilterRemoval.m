@@ -4,8 +4,9 @@
 #include <errno.h>
 
 typedef void (^NSCleanupPrecheck)(void (^)(NSError *));
-static void NSAttemptSharedStateCleanup(NSTimeInterval deadline, NSError *lastError,
-                                        NSCleanupPrecheck precheck, void (^completion)(NSError *)) {
+static void NSAttemptSharedStateCleanup(NSSharedDirectory *directory, NSTimeInterval deadline,
+                                        NSError *lastError, NSCleanupPrecheck precheck,
+                                        void (^completion)(NSError *)) {
     if (NSProcessInfo.processInfo.systemUptime >= deadline) {
         NSMutableDictionary *info =
             [NSMutableDictionary dictionaryWithObject:@"Timed out waiting for saved-state cleanup locks."
@@ -26,17 +27,17 @@ static void NSAttemptSharedStateCleanup(NSTimeInterval deadline, NSError *lastEr
             return;
         }
         if (NSProcessInfo.processInfo.systemUptime >= deadline) {
-            NSAttemptSharedStateCleanup(deadline, lastError, nil, completion);
+            NSAttemptSharedStateCleanup(directory, deadline, lastError, nil, completion);
             return;
         }
         NSError *error = nil;
-        if (NSRemoveSharedStateAfterFilterRemoval(&error)) {
+        BOOL cleaned = directory ? NSRemoveSharedStateIn(directory, &error)
+                                 : NSRemoveSharedStateAfterFilterRemoval(&error);
+        if (cleaned) {
             completion(nil);
             return;
         }
-        BOOL busy = [error.domain isEqual:NSPOSIXErrorDomain] &&
-                    (error.code == EWOULDBLOCK || error.code == EAGAIN || error.code == EBUSY);
-        if (!busy) {
+        if (!NSIsLockContention(error)) {
             completion(error);
             return;
         }
@@ -45,7 +46,7 @@ static void NSAttemptSharedStateCleanup(NSTimeInterval deadline, NSError *lastEr
         // locks, and completion paths never schedule another attempt.
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
-                           NSAttemptSharedStateCleanup(deadline, error, precheck, completion);
+                           NSAttemptSharedStateCleanup(directory, deadline, error, precheck, completion);
                        });
     };
     if (precheck) {
@@ -57,16 +58,43 @@ static void NSAttemptSharedStateCleanup(NSTimeInterval deadline, NSError *lastEr
 
 void NSRemoveSharedStateAfterFilterRemovalWithRetry(NSTimeInterval deadline, void (^completion)(NSError *)) {
     dispatch_async(dispatch_get_main_queue(), ^{
-        NSAttemptSharedStateCleanup(deadline, nil, nil, completion);
+        NSAttemptSharedStateCleanup(nil, deadline, nil, nil, completion);
     });
 }
 
-static void NSRemoveFilter(id<NSFilterRemovalManager> manager, BOOL cleanup, NSTimeInterval deadline,
-                           void (^completion)(NSError *)) {
+NSString *const NSUninstallCleanupPendingKey = @"verifiedPreferencesCleanupPending";
+
+static NSError *NSUninstallCleanupPending(NSError *error) {
+    NSString *detail = [NSString stringWithFormat:@"Saved preferences were verified absent before cleanup. "
+                                                  @"Saved-state cleanup did not complete. %@ (%@ %ld).",
+                                                  error.localizedDescription, error.domain, (long)error.code];
+    return [NSError errorWithDomain:@"NetShield2.Uninstall"
+                               code:2
+                           userInfo:@{
+                               NSLocalizedDescriptionKey : detail,
+                               NSUnderlyingErrorKey : error,
+                               NSUninstallCleanupPendingKey : @YES
+                           }];
+}
+
+static void NSRemoveFilter(id<NSFilterRemovalManager> manager, NSTimeInterval deadline,
+                           void (^clearAppState)(void), void (^completion)(NSError *)) {
     NSConfigurationCoordinator *owner = [NSConfigurationCoordinator new];
     NSError *lockError = nil;
     if (![owner begin:&lockError]) {
-        completion(lockError);
+        NSTimeInterval remaining = deadline - NSProcessInfo.processInfo.systemUptime;
+        if (remaining > 0 && NSIsLockContention(lockError)) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(MIN(remaining, 0.25) * NSEC_PER_SEC)),
+                           dispatch_get_main_queue(), ^{
+                               if (NSProcessInfo.processInfo.systemUptime < deadline) {
+                                   NSRemoveFilter(manager, deadline, clearAppState, completion);
+                               } else {
+                                   completion(lockError);
+                               }
+                           });
+        } else {
+            completion(lockError);
+        }
         return;
     }
     __block BOOL done = NO;
@@ -80,12 +108,12 @@ static void NSRemoveFilter(id<NSFilterRemovalManager> manager, BOOL cleanup, NST
     };
     owner.abort = finished;
     void (^removed)(NSError *) = ^(NSError *error) {
-        if (error || !cleanup) {
+        if (error || !clearAppState) {
             finished(error);
             return;
         }
         NSAttemptSharedStateCleanup(
-            deadline, nil,
+            owner.directory, deadline, nil,
             ^(void (^checked)(NSError *)) {
                 [owner load:manager
                     completion:^(NSError *verifyError) {
@@ -98,10 +126,21 @@ static void NSRemoveFilter(id<NSFilterRemovalManager> manager, BOOL cleanup, NST
                                                                   @"Shared files were preserved."
                                                           }];
                         }
-                        checked(verifyError);
+                        if (verifyError) {
+                            finished(verifyError);
+                            return;
+                        }
+                        checked(nil);
                     }];
             },
-            finished);
+            ^(NSError *cleanupError) {
+                if (cleanupError) {
+                    finished(NSUninstallCleanupPending(cleanupError));
+                    return;
+                }
+                clearAppState();
+                finished(nil);
+            });
     };
     [owner load:manager
         completion:^(NSError *loadError) {
@@ -115,7 +154,7 @@ static void NSRemoveFilter(id<NSFilterRemovalManager> manager, BOOL cleanup, NST
             }
             [owner remove:manager
                 completion:^(NSError *removeError) {
-                    if (removeError) {
+                    if (removeError && !owner.acknowledgementError) {
                         finished(removeError);
                         return;
                     }
@@ -130,15 +169,20 @@ static void NSRemoveFilter(id<NSFilterRemovalManager> manager, BOOL cleanup, NST
                                                             @"The system filter still exists after removal."
                                                     }];
                             }
-                            removed(verifyError);
+                            NSError *result = [owner writeErrorWithPreferenceError:removeError
+                                                                     readbackError:verifyError];
+                            if (clearAppState && result && !removeError && !verifyError) {
+                                result = NSUninstallCleanupPending(result);
+                            }
+                            removed(result);
                         }];
                 }];
         }];
 }
 void NSRemoveInstalledFilter(id<NSFilterRemovalManager> manager, void (^completion)(NSError *)) {
-    NSRemoveFilter(manager, NO, 0, completion);
+    NSRemoveFilter(manager, 0, nil, completion);
 }
 void NSRemoveInstalledFilterAndSharedState(id<NSFilterRemovalManager> manager, NSTimeInterval deadline,
-                                           void (^completion)(NSError *)) {
-    NSRemoveFilter(manager, YES, deadline, completion);
+                                           void (^clearAppState)(void), void (^completion)(NSError *)) {
+    NSRemoveFilter(manager, deadline, clearAppState, completion);
 }

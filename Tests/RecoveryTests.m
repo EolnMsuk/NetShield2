@@ -82,7 +82,7 @@ static void TestDNSReplacementAndPublication(void) {
     VERIFY(!NSApplyDNSResults(document, pending, now));
     document[@"globalRules"] = @{key : @"block"};
     VERIFY(NSWriteDocument(document, NSPolicyFile, NULL));
-    NSStoreLock *lock = [NSStoreLock tryLockURL:NSSharedURL(@"policy.lock") error:NULL];
+    NSStoreLock *lock = [NSStoreLock tryLockRoot:NSSharedURL(@"") leaf:@"policy.lock" error:NULL];
     VERIFY(lock != nil);
     NSError *error = nil;
     VERIFY(!NSUpdatePolicy(
@@ -623,7 +623,7 @@ static void TestActivityClearBoundary(void) {
     snapshot[@"events"] = @[ event([cutoff dateByAddingTimeInterval:-1]) ];
     VERIFY(NSWriteDocument(snapshot, NSMonitorFile, NULL));
     VERIFY([NSReadMonitor()[@"events"] count] == 0);
-    NSStoreLock *lock = [NSStoreLock tryLockURL:NSSharedURL(@"activity.lock") error:NULL];
+    NSStoreLock *lock = [NSStoreLock tryLockRoot:NSSharedURL(@"") leaf:@"activity.lock" error:NULL];
     VERIFY(lock);
     VERIFY(!NSClearActivity(NULL));
     VERIFY(!NSWriteMonitorSnapshot(snapshot, NULL));

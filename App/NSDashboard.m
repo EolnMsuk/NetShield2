@@ -129,12 +129,12 @@
                                            selector:@selector(activityKeyboardFrameDidChange:)
                                                name:UIKeyboardDidChangeFrameNotification
                                              object:nil];
-    NSError *error = nil;
-    if (NSEnsurePolicy(&error)) {
-        self.policy = NSReadPolicy(&error);
-    }
-    self.policyReadError = self.policy ? @"" : error.localizedDescription;
+    [NSNotificationCenter.defaultCenter addObserver:self
+                                           selector:@selector(configurationChanged:)
+                                               name:NSConfigurationLateAcknowledgement
+                                             object:nil];
     self.message = @"";
+    self.policyBootstrapPending = YES;
     NSRemoveAutomaticallyAllowedNotifications();
     [self refreshNotificationSettings];
     [self loadConfiguration];
@@ -143,10 +143,12 @@
     BOOL returning = [notification.name isEqual:UIApplicationDidBecomeActiveNotification];
     dispatch_async(dispatch_get_main_queue(), ^{
         [self refreshNotificationSettings];
-        NSUInteger generation = self.storageGeneration;
+        if ([notification.name isEqual:NSConfigurationLateAcknowledgement]) {
+            self.configurationOperationError = nil;
+        }
         [self loadConfigurationWithCompletion:^{
-            if (returning && generation == self.storageGeneration && !self.busy && self.loaded &&
-                NEFilterManager.sharedManager.enabled) {
+            if (returning && !self.busy && self.preferencesLoaded && self.configurationReady &&
+                self.savedEnabled) {
                 NSWriteNotificationRetryRevision(NULL);
             }
         }];
@@ -219,11 +221,12 @@
             if (generation == owner.storageGeneration && !owner.tableView.editing &&
                 !owner.tableView.dragging && !owner.tableView.decelerating) {
                 owner.policy = policy;
+                if (policy) {
+                    owner.policyBootstrapPending = NO;
+                }
                 owner.policyReadError = policy ? @"" : policyError.localizedDescription;
-                owner.monitorReadError = monitorError && !([monitorError.domain isEqual:NSPOSIXErrorDomain] &&
-                                                           monitorError.code == ENOENT)
-                                             ? monitorError.localizedDescription
-                                             : @"";
+                owner.monitorReadError =
+                    monitorError && !NSFileIsAbsent(monitorError) ? monitorError.localizedDescription : @"";
                 owner.activityEvents = report[@"events"] ?: @[];
                 owner.activityGroups = groups;
                 [owner applyMonitor:report];
@@ -299,7 +302,7 @@
     [self.deferredRequests intersectSet:tokens];
     [self refreshTableKeepingPosition];
     if (UIApplication.sharedApplication.applicationState == UIApplicationStateActive && !self.busy &&
-        !self.presentedViewController && self.loaded && [NEFilterManager sharedManager].enabled &&
+        !self.presentedViewController && self.preferencesLoaded && self.savedEnabled &&
         [self hasFreshMonitor]) {
         for (NSDictionary *request in self.monitor[@"requests"]) {
             if (![self.deferredRequests containsObject:request[@"token"]]) {
@@ -311,9 +314,8 @@
     [self presentPendingUpdateResult];
 }
 - (BOOL)hasFreshMonitor {
-    NSString *activation =
-        NEFilterManager.sharedManager.providerConfiguration.vendorConfiguration[@"activation"];
-    return NSHasCurrentControlHeartbeat(self.monitor, activation, NSDate.date);
+    return self.preferencesLoaded &&
+           NSHasCurrentControlHeartbeat(self.monitor, self.savedActivation, NSDate.date);
 }
 - (void)showError:(NSError *)error {
     [self showError:error operation:@"Policy/storage"];
@@ -417,8 +419,9 @@
     [self refreshTableKeepingPosition];
     dispatch_async(NSAppStorageQueue(), ^{
         NSError *error = nil;
-        NSURL *lockURL = NSSharedURL(@"configuration.lock");
-        NSStoreLock *lock = lockURL ? [NSStoreLock tryLockURL:lockURL error:&error] : nil;
+        NSStoreLock *lock = [NSStoreLock tryLockRoot:NSSharedURL(@"")
+                                                leaf:NSConfigurationLockFile
+                                               error:&error];
         BOOL saved = NO;
         @try {
             if (lock) {
@@ -790,7 +793,7 @@
     return NSDirectionRuleTitle(rule ?: @"") ?: @{@"ask" : @"Ask Me", @"remove" : @"Remove Rule"}[rule ?: @""] ?: @"Default Rule";
 }
 - (void)firewallChanged:(UISwitch *)sender {
-    if (self.busy) {
+    if (self.busy || !self.preferencesLoaded || !self.configurationReady) {
         return;
     }
     if (!sender.on) {
@@ -798,7 +801,7 @@
         return;
     }
     if (!self.policy) {
-        [self reloadMonitor];
+        [self refreshSavedState];
         return;
     }
     NSRemoveAutomaticallyAllowedNotifications();

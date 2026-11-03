@@ -1,6 +1,7 @@
 #import "NSPolicyReader.h"
 #import "NSPolicyCache.h"
 #import "NSConstants.h"
+#import "NSBoundedFile.h"
 
 NSString *const NSGroupIdentifier = @"group.com.eolnmsuk.netshield";
 #ifdef NS_TESTING
@@ -33,18 +34,15 @@ void NSInvalidatePolicyCache(void) {
     [NSSharedPolicyCache() invalidate];
 }
 NSPolicy *NSReadPolicy(NSError **error) {
-    NSURL *url = NSSharedURL(NSPolicyFile);
-    if (!url) {
+    NSSharedDirectory *directory = [NSSharedDirectory openRoot:NSSharedURL(@"")
+                                                          leaf:NSPolicyFile
+                                                         error:error];
+    if (!directory) {
         NSInvalidatePolicyCache();
-        if (error) {
-            *error = [NSError
-                errorWithDomain:@"NetShield2.Storage"
-                           code:1
-                       userInfo:@{
-                           NSLocalizedDescriptionKey : @"The shared app-group container is unavailable."
-                       }];
-        }
         return nil;
     }
-    return [NSSharedPolicyCache() readURL:url error:error];
+    return NSReadPolicyIn(directory, error);
+}
+NSPolicy *NSReadPolicyIn(NSSharedDirectory *directory, NSError **error) {
+    return [NSSharedPolicyCache() readInDirectory:directory error:error];
 }

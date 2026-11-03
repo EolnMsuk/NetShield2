@@ -14,74 +14,65 @@ static NSError *NSStorageError(NSString *message) {
                                code:1
                            userInfo:@{NSLocalizedDescriptionKey : message}];
 }
-static BOOL NSKnownDocument(NSString *name) {
-    return [@[
-        NSPolicyFile, NSMonitorFile, NSActivityClearFile, NSNotificationRetryFile,
-        @"configuration-pending.plist"
-    ] containsObject:name];
-}
-NSDictionary *NSReadDocument(NSString *name, NSError **error) {
-    NSURL *url = NSKnownDocument(name) ? NSSharedURL(name) : nil;
-    if (!url) {
-        if (error) {
-            *error = NSStorageError(@"The shared app-group container is unavailable. Check entitlements and "
-                                    @"app/extension registration; filtering is not verified.");
-        }
-        return nil;
-    }
-    NSData *data = NSReadBoundedFile(url, error);
+NSDictionary *NSReadDocumentIn(NSSharedDirectory *directory, NSString *name, NSError **error) {
+    NSData *data = NSReadBoundedFile(directory, name, error);
     if (!data) {
         return nil;
     }
+    NSError *parseError = nil;
     id value = [NSPropertyListSerialization propertyListWithData:data
                                                          options:NSPropertyListImmutable
                                                           format:NULL
-                                                           error:error];
+                                                           error:&parseError];
     if (![value isKindOfClass:NSDictionary.class]) {
         if (error) {
-            *error = NSStorageError(@"Shared document is not a dictionary.");
+            NSMutableDictionary *info = [@{
+                NSLocalizedDescriptionKey :
+                    [NSString stringWithFormat:@"Decode document (%@): invalid dictionary.", name]
+            } mutableCopy];
+            info[NSUnderlyingErrorKey] = parseError;
+            *error = [NSError errorWithDomain:@"NetShield2.Storage" code:1 userInfo:info];
         }
         return nil;
     }
     return value;
 }
-static BOOL NSWriteSharedDocument(NSDictionary *document, NSString *name, BOOL durable, NSError **error) {
-    NSURL *url = NSKnownDocument(name) ? NSSharedURL(name) : nil;
-    if (!url) {
-        if (error) {
-            *error = NSStorageError(@"The shared app-group container is unavailable.");
-        }
-        return NO;
+NSDictionary *NSReadDocument(NSString *name, NSError **error) {
+    if (!NSKnownDocumentLeaf(name)) {
+        NSFileFailure(@"Validate document name", @"unknown document", EINVAL, error);
+        return nil;
+    }
+    NSSharedDirectory *directory = [NSSharedDirectory openRoot:NSSharedURL(@"") leaf:name error:error];
+    return directory ? NSReadDocumentIn(directory, name, error) : nil;
+}
+static BOOL NSWriteDocumentWithDurability(NSSharedDirectory *directory, NSDictionary *document,
+                                          NSString *name, BOOL durable, NSError **error) {
+    if (!NSKnownDocumentLeaf(name)) {
+        return NSFileFailure(@"Validate document name", @"unknown document", EINVAL, error);
     }
     NSData *data = [NSPropertyListSerialization dataWithPropertyList:document
                                                               format:NSPropertyListBinaryFormat_v1_0
                                                              options:0
                                                                error:error];
-    if (!data) {
-        return NO;
-    }
-    if (data.length > NSMaximumDocumentBytes) {
-        if (error) {
-            *error = NSStorageError(@"Shared document exceeds the 2 MiB limit.");
-        }
-        return NO;
-    }
-    return NSWriteBoundedFile(data, url, durable, error);
+    return data && NSWriteBoundedFile(data, directory, name, durable, error);
+}
+static BOOL NSDocumentIsDurable(NSString *name) {
+    return [@[ NSPolicyFile, NSActivityClearFile, NSPendingConfigurationFile, NSConfigurationRecoveryFile ]
+        containsObject:name];
+}
+BOOL NSWriteDocumentIn(NSSharedDirectory *directory, NSDictionary *document, NSString *name,
+                       NSError **error) {
+    return NSWriteDocumentWithDurability(directory, document, name, NSDocumentIsDurable(name), error);
 }
 BOOL NSWriteDocument(NSDictionary *document, NSString *name, NSError **error) {
-    BOOL durable =
-        [@[ NSPolicyFile, NSActivityClearFile, @"configuration-pending.plist" ] containsObject:name];
-    return NSWriteSharedDocument(document, name, durable, error);
+    if (!NSKnownDocumentLeaf(name)) {
+        return NSFileFailure(@"Validate document name", @"unknown document", EINVAL, error);
+    }
+    NSSharedDirectory *directory = [NSSharedDirectory openRoot:NSSharedURL(@"") leaf:name error:error];
+    return directory && NSWriteDocumentIn(directory, document, name, error);
 }
 static NSStoreLock *NSAcquireLock(NSString *name, NSError **error) {
-    NSURL *url = NSSharedURL(name);
-    if (!url) {
-        if (error) {
-            *error = NSStorageError(@"The shared app-group container is unavailable.");
-        }
-        return nil;
-    }
-    return [NSStoreLock tryLockURL:url error:error];
+    return [NSStoreLock tryLockRoot:NSSharedURL(@"") leaf:name error:error];
 }
 NSString *NSReadNotificationRetryRevision(void) {
     NSDictionary *document = NSReadDocument(NSNotificationRetryFile, NULL);
@@ -89,12 +80,13 @@ NSString *NSReadNotificationRetryRevision(void) {
                                                                                    : nil;
 }
 BOOL NSWriteNotificationRetryRevision(NSError **error) {
-    NSStoreLock *lock = NSAcquireLock(@"configuration.lock", error);
+    NSStoreLock *lock = NSAcquireLock(NSConfigurationLockFile, error);
     if (!lock) {
         return NO;
     }
     @try {
-        return NSWriteDocument(@{@"revision" : NSUUID.UUID.UUIDString}, NSNotificationRetryFile, error);
+        return NSWriteDocumentIn(lock.directory, @{@"revision" : NSUUID.UUID.UUIDString},
+                                 NSNotificationRetryFile, error);
     } @finally {
         [lock unlock];
     }
@@ -102,45 +94,61 @@ BOOL NSWriteNotificationRetryRevision(NSError **error) {
 NSStoreLock *NSAcquireProviderLock(NSError **error) {
     return NSAcquireLock(@"provider.lock", error);
 }
-static BOOL NSRemoveSavedEntry(NSString *name, NSError **error) {
+static BOOL NSRemoveSavedEntry(NSSharedDirectory *directory, NSString *name, NSError **error) {
     if (![name isEqual:NSExportCacheDirectory]) {
-        return NSUnlinkBoundedFile(NSSharedURL(name), error);
+        return NSUnlinkBoundedFile(directory, name, error);
     }
-    NSURL *url = NSExportCacheURL(NSSharedURL(@""), NO, error);
-    if (!url) {
+    if (![directory validateForLeaf:name error:error]) {
+        return NO;
+    }
+    NSURL *url = NSExportCacheURL(directory.root, NO, error);
+    if (!url || ![directory validateForLeaf:name error:error]) {
         return NO;
     }
     NSError *removeError = nil;
     if ([NSFileManager.defaultManager removeItemAtURL:url error:&removeError] ||
         ([removeError.domain isEqual:NSCocoaErrorDomain] && removeError.code == NSFileNoSuchFileError)) {
-        return YES;
+        return [directory validateForLeaf:name error:error];
     }
     if (error) {
-        *error = removeError;
+        *error = [NSError errorWithDomain:removeError.domain
+                                     code:removeError.code
+                                 userInfo:@{
+                                     NSLocalizedDescriptionKey : @"Remove the shared export cache failed.",
+                                     NSUnderlyingErrorKey : removeError
+                                 }];
     }
     return NO;
 }
 BOOL NSRemoveSharedStateAfterFilterRemoval(NSError **error) {
+    NSSharedDirectory *directory = [NSSharedDirectory openRoot:NSSharedURL(@"")
+                                                          leaf:@"provider.lock"
+                                                         error:error];
+    return directory && NSRemoveSharedStateIn(directory, error);
+}
+BOOL NSRemoveSharedStateIn(NSSharedDirectory *directory, NSError **error) {
     // This order matches reset: provider first prevents a control provider from
     // publishing while policy and activity documents are removed.
-    __attribute__((objc_precise_lifetime)) NSStoreLock *provider = NSAcquireProviderLock(error);
+    __attribute__((objc_precise_lifetime)) NSStoreLock *provider =
+        [NSStoreLock tryLockInDirectory:directory leaf:@"provider.lock" error:error];
     if (!provider) {
         return NO;
     }
     @try {
-        __attribute__((objc_precise_lifetime)) NSStoreLock *policy = NSAcquireLock(@"policy.lock", error);
+        __attribute__((objc_precise_lifetime)) NSStoreLock *policy =
+            [NSStoreLock tryLockInDirectory:directory leaf:@"policy.lock" error:error];
         if (!policy) {
             return NO;
         }
         @try {
             __attribute__((objc_precise_lifetime)) NSStoreLock *activity =
-                NSAcquireLock(@"activity.lock", error);
+                [NSStoreLock tryLockInDirectory:directory leaf:@"activity.lock" error:error];
             if (!activity) {
                 return NO;
             }
             @try {
                 __attribute__((objc_precise_lifetime)) NSStoreLock *exports =
-                    NSAcquireLock(@"exports.lock", error);
+                    [NSStoreLock tryLockInDirectory:directory leaf:@"exports.lock" error:error];
                 if (!exports) {
                     return NO;
                 }
@@ -151,7 +159,7 @@ BOOL NSRemoveSharedStateAfterFilterRemoval(NSError **error) {
                              NSExportCacheDirectory
                          ]) {
                         NSError *removeError = nil;
-                        if (!NSRemoveSavedEntry(name, &removeError)) {
+                        if (!NSRemoveSavedEntry(directory, name, &removeError)) {
                             if (error) {
                                 *error = [NSError
                                     errorWithDomain:@"NetShield2.Storage"
@@ -186,13 +194,11 @@ BOOL NSRemoveSharedStateAfterFilterRemoval(NSError **error) {
         NSInvalidatePolicyCache();
     }
 }
-static NSDictionary *NSReadActivityBoundary(NSError **error) {
+static NSDictionary *NSReadActivityBoundary(NSSharedDirectory *directory, NSError **error) {
     NSError *readError = nil;
-    NSDictionary *boundary = NSReadDocument(NSActivityClearFile, &readError);
-    if (!boundary &&
-        (([readError.domain isEqual:NSPOSIXErrorDomain] && readError.code == ENOENT) ||
-         ([readError.domain isEqual:NSCocoaErrorDomain] &&
-          (readError.code == NSFileReadNoSuchFileError || readError.code == NSFileNoSuchFileError)))) {
+    NSDictionary *boundary = directory ? NSReadDocumentIn(directory, NSActivityClearFile, &readError)
+                                       : NSReadDocument(NSActivityClearFile, &readError);
+    if (!boundary && NSFileIsAbsent(readError)) {
         return @{};
     }
     if (![boundary[@"cutoff"] isKindOfClass:NSDate.class] ||
@@ -230,7 +236,7 @@ static NSArray *NSActivityAfterBoundary(NSArray *events, NSDictionary *boundary)
                ?: @[];
 }
 NSDictionary *NSActivityEventWithCurrentBoundary(NSDictionary *event) {
-    NSDictionary *boundary = NSReadActivityBoundary(NULL);
+    NSDictionary *boundary = NSReadActivityBoundary(nil, NULL);
     if (!boundary) {
         return nil;
     }
@@ -240,7 +246,7 @@ NSDictionary *NSActivityEventWithCurrentBoundary(NSDictionary *event) {
 }
 NSArray<NSDictionary *> *NSActivityAfterClear(NSArray<NSDictionary *> *events) {
     // Retain the live buffer on read failure; publication will fail until the boundary is readable.
-    return NSActivityAfterBoundary(events, NSReadActivityBoundary(NULL));
+    return NSActivityAfterBoundary(events, NSReadActivityBoundary(nil, NULL));
 }
 static NSDictionary *NSMonitorAfterBoundary(NSDictionary *snapshot, NSDictionary *boundary) {
     NSMutableDictionary *filtered = [snapshot mutableCopy];
@@ -256,10 +262,10 @@ BOOL NSWriteMonitorSnapshot(NSDictionary *snapshot, NSError **error) {
         return NO;
     }
     @try {
-        NSDictionary *boundary = NSReadActivityBoundary(error);
+        NSDictionary *boundary = NSReadActivityBoundary(lock.directory, error);
         NSDictionary *validated = boundary ? NSValidateMonitor(snapshot, error) : nil;
-        return validated &&
-               NSWriteDocument(NSMonitorAfterBoundary(validated, boundary), NSMonitorFile, error);
+        return validated && NSWriteDocumentIn(lock.directory, NSMonitorAfterBoundary(validated, boundary),
+                                              NSMonitorFile, error);
     } @finally {
         [lock unlock];
     }
@@ -270,56 +276,63 @@ BOOL NSClearActivity(NSError **error) {
         return NO;
     }
     @try {
-        NSDictionary *current = NSReadDocument(NSMonitorFile, NULL);
+        NSSharedDirectory *directory = lock.directory;
+        NSDictionary *current = NSReadDocumentIn(directory, NSMonitorFile, NULL);
         NSString *revision = NSUUID.UUID.UUIDString;
         NSMutableDictionary *boundary = [@{@"cutoff" : NSDate.date, @"revision" : revision} mutableCopy];
         // Legacy providers have no generation tags: retain their cutoff contract.
         // Missing/offline reports use the new contract for the next provider.
         if (!current || [current[@"activityGenerations"] isEqual:@YES] ||
-            [NSReadActivityBoundary(NULL)[@"schema"] isEqual:@2]) {
+            [NSReadActivityBoundary(directory, NULL)[@"schema"] isEqual:@2]) {
             boundary[@"schema"] = @2;
             boundary[@"generation"] = revision;
         }
         // Persist first. Readers filter old snapshots even if publication or the provider is interrupted.
-        if (!NSWriteDocument(boundary, NSActivityClearFile, error)) {
+        if (!NSWriteDocumentIn(directory, boundary, NSActivityClearFile, error)) {
             return NO;
         }
         NSError *readError = nil;
-        NSDictionary *snapshot = NSReadDocument(NSMonitorFile, &readError);
-        if (!snapshot &&
-            !(([readError.domain isEqual:NSPOSIXErrorDomain] && readError.code == ENOENT) ||
-              ([readError.domain isEqual:NSCocoaErrorDomain] &&
-               (readError.code == NSFileReadNoSuchFileError || readError.code == NSFileNoSuchFileError)))) {
+        NSDictionary *snapshot = NSReadDocumentIn(directory, NSMonitorFile, &readError);
+        if (!snapshot && !NSFileIsAbsent(readError)) {
             if (error) {
                 *error = readError;
             }
             return NO;
         }
-        return !snapshot || NSWriteDocument(NSMonitorAfterBoundary(snapshot, boundary), NSMonitorFile, error);
+        return !snapshot ||
+               NSWriteDocumentIn(directory, NSMonitorAfterBoundary(snapshot, boundary), NSMonitorFile, error);
     } @finally {
         [lock unlock];
     }
 }
 BOOL NSEnsurePolicy(NSError **error) {
-    __attribute__((objc_precise_lifetime)) NSStoreLock *lock = NSAcquireLock(@"policy.lock", error);
+    NSSharedDirectory *directory = [NSSharedDirectory openRoot:NSSharedURL(@"")
+                                                          leaf:NSPolicyFile
+                                                         error:error];
+    return directory && NSEnsurePolicyIn(directory, error);
+}
+BOOL NSEnsurePolicyIn(NSSharedDirectory *directory, NSError **error) {
+    __attribute__((objc_precise_lifetime)) NSStoreLock *lock = [NSStoreLock tryLockInDirectory:directory
+                                                                                          leaf:@"policy.lock"
+                                                                                         error:error];
     if (!lock) {
         return NO;
     }
     @try {
         NSError *readError = nil;
-        NSPolicy *existing = NSReadPolicy(&readError);
+        NSPolicy *existing = NSReadPolicyIn(directory, &readError);
         if (existing) {
-            NSDictionary *stored = NSReadDocument(NSPolicyFile, error);
+            NSDictionary *stored = NSReadDocumentIn(directory, NSPolicyFile, error);
             return stored && ([stored isEqual:existing.document] ||
-                              NSWriteDocument(existing.document, NSPolicyFile, error));
+                              NSWriteDocumentIn(directory, existing.document, NSPolicyFile, error));
         }
-        if (![readError.domain isEqual:NSPOSIXErrorDomain] || readError.code != ENOENT) {
+        if (!NSFileIsAbsent(readError)) {
             if (error) {
                 *error = readError;
             }
             return NO;
         }
-        return NSWriteDocument([NSPolicy defaultDocument], NSPolicyFile, error);
+        return NSWriteDocumentIn(directory, [NSPolicy defaultDocument], NSPolicyFile, error);
     } @finally {
         [lock unlock];
     }
@@ -331,7 +344,7 @@ static BOOL NSUpdatePolicyWithDurability(BOOL (^mutation)(NSMutableDictionary *,
         return NO;
     }
     @try {
-        NSPolicy *current = NSReadPolicy(error);
+        NSPolicy *current = NSReadPolicyIn(lock.directory, error);
         if (!current) {
             return NO;
         }
@@ -406,7 +419,8 @@ static BOOL NSUpdatePolicyWithDurability(BOOL (^mutation)(NSMutableDictionary *,
         }
         document[@"revision"] = NSUUID.UUID.UUIDString;
         NSPolicy *validated = [NSPolicy policyWithDocument:document error:error];
-        return validated && NSWriteSharedDocument(validated.document, NSPolicyFile, durable, error);
+        return validated && NSWriteDocumentWithDurability(lock.directory, validated.document, NSPolicyFile,
+                                                          durable, error);
     } @finally {
         [lock unlock];
     }
@@ -488,7 +502,15 @@ BOOL NSResetSharedState(BOOL legacyProviderMayBeRunning, NSError **error) {
     return NSResetSharedStateWithOptions(legacyProviderMayBeRunning, NO, error);
 }
 BOOL NSResetSharedStateWithOptions(BOOL legacyProviderMayBeRunning, BOOL preserveSettings, NSError **error) {
-    __attribute__((objc_precise_lifetime)) NSStoreLock *provider = NSAcquireProviderLock(error);
+    NSSharedDirectory *directory = [NSSharedDirectory openRoot:NSSharedURL(@"")
+                                                          leaf:@"provider.lock"
+                                                         error:error];
+    return directory && NSResetSharedStateIn(directory, legacyProviderMayBeRunning, preserveSettings, error);
+}
+BOOL NSResetSharedStateIn(NSSharedDirectory *directory, BOOL legacyProviderMayBeRunning,
+                          BOOL preserveSettings, NSError **error) {
+    __attribute__((objc_precise_lifetime)) NSStoreLock *provider =
+        [NSStoreLock tryLockInDirectory:directory leaf:@"provider.lock" error:error];
     if (!provider) {
         return NO;
     }
@@ -507,26 +529,27 @@ BOOL NSResetSharedStateWithOptions(BOOL legacyProviderMayBeRunning, BOOL preserv
             }
             return NO;
         }
-        __attribute__((objc_precise_lifetime)) NSStoreLock *policy = NSAcquireLock(@"policy.lock", error);
+        __attribute__((objc_precise_lifetime)) NSStoreLock *policy =
+            [NSStoreLock tryLockInDirectory:directory leaf:@"policy.lock" error:error];
         if (!policy) {
             return NO;
         }
         @try {
             __attribute__((objc_precise_lifetime)) NSStoreLock *activity =
-                NSAcquireLock(@"activity.lock", error);
+                [NSStoreLock tryLockInDirectory:directory leaf:@"activity.lock" error:error];
             if (!activity) {
                 return NO;
             }
             @try {
                 __attribute__((objc_precise_lifetime)) NSStoreLock *exports =
-                    NSAcquireLock(@"exports.lock", error);
+                    [NSStoreLock tryLockInDirectory:directory leaf:@"exports.lock" error:error];
                 if (!exports) {
                     return NO;
                 }
                 @try {
                     NSMutableDictionary *replacement = [[NSPolicy defaultDocument] mutableCopy];
                     if (preserveSettings) {
-                        NSPolicy *current = NSReadPolicy(error);
+                        NSPolicy *current = NSReadPolicyIn(directory, error);
                         if (!current) {
                             return NO;
                         }
@@ -540,7 +563,7 @@ BOOL NSResetSharedStateWithOptions(BOOL legacyProviderMayBeRunning, BOOL preserv
                         [replacement removeObjectForKey:@"askGenerations"];
                         replacement[@"revision"] = NSUUID.UUID.UUIDString;
                     }
-                    if (!NSWriteDocument(replacement, NSPolicyFile, error)) {
+                    if (!NSWriteDocumentIn(directory, replacement, NSPolicyFile, error)) {
                         return NO;
                     }
                     for (NSString *name in @[
@@ -548,7 +571,7 @@ BOOL NSResetSharedStateWithOptions(BOOL legacyProviderMayBeRunning, BOOL preserv
                              NSExportCacheDirectory
                          ]) {
                         NSError *removeError = nil;
-                        if (!NSRemoveSavedEntry(name, &removeError)) {
+                        if (!NSRemoveSavedEntry(directory, name, &removeError)) {
                             if (error) {
                                 *error = [NSError
                                     errorWithDomain:@"NetShield2.Storage"
@@ -556,7 +579,7 @@ BOOL NSResetSharedStateWithOptions(BOOL legacyProviderMayBeRunning, BOOL preserv
                                            userInfo:@{
                                                NSLocalizedDescriptionKey : [NSString
                                                    stringWithFormat:
-                                                       @"Rules were reset, but history cleanup failed: %@",
+                                                       @"Rules were reset; cleanup stopped at %@: %@", name,
                                                        removeError.localizedDescription],
                                                @"policyReset" : @YES,
                                                @"cleanupComplete" : @NO,
@@ -593,7 +616,7 @@ NSDictionary *NSReadMonitorWithError(NSError **error) {
     if (!d) {
         return nil;
     }
-    NSDictionary *boundary = NSReadActivityBoundary(NULL);
+    NSDictionary *boundary = NSReadActivityBoundary(nil, NULL);
     NSMutableDictionary *filtered = [NSMonitorAfterBoundary(d, boundary) mutableCopy];
     // Never expose pre-clear history while the persisted boundary cannot be read.
     if (!boundary) {
@@ -615,7 +638,7 @@ BOOL NSAnswerPermissionRequestWithRule(NSDictionary *request, NSString *rule, NS
         }
         return NO;
     }
-    NSStoreLock *lock = NSAcquireLock(@"configuration.lock", error);
+    NSStoreLock *lock = NSAcquireLock(NSConfigurationLockFile, error);
     if (!lock) {
         return NO;
     }

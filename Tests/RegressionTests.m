@@ -1874,7 +1874,7 @@ static void TestSharedStateCleanupRetries(void) {
             CHECK([[@"{}" dataUsingEncoding:NSUTF8StringEncoding] writeToURL:exportURL atomically:YES]);
             NSURL *sentinel = NSSharedURL(@"Library/Caches/NetShield2/keep.json");
             CHECK([[@"keep" dataUsingEncoding:NSUTF8StringEncoding] writeToURL:sentinel atomically:YES]);
-            NSStoreLock *held = [NSStoreLock tryLockURL:NSSharedURL(lockName) error:NULL];
+            NSStoreLock *held = [NSStoreLock tryLockRoot:NSSharedURL(@"") leaf:lockName error:NULL];
             CHECK(held != nil);
             if (releaseAfterDelay.boolValue) {
                 dispatch_after(
@@ -1888,7 +1888,9 @@ static void TestSharedStateCleanupRetries(void) {
                             if ([earlier isEqual:lockName]) {
                                 break;
                             }
-                            NSStoreLock *probe = [NSStoreLock tryLockURL:NSSharedURL(earlier) error:NULL];
+                            NSStoreLock *probe = [NSStoreLock tryLockRoot:NSSharedURL(@"")
+                                                                     leaf:earlier
+                                                                    error:NULL];
                             CHECK(probe != nil);
                             [probe unlock];
                         }
@@ -1941,6 +1943,22 @@ static void TestSharedStateCleanupRetries(void) {
     NSSetTestContainer(container);
     CHECK([NSFileManager.defaultManager fileExistsAtPath:NSSharedURL(NSPolicyFile).path]);
     CHECK(NSRemoveSharedStateAfterFilterRemoval(NULL));
+    FakeFilterRemovalManager *absent = [FakeFilterRemovalManager new];
+    __block BOOL cleared = NO, finished = NO;
+    NSRemoveInstalledFilterAndSharedState(
+        absent, NSProcessInfo.processInfo.systemUptime + 2,
+        ^{
+            NSError *lockError = nil;
+            CHECK(![NSStoreLock tryLockRoot:NSSharedURL(@"") leaf:NSConfigurationLockFile error:&lockError] &&
+                  NSIsLockContention(lockError));
+            cleared = YES;
+        },
+        ^(NSError *cleanupError) {
+            CHECK(!cleanupError && cleared);
+            finished = YES;
+        });
+    CHECK(finished && absent.removals == 0 && absent.loads == 2);
+    CHECK(![NSFileManager.defaultManager fileExistsAtPath:NSSharedURL(NSPolicyFile).path]);
 }
 
 extern void NSRunRecoveryTests(void);

@@ -62,6 +62,9 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
 // late callbacks cannot start a later phase. A timed-out write may still reach
 // the OS: do not race it with a cleanup write or claim a verified final state.
 - (void)preferences:(BOOL)save completion:(void (^)(NSError *))completion {
+    [self preferences:save authorization:NO completion:completion];
+}
+- (void)preferences:(BOOL)save authorization:(BOOL)authorization completion:(void (^)(NSError *))completion {
     void (^callback)(NSError *) = ^(NSError *error) {
         self.generation++;
         if (!self.completion) {
@@ -72,9 +75,22 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
             [self finish:error];
             return;
         }
+        if (save && self.coordinator.acknowledgementError) {
+            // Stop this transaction after a fresh read. The OS result and local
+            // cleanup failure must not start staging or rollback writes.
+            [self.coordinator load:self.manager
+                        completion:^(NSError *readError) {
+                            self.state = NSFilterRestartUnknown;
+                            [self finish:[self.coordinator writeErrorWithPreferenceError:error
+                                                                           readbackError:readError]];
+                        }];
+            return;
+        }
         completion(error);
     };
-    if (save) {
+    if (save && authorization) {
+        [self.coordinator saveWithAuthorization:self.manager completion:callback];
+    } else if (save) {
         [self.coordinator save:self.manager completion:callback];
     } else {
         [self.coordinator load:self.manager completion:callback];
@@ -280,6 +296,7 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
                    [self finishExternalChange];
                    return;
                }
+               BOOL firstSave = !self.manager.providerConfiguration;
                self.manager.providerConfiguration = self.candidate;
                self.manager.localizedDescription =
                    self.restoring ? self.previousDescription : NSFilterLocalizedDescription;
@@ -287,6 +304,7 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
                self.touchedPreferences = YES;
                self.state = NSFilterRestartUnknown;
                [self preferences:YES
+                   authorization:firstSave
                       completion:^(NSError *saveError) {
                           if (saveError) {
                               [self recover:saveError];

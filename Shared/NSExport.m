@@ -13,26 +13,20 @@ NSError *NSExportError(NSString *message) {
 // fine for cleanup, but the app-group container itself must already exist.
 NSURL *NSExportCacheURL(NSURL *container, BOOL create, NSError **error) {
     NSFileManager *files = NSFileManager.defaultManager;
-    if (!container.isFileURL || !container.path.isAbsolutePath) {
-        if (error) {
-            *error = NSExportError(@"The shared app-group container is unavailable or invalid. Check the "
-                                   @"NetShield2 installation and retry Export.");
-        }
+    NSSharedDirectory *root = [NSSharedDirectory openRoot:container leaf:NSExportCacheDirectory error:error];
+    if (!root) {
         return nil;
     }
     NSURL *directory = container;
-    NSArray *components = [@[ @"" ] arrayByAddingObjectsFromArray:NSExportCacheDirectory.pathComponents];
     BOOL missing = NO;
-    for (NSString *component in components) {
-        if (component.length) {
-            directory = [directory URLByAppendingPathComponent:component isDirectory:YES];
-        }
+    for (NSString *component in NSExportCacheDirectory.pathComponents) {
+        directory = [directory URLByAppendingPathComponent:component isDirectory:YES];
         if (missing) {
             continue;
         }
         NSError *readError = nil;
         NSDictionary *attributes = [files attributesOfItemAtPath:directory.path error:&readError];
-        if (!attributes && component.length && [readError.domain isEqual:NSCocoaErrorDomain] &&
+        if (!attributes && [readError.domain isEqual:NSCocoaErrorDomain] &&
             (readError.code == NSFileNoSuchFileError || readError.code == NSFileReadNoSuchFileError)) {
             if (!create) {
                 missing = YES;
@@ -48,14 +42,21 @@ NSURL *NSExportCacheURL(NSURL *container, BOOL create, NSError **error) {
         }
         if (!attributes || ![attributes[NSFileType] isEqual:NSFileTypeDirectory]) {
             if (error) {
-                *error = readError
-                             ?: NSExportError(@"The export cache path contains a non-directory or "
-                                              @"symbolic link. Check the NetShield2 installation.");
+                *error =
+                    readError
+                        ? [NSError errorWithDomain:readError.domain
+                                              code:readError.code
+                                          userInfo:@{
+                                              NSLocalizedDescriptionKey : [NSString
+                                                  stringWithFormat:@"Inspect export cache (%@).", component],
+                                              NSUnderlyingErrorKey : readError
+                                          }]
+                        : NSExportError(@"The export cache path contains a non-directory or symbolic link.");
             }
             return nil;
         }
     }
-    return directory;
+    return [root validateForLeaf:NSExportCacheDirectory error:error] ? directory : nil;
 }
 
 BOOL NSIsExportDirectoryName(NSString *name) {
@@ -129,8 +130,7 @@ NSURL *NSStageRulesAndActivityExport(NSData *data, NSURL *container, NSError **e
         NSMutableDictionary *lifetime = NSExportLifetimeLocks()[root];
         __attribute__((objc_precise_lifetime)) NSStoreLock *lock = lifetime[@"lock"];
         if (!lock) {
-            lock = [NSStoreLock tryLockURL:[container URLByAppendingPathComponent:@"exports.lock"]
-                                     error:error];
+            lock = [NSStoreLock tryLockRoot:container leaf:@"exports.lock" error:error];
         }
         if (!lock) {
             return nil;

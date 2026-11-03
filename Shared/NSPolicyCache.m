@@ -23,24 +23,29 @@
     }
 }
 
-- (NSPolicy *)readURL:(NSURL *)url error:(NSError **)error {
+- (NSPolicy *)readInDirectory:(NSSharedDirectory *)directory error:(NSError **)error {
     @synchronized(self) {
         struct stat before = {0};
-        int descriptor = NSOpenRegularFile(url, &before, error);
+        int descriptor = NSOpenRegularFile(directory, NSPolicyFile, &before, error);
         if (descriptor < 0) {
             [self invalidate];
             return nil;
         }
-        BOOL same = [_url isEqual:url] && [_identity isEqual:NSDescriptorIdentity(before)];
+        BOOL same = [_url isEqual:directory.root] && [_identity isEqual:NSDescriptorIdentity(before)];
         if (same && (_policy || (_invalidError && NSProcessInfo.processInfo.systemUptime < _invalidUntil))) {
+            BOOL current = NSCheckReadIdentity(descriptor, directory, NSPolicyFile, before, error);
             close(descriptor);
+            if (!current) {
+                [self invalidate];
+                return nil;
+            }
             if (!_policy && error) {
                 *error = _invalidError;
             }
             return _policy;
         }
         [self invalidate];
-        NSData *data = NSReadBoundedDescriptor(descriptor, url, before, error);
+        NSData *data = NSReadBoundedDescriptor(descriptor, directory, NSPolicyFile, before, error);
         close(descriptor);
         if (!data) {
             return nil;
@@ -53,11 +58,11 @@
         _policy = document ? [NSPolicy policyWithDocument:document error:&parseError] : nil;
         if (_policy) {
             _identity = NSDescriptorIdentity(before);
-            _url = [url copy];
+            _url = directory.root;
         }
         if (!_policy) {
             _identity = NSDescriptorIdentity(before);
-            _url = [url copy];
+            _url = directory.root;
             _invalidError = parseError ?: [NSError errorWithDomain:@"NetShield2.Policy" code:1 userInfo:nil];
             _invalidUntil = NSProcessInfo.processInfo.systemUptime + 1;
             if (error) {

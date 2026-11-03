@@ -18,7 +18,7 @@ static NSInteger NSConfiguredEngine(NEFilterProviderConfiguration *configuration
 
 @implementation NSDashboard (Configuration)
 - (void)socketFilteringChanged:(UISwitch *)sender {
-    if (self.busy || !self.loaded) {
+    if (self.busy || !self.preferencesLoaded || !self.configurationReady) {
         return;
     }
     BOOL enabled = sender.on;
@@ -31,7 +31,7 @@ static NSInteger NSConfiguredEngine(NEFilterProviderConfiguration *configuration
             if (!saved) {
                 return;
             }
-            if (NEFilterManager.sharedManager.enabled) {
+            if (self.savedEnabled) {
                 [self changeConfiguration:NSConfigurationApplyScope];
             } else {
                 self.message = @"Socket filtering preference saved. It applies when Firewall is enabled.";
@@ -42,6 +42,18 @@ static NSInteger NSConfiguredEngine(NEFilterProviderConfiguration *configuration
 - (void)loadConfiguration {
     [self loadConfigurationWithCompletion:nil];
 }
+- (void)refreshSavedState {
+    self.attemptedProviderUpgrade = YES;
+    self.policyBootstrapPending = self.policy == nil;
+    self.configurationOperationError = nil;
+    self.message = nil;
+    [self loadConfiguration];
+}
+- (void)recordConfigurationError:(NSError *)error operation:(NSString *)operation {
+    self.configurationOperationError =
+        [NSString stringWithFormat:@"%@: %@ (%@ %ld).", operation, error.localizedDescription, error.domain,
+                                   (long)error.code];
+}
 - (void)loadConfigurationWithCompletion:(void (^)(void))completion {
     if (self.busy) {
         self.configurationRefreshPending = YES;
@@ -50,54 +62,83 @@ static NSInteger NSConfiguredEngine(NEFilterProviderConfiguration *configuration
         }
         return;
     }
-    NSConfigurationCoordinator *owner = [NSConfigurationCoordinator new];
-    [owner beginReadOnly];
-    self.configuration = owner;
     self.configurationRefreshPending = NO;
     self.busy = YES;
-    [owner load:NEFilterManager.sharedManager
+    [self refreshTableKeepingPosition];
+    NSConfigurationCoordinator *owner = [NSConfigurationCoordinator new];
+    self.configuration = owner;
+    NSError *recoveryError = nil;
+    NSConfigurationMarkerState marker = [owner beginReadOnly:&recoveryError];
+    // A refresh that encountered recovery evidence only reads preferences.
+    if (marker != NSConfigurationMarkerNone || owner.reconciledMarker) {
+        self.attemptedProviderUpgrade = YES;
+    }
+    NSUInteger generation = self.storageGeneration;
+    BOOL mayBootstrap = self.policyBootstrapPending;
+    NEFilterManager *manager = NEFilterManager.sharedManager;
+    [owner load:manager
         completion:^(NSError *error) {
-            [owner finish];
-            self.configuration = nil;
-            dispatch_async(dispatch_get_main_queue(), ^{
-                self.busy = NO;
-                BOOL pendingWrite = [NSConfigurationCoordinator hasUnacknowledgedWrite];
-                self.loaded = error == nil && !pendingWrite;
-                if (pendingWrite) {
-                    self.message = @"A preference write is still unacknowledged. Saved state is unverified.";
+            self.preferencesLoaded = !error;
+            self.preferenceReadError = error.localizedDescription;
+            self.configurationReady = marker == NSConfigurationMarkerNone;
+            self.configurationRecoveryError = recoveryError.localizedDescription;
+            NEFilterProviderConfiguration *configuration = error ? nil : manager.providerConfiguration;
+            if (!error) {
+                self.hasSavedPreferences = YES;
+                self.savedEnabled = manager.enabled;
+                self.savedSocketFiltering = configuration.filterSockets;
+                self.savedBrowserFiltering = configuration.filterBrowsers;
+                self.savedActivation = configuration.vendorConfiguration[@"activation"];
+                NSLog(@"NetShield2 boot-policy loaded enabled=%d package=%@ %@", manager.enabled,
+                      @NS_JAILBREAK_TYPE, NSFilterBootPolicyReport(configuration));
+            }
+            self.bootPolicyStatus = NSFilterBootPolicyStatus(configuration, self.preferencesLoaded);
+            NSSharedDirectory *directory = owner.directory;
+            dispatch_async(NSAppStorageQueue(), ^{
+                NSError *policyError = nil;
+                NSPolicy *policy =
+                    directory ? NSReadPolicyIn(directory, &policyError) : NSReadPolicy(&policyError);
+                // Hold configuration ownership across bootstrap so a queued task
+                // cannot repopulate policy after concurrent uninstall cleanup.
+                if (mayBootstrap && directory && marker == NSConfigurationMarkerNone && !policy &&
+                    NSFileIsAbsent(policyError) && NSEnsurePolicyIn(directory, &policyError)) {
+                    policy = NSReadPolicyIn(directory, &policyError);
                 }
-                if (error) {
-                    [self showError:error operation:@"Load filter configuration"];
-                }
-                NEFilterManager *manager = NEFilterManager.sharedManager;
-                self.bootPolicyStatus = NSFilterBootPolicyStatus(manager.providerConfiguration, self.loaded);
-                if (!error) {
-                    NSLog(@"NetShield2 boot-policy loaded enabled=%d package=%@ %@", manager.enabled,
-                          @NS_JAILBREAK_TYPE, NSFilterBootPolicyReport(manager.providerConfiguration));
-                }
-                NSPolicy *policy = NSReadPolicy(NULL);
-                NSInteger configuredEngine = NSConfiguredEngine(manager.providerConfiguration);
-                BOOL bootPolicy = NO;
-                BOOL readable = NSFilterBootPolicyRead(manager.providerConfiguration, &bootPolicy, NULL);
-                BOOL needsBootPolicy = !readable || !bootPolicy;
-                if (self.loaded && manager.enabled && configuredEngine <= NSEngineVersion &&
-                    !self.attemptedProviderUpgrade && policy &&
-                    (needsBootPolicy || configuredEngine < NSEngineVersion ||
-                     manager.providerConfiguration.filterSockets !=
-                         [policy.document[@"filterSockets"] boolValue] ||
-                     ![manager.localizedDescription isEqual:NSFilterLocalizedDescription])) {
-                    self.attemptedProviderUpgrade = YES;
-                    self.automaticMigrationRequested = YES;
-                    [self changeConfiguration:NSConfigurationEnable completion:completion];
-                    return;
-                }
-                [self reloadMonitor];
-                if (completion) {
-                    completion();
-                }
-                if (self.configurationRefreshPending && !self.busy) {
-                    [self loadConfiguration];
-                }
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    [owner finish];
+                    self.configuration = nil;
+                    self.busy = NO;
+                    if (generation == self.storageGeneration) {
+                        self.storageGeneration++;
+                        self.policy = policy;
+                        if (policy) {
+                            self.policyBootstrapPending = NO;
+                        }
+                        self.policyReadError = policy ? nil : policyError.localizedDescription;
+                    }
+                    NSInteger engine = NSConfiguredEngine(configuration);
+                    if (self.preferencesLoaded && self.configurationReady && self.savedEnabled &&
+                        engine <= NSEngineVersion && !self.attemptedProviderUpgrade && self.policy) {
+                        BOOL bootPolicy = NO;
+                        BOOL readable = NSFilterBootPolicyRead(configuration, &bootPolicy, NULL);
+                        if (!readable || !bootPolicy || engine < NSEngineVersion ||
+                            self.savedSocketFiltering != [self.policy.document[@"filterSockets"] boolValue] ||
+                            ![manager.localizedDescription isEqual:NSFilterLocalizedDescription]) {
+                            self.attemptedProviderUpgrade = YES;
+                            self.automaticMigrationRequested = YES;
+                            [self changeConfiguration:NSConfigurationEnable completion:completion];
+                            return;
+                        }
+                    }
+                    [self refreshTableKeepingPosition];
+                    [self reloadMonitor];
+                    if (completion) {
+                        completion();
+                    }
+                    if (self.configurationRefreshPending && !self.busy) {
+                        [self loadConfiguration];
+                    }
+                });
             });
         }];
 }
@@ -115,6 +156,8 @@ static NSInteger NSConfiguredEngine(NEFilterProviderConfiguration *configuration
     if (operation == NSConfigurationDisable) {
         [self cancelUpdateCheck];
     }
+    self.configurationOperationError = nil;
+    self.message = nil;
     self.busy = YES;
     [self refreshTableKeepingPosition];
     NEFilterManager *manager = NEFilterManager.sharedManager;
@@ -223,23 +266,12 @@ static NSInteger NSConfiguredEngine(NEFilterProviderConfiguration *configuration
                    ![monitor[@"policyError"] length];
         };
         [restart start:^(NSError *error) {
-            NSFilterRestartState state = self.restart.state;
             self.restart = nil;
             self.busy = NO;
-            if (error) {
-                [self showError:error operation:@"Enable/restart filter"];
-            } else {
-                self.message = @"Filter configuration read back. Current control provider responding. "
-                               @"Control health does not verify every connection.";
-            }
-            if (state == NSFilterRestartUnknown) {
-                self.loaded = NO;
-                self.bootPolicyStatus = NSFilterBootPolicyStatus(nil, NO);
-                [self reloadMonitor];
-                if (completion) {
-                    completion();
-                }
-                return;
+            if (error && error != restart.coordinator.acknowledgementError) {
+                [self recordConfigurationError:error operation:@"Enable/restart filter"];
+            } else if (!error) {
+                self.message = @"Filter configuration read back. Current control provider responding.";
             }
             [self loadConfigurationWithCompletion:completion];
         }];
@@ -251,27 +283,20 @@ static NSInteger NSConfiguredEngine(NEFilterProviderConfiguration *configuration
     if (![owner begin:&lockError]) {
         self.busy = NO;
         self.configuration = nil;
-        [self showError:lockError operation:@"Change configuration"];
-        if (completion) {
-            completion();
-        }
+        [self recordConfigurationError:lockError operation:@"Change configuration"];
+        [self loadConfigurationWithCompletion:completion];
         return;
     }
     void (^finished)(NSError *) = ^(NSError *error) {
         [owner finish];
         self.configuration = nil;
         self.busy = NO;
-        if (error) {
-            self.loaded = NO;
-            [self showError:error operation:@"Disable/remove filter"];
-            [self reloadMonitor];
-            if (completion) {
-                completion();
-            }
-        } else {
+        if (error && error != owner.acknowledgementError) {
+            [self recordConfigurationError:error operation:@"Disable filter"];
+        } else if (!error) {
             self.message = @"Firewall preference verified off. Your rules are saved.";
-            [self loadConfigurationWithCompletion:completion];
         }
+        [self loadConfigurationWithCompletion:completion];
     };
     owner.abort = finished;
     [owner load:manager
@@ -280,8 +305,12 @@ static NSInteger NSConfiguredEngine(NEFilterProviderConfiguration *configuration
                 finished(loadError);
                 return;
             }
+            if (!manager.enabled) {
+                finished(nil);
+                return;
+            }
             void (^saved)(NSError *) = ^(NSError *error) {
-                if (error) {
+                if (error && !owner.acknowledgementError) {
                     finished(error);
                     return;
                 }
@@ -297,7 +326,7 @@ static NSInteger NSConfiguredEngine(NEFilterProviderConfiguration *configuration
                                                         @"disabled/absent state. No shared state was removed."
                                                 }];
                         }
-                        finished(verifyError);
+                        finished([owner writeErrorWithPreferenceError:error readbackError:verifyError]);
                     }];
             };
             manager.enabled = NO;
@@ -309,6 +338,7 @@ static NSInteger NSConfiguredEngine(NEFilterProviderConfiguration *configuration
         return;
     }
     self.respringPromptPending = YES;
+    self.configurationOperationError = nil;
     [self loadConfigurationWithCompletion:^{
         UIAlertController *alert = [UIAlertController
             alertControllerWithTitle:@"Respring SpringBoard?"
@@ -341,15 +371,13 @@ static NSInteger NSConfiguredEngine(NEFilterProviderConfiguration *configuration
     if (!self.busy || !self.configuration) {
         return;
     }
+    NSConfigurationCoordinator *owner = self.configuration;
     NSError *error = nil;
-    if (!NSResetSharedState(self.resetRequiresLegacyStop, &error)) {
-        BOOL busy = [error.domain isEqual:NSPOSIXErrorDomain] &&
-                    (error.code == EWOULDBLOCK || error.code == EAGAIN || error.code == EBUSY);
-        if (busy && attempt < 60) {
+    if (!NSResetSharedStateIn(owner.directory, self.resetRequiresLegacyStop, NO, &error)) {
+        if (NSIsLockContention(error) && attempt < 60) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC / 4), dispatch_get_main_queue(), ^{
-                NSConfigurationCoordinator *owner = self.configuration;
                 NEFilterManager *manager = NEFilterManager.sharedManager;
-                if (!owner) {
+                if (self.configuration != owner) {
                     return;
                 }
                 [owner load:manager
@@ -378,7 +406,8 @@ static NSInteger NSConfiguredEngine(NEFilterProviderConfiguration *configuration
         [self.configuration finish];
         self.configuration = nil;
         self.busy = NO;
-        [self showError:error operation:@"Reset shared state"];
+        self.message = nil;
+        [self recordConfigurationError:error operation:@"Filter verified stopped; finish shared-state reset"];
         [self loadConfiguration];
         return;
     }
@@ -387,23 +416,21 @@ static NSInteger NSConfiguredEngine(NEFilterProviderConfiguration *configuration
     self.resetRequiresLegacyStop = NO;
     [self.deferredRequests removeAllObjects];
     self.storageGeneration++;
-    self.policy = NSReadPolicy(NULL);
+    self.policy = nil;
     self.monitor = @{};
     self.activityGroups = @[];
     self.activityEvents = @[];
     self.identities = @[];
     self.systemIdentities = @[];
     self.globalRuleKeys = @[];
-    self.loaded = YES;
+    NSResetAppPreferences(NSUserDefaults.standardUserDefaults, NSBundle.mainBundle.bundleIdentifier);
     [self.configuration finish];
     self.configuration = nil;
     self.busy = NO;
-    NSResetAppPreferences(NSUserDefaults.standardUserDefaults, NSBundle.mainBundle.bundleIdentifier);
-    self.message =
-        self.removeFilterAfterReset
-            ? @"Filter, settings, rules and history removed. Firewall is off. iOS notification "
-              @"authorization is managed in Settings."
-            : @"Settings, rules and history reset. The installed filter is disabled; Firewall is off.";
+    self.message = self.removeFilterAfterReset
+                       ? @"Filter, settings, rules and history removed. Firewall is off. iOS notification "
+                         @"authorization is managed in Settings."
+                       : @"Settings, rules and history reset. Firewall is off.";
     [self clearActivitySearch];
     [self refreshTableKeepingPosition];
     [self loadConfiguration];
@@ -418,6 +445,7 @@ static NSInteger NSConfiguredEngine(NEFilterProviderConfiguration *configuration
         return;
     }
     self.storageGeneration++;
+    self.configurationOperationError = nil;
     [self cancelUpdateCheck];
     self.busy = YES;
     self.message = self.removeFilterAfterReset ? @"Removing the system filter before resetting settings..."
@@ -430,15 +458,20 @@ static NSInteger NSConfiguredEngine(NEFilterProviderConfiguration *configuration
     if (![owner begin:&lockError]) {
         self.configuration = nil;
         self.busy = NO;
-        [self showError:lockError operation:@"Reset configuration"];
+        self.message = nil;
+        [self recordConfigurationError:lockError operation:@"Reset configuration"];
+        [self loadConfiguration];
         return;
     }
     void (^failed)(NSError *) = ^(NSError *error) {
         [owner finish];
         self.configuration = nil;
         self.busy = NO;
-        self.loaded = NO;
-        [self showError:error operation:@"Verify filter stopped before reset"];
+        self.message = nil;
+        if (error != owner.acknowledgementError) {
+            [self recordConfigurationError:error operation:@"Verify filter stopped before reset"];
+        }
+        [self loadConfiguration];
     };
     owner.abort = failed;
     [owner load:manager
@@ -450,7 +483,7 @@ static NSInteger NSConfiguredEngine(NEFilterProviderConfiguration *configuration
             self.resetRequiresLegacyStop =
                 manager.enabled && NSConfiguredEngine(manager.providerConfiguration) < 20014;
             void (^verify)(NSError *) = ^(NSError *saveError) {
-                if (saveError) {
+                if (saveError && !owner.acknowledgementError) {
                     failed(saveError);
                     return;
                 }
@@ -466,14 +499,16 @@ static NSInteger NSConfiguredEngine(NEFilterProviderConfiguration *configuration
                                                                   @"Rules and history were preserved."
                                                           }];
                         }
-                        if (verifyError) {
-                            failed(verifyError);
+                        NSError *result = [owner writeErrorWithPreferenceError:saveError
+                                                                 readbackError:verifyError];
+                        if (result) {
+                            failed(result);
                             return;
                         }
                         [self finishResetWhenStopped:0];
                     }];
             };
-            if (self.removeFilterAfterReset) {
+            if (self.removeFilterAfterReset && (manager.providerConfiguration || manager.enabled)) {
                 [owner remove:manager completion:verify];
             } else if (manager.enabled) {
                 manager.enabled = NO;

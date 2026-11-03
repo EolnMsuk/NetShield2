@@ -34,6 +34,7 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 @interface NSDashboard () <UISearchBarDelegate, UIGestureRecognizerDelegate>
 @property(nonatomic, strong) NSPolicy *policy;
 @property(nonatomic, copy) NSString *policyReadError;
+@property(nonatomic) BOOL policyBootstrapPending;
 @property(nonatomic, copy) NSDictionary *monitor;
 @property(nonatomic, copy) NSArray<NSDictionary *> *activityGroups;
 @property(nonatomic, copy) NSArray<NSDictionary *> *filteredActivityGroups;
@@ -71,7 +72,16 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 @property(nonatomic, copy) NSDictionary *presentedRequest;
 @property(nonatomic) BOOL busy;
 @property(nonatomic) NSUInteger authorizationGeneration;
-@property(nonatomic) BOOL loaded;
+@property(nonatomic) BOOL preferencesLoaded;
+@property(nonatomic) BOOL hasSavedPreferences;
+@property(nonatomic) BOOL savedEnabled;
+@property(nonatomic) BOOL savedSocketFiltering;
+@property(nonatomic) BOOL savedBrowserFiltering;
+@property(nonatomic, copy) NSString *savedActivation;
+@property(nonatomic) BOOL configurationReady;
+@property(nonatomic, copy) NSString *preferenceReadError;
+@property(nonatomic, copy) NSString *configurationRecoveryError;
+@property(nonatomic, copy) NSString *configurationOperationError;
 @property(nonatomic) BOOL attemptedProviderUpgrade;
 @property(nonatomic) BOOL automaticMigrationRequested;
 @property(nonatomic, strong) NSFilterRestart *restart;
@@ -113,6 +123,7 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 
 @interface NSDashboard (Configuration)
 - (void)loadConfiguration;
+- (void)refreshSavedState;
 - (void)loadConfigurationWithCompletion:(void (^)(void))completion;
 - (void)changeConfiguration:(NSConfigurationOperation)operation;
 - (void)changeConfiguration:(NSConfigurationOperation)operation completion:(void (^)(void))completion;

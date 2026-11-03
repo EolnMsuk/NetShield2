@@ -7,10 +7,14 @@ NS_ASSUME_NONNULL_BEGIN
 FOUNDATION_EXPORT NSDictionary *_Nullable NSReadDocument(NSString *name, NSError *_Nullable *_Nullable error);
 FOUNDATION_EXPORT BOOL NSWriteDocument(NSDictionary *document, NSString *name,
                                        NSError *_Nullable *_Nullable error);
+FOUNDATION_EXPORT NSDictionary *_Nullable NSReadDocumentIn(NSSharedDirectory *directory, NSString *name,
+                                                           NSError *_Nullable *_Nullable error);
+FOUNDATION_EXPORT BOOL NSWriteDocumentIn(NSSharedDirectory *directory, NSDictionary *document, NSString *name,
+                                         NSError *_Nullable *_Nullable error);
 FOUNDATION_EXPORT NSString *_Nullable NSReadNotificationRetryRevision(void);
 FOUNDATION_EXPORT BOOL NSWriteNotificationRetryRevision(NSError **error);
 FOUNDATION_EXPORT NSDictionary *NSReadMonitor(void);
-// nil + POSIX ENOENT means no report; other read/schema errors remain diagnosable.
+// NSFileIsAbsent distinguishes a missing report from container, read and schema errors.
 FOUNDATION_EXPORT NSDictionary *_Nullable NSReadMonitorWithError(NSError **error);
 // The cutoff survives offline clears and stale provider snapshots. Monitor fields and requests survive.
 FOUNDATION_EXPORT BOOL NSClearActivity(NSError **error);
@@ -18,6 +22,7 @@ FOUNDATION_EXPORT NSDictionary *_Nullable NSActivityEventWithCurrentBoundary(NSD
 FOUNDATION_EXPORT NSArray<NSDictionary *> *NSActivityAfterClear(NSArray<NSDictionary *> *events);
 FOUNDATION_EXPORT BOOL NSWriteMonitorSnapshot(NSDictionary *snapshot, NSError **error);
 FOUNDATION_EXPORT BOOL NSEnsurePolicy(NSError **error);
+FOUNDATION_EXPORT BOOL NSEnsurePolicyIn(NSSharedDirectory *directory, NSError **error);
 FOUNDATION_EXPORT BOOL NSUpdatePolicy(BOOL (^mutation)(NSMutableDictionary *document, NSError **error),
                                       NSError **error);
 // DNS cache refresh is atomic and does not flush transient answers.
@@ -31,6 +36,9 @@ FOUNDATION_EXPORT NSArray<NSString *> *_Nullable NSClearIdentityRules(NSMutableD
 FOUNDATION_EXPORT NSStoreLock *_Nullable NSAcquireProviderLock(NSError **error);
 // Call only after Network Extension preference removal has been verified.
 FOUNDATION_EXPORT BOOL NSRemoveSharedStateAfterFilterRemoval(NSError **error);
+FOUNDATION_EXPORT BOOL NSRemoveSharedStateIn(NSSharedDirectory *directory, NSError **error);
+FOUNDATION_EXPORT BOOL NSResetSharedStateIn(NSSharedDirectory *directory, BOOL legacyProviderMayBeRunning,
+                                            BOOL preserveSettings, NSError **error);
 FOUNDATION_EXPORT BOOL NSResetSharedState(BOOL legacyProviderMayBeRunning, NSError **error);
 FOUNDATION_EXPORT BOOL NSResetSharedStateWithOptions(BOOL legacyProviderMayBeRunning, BOOL preserveSettings,
                                                      NSError **error);

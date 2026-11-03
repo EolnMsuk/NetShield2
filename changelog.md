@@ -1,12 +1,22 @@
+# 2.6.6
+
+- Fixed shared app-group file and lock access through both `/var` and `/private/var` paths.
+- Track OS acknowledgement separately from preference readback and local cleanup. Dashboard refresh can recover eligible 2.6.5 records while protecting writes that may still complete.
+- Show saved Firewall state separately from policy, recovery and provider health. Refresh retries first-time policy creation when the policy file is missing.
+- Verify disable, reset and removal from saved preferences. Skip redundant writes and report the failing storage or cleanup stage.
+- Keep build provenance in CI. A completed draft contains only the rootful, rootless and RootHide debs.
+
 # 2.6.5
 
 - Fixed permission notification retries when a delivery callback arrives late or never arrives.
 - Made firewall changes, reset, and uninstall verify saved preferences. Timed-out writes are tracked so a retry cannot race them.
-- Hardened provider startup and shutdown, DNS refresh and expiry, and validation of stored rules and activity.
+- Hardened provider startup and shutdown and tightened validation of stored rules and activity.
+- Reworked DNS refresh and expiry handling. The resolver avoids scanning every rule after each lookup, keeps the four-lookup limit, and backs off when answers carry invalid expiry metadata.
 - Clarified global rule precedence and updated Recent Activity to show mixed outcomes and keep cleared history from reappearing.
-- Moved dashboard storage work off the main thread, protected active exports, and capped update-check downloads.
+- Moved dashboard storage work off the main thread, protected open exports from reset and uninstall cleanup, and capped update-check downloads.
 - Strengthened stock-boot fallback configuration checks and fixed resource cleanup for dialogs and respring helpers.
-- Added regression tests and tightened package verification with binary checks, source revisions, and package hashes.
+- Expanded macOS regression coverage for export staging and DNS scheduling at the 4,096-rule limit.
+- Updated GitHub Actions to check signing identifiers, code hashes, and entitlements directly in the packaged app and both extensions signed by Theos. The workflow records source revisions and final package hashes.
 
 # 2.6.4
 

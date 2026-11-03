@@ -45,15 +45,21 @@ static int NSUninstallFilter(void) {
     __block BOOL finished = NO;
     __block int status = EXIT_FAILURE;
     NSRemoveInstalledFilterAndSharedState(
-        (id<NSFilterRemovalManager>)NEFilterManager.sharedManager, operationDeadline - 1, ^(NSError *error) {
+        (id<NSFilterRemovalManager>)NEFilterManager.sharedManager, operationDeadline - 1,
+        ^{
+            [NSUserDefaults.standardUserDefaults
+                removePersistentDomainForName:NSBundle.mainBundle.bundleIdentifier];
+            [UNUserNotificationCenter.currentNotificationCenter removeAllPendingNotificationRequests];
+            [UNUserNotificationCenter.currentNotificationCenter removeAllDeliveredNotifications];
+        },
+        ^(NSError *error) {
             if (error) {
-                fprintf(stderr, "NetShield2: filter removal/cleanup failed: %s (%s %ld).\n",
+                const char *stage = [error.userInfo[NSUninstallCleanupPendingKey] boolValue]
+                                        ? "saved-state cleanup failed"
+                                        : "filter removal failed";
+                fprintf(stderr, "NetShield2: %s: %s (%s %ld).\n", stage,
                         error.localizedDescription.UTF8String, error.domain.UTF8String, (long)error.code);
             } else {
-                [NSUserDefaults.standardUserDefaults
-                    removePersistentDomainForName:NSBundle.mainBundle.bundleIdentifier];
-                [UNUserNotificationCenter.currentNotificationCenter removeAllPendingNotificationRequests];
-                [UNUserNotificationCenter.currentNotificationCenter removeAllDeliveredNotifications];
                 fprintf(stdout, "NetShield2: verified system filter and saved state are removed.\n");
                 status = EXIT_SUCCESS;
             }
