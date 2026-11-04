@@ -1,3 +1,8 @@
+# 2.6.8
+
+- Recover a committed firewall save when iOS does not return its completion callback. Each save carries a unique receipt that a fresh preference load can verify after authorization or relaunch.
+- Let Reset and Remove Filter proceed after the exact previous save is verified. Keep saves without commit evidence fenced, and keep the saved fallback and provider startup checks in the enable sequence.
+
 # 2.6.7
 
 - Allow time for iOS authorization during either save on first enable. If a completed first installation fails validation or startup, verify removal of the profile created by that attempt.

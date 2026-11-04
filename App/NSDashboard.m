@@ -143,6 +143,9 @@
     BOOL returning = [notification.name isEqual:UIApplicationDidBecomeActiveNotification];
     dispatch_async(dispatch_get_main_queue(), ^{
         [self refreshNotificationSettings];
+        if (returning || [notification.name isEqual:NEFilterConfigurationDidChangeNotification]) {
+            [NSConfigurationCoordinator checkPendingSave];
+        }
         if ([notification.name isEqual:NSConfigurationLateAcknowledgement]) {
             self.configurationOperationError = nil;
         }

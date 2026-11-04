@@ -10,10 +10,11 @@ typedef NS_ENUM(NSUInteger, NSConfigurationMarkerState) {
     NSConfigurationMarkerUnavailable,
 };
 FOUNDATION_EXPORT NSNotificationName const NSConfigurationLateAcknowledgement;
+FOUNDATION_EXPORT NSString *const NSPreferenceSaveReceiptKey;
 
 // Main-queue transaction owner shared by dashboard, restart and removal helper.
 // Lock order: configuration -> provider lifetime -> policy -> activity -> exports.
-// A submitted write owns the lock until its OS callback, even after a timeout.
+// A submitted write owns the lock until its OS callback or a verified save receipt.
 @interface NSConfigurationCoordinator : NSObject
 @property(nonatomic, copy) void (^schedule)(NSTimeInterval, void (^)(void));
 @property(nonatomic, copy) NSStoreLock * (^acquireLock)(NSError **);
@@ -25,8 +26,12 @@ FOUNDATION_EXPORT NSNotificationName const NSConfigurationLateAcknowledgement;
 @property(nonatomic, readonly) BOOL reconciledMarker;
 // A recognized outstanding remove cannot create or enable a profile.
 @property(nonatomic, readonly) BOOL pendingRemoval;
+@property(nonatomic, readonly) NSConfigurationMarkerState markerState;
+@property(nonatomic, readonly) NSError *markerError;
 @property(nonatomic, readonly) NSSharedDirectory *directory;
 @property(nonatomic, readonly) NSError *acknowledgementError;
+// Probe the current save on a preference change or return to the foreground.
++ (void)checkPendingSave;
 - (BOOL)begin:(NSError **)error;
 - (BOOL)beginWithAuthorizationBudget:(NSError **)error;
 - (NSConfigurationMarkerState)beginReadOnly:(NSError **)error;

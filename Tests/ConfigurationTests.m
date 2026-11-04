@@ -8,9 +8,16 @@
             abort();                                                                                         \
         }                                                                                                    \
     } while (0)
+@interface ReceiptConfiguration : NSObject
+@property(nonatomic, copy) NSDictionary *vendorConfiguration;
+@end
+@implementation ReceiptConfiguration
+@end
+
 @interface ControlledPreferences : NSObject
 @property(nonatomic, strong) NSMutableArray *callbacks;
 @property(nonatomic) NSUInteger writes;
+@property(nonatomic, strong) ReceiptConfiguration *providerConfiguration;
 @end
 @implementation ControlledPreferences
 - (instancetype)init {
@@ -31,6 +38,134 @@
     [self.callbacks addObject:[completion copy]];
 }
 @end
+static void TestCommittedSaveReceipt(void) {
+    NSConfigurationCoordinator *owner = [NSConfigurationCoordinator new];
+    ControlledPreferences *manager = [ControlledPreferences new];
+    manager.providerConfiguration = [ReceiptConfiguration new];
+    NSDictionary *original = @{@"activation" : @"initial"};
+    manager.providerConfiguration.vendorConfiguration = original;
+    REQUIRE([owner begin:NULL]);
+    __block NSUInteger deliveries = 0;
+    void (^complete)(NSError *) = ^(NSError *error) {
+        REQUIRE(!error);
+        deliveries++;
+    };
+    [owner saveWithAuthorization:manager completion:complete];
+    void (^firstSaveCallback)(NSError *) = manager.callbacks.lastObject;
+    NSDictionary *record = NSReadDocument(NSPendingConfigurationFile, NULL);
+    NSDictionary *committed = manager.providerConfiguration.vendorConfiguration;
+    REQUIRE([record[@"version"] isEqual:@2] &&
+            [committed[NSPreferenceSaveReceiptKey] isEqual:record[@"receipt"]]);
+
+    // The manager's editable candidate already has the token. A read that
+    // returns the old persisted configuration cannot use it as proof.
+    [NSConfigurationCoordinator checkPendingSave];
+    void (^probe)(NSError *) = manager.callbacks.lastObject;
+    REQUIRE(manager.callbacks.count == 2);
+    [NSConfigurationCoordinator checkPendingSave];
+    REQUIRE(manager.callbacks.count == 2);
+    manager.providerConfiguration.vendorConfiguration = original;
+    probe(nil);
+    REQUIRE(deliveries == 0 && [NSReadDocument(NSPendingConfigurationFile, NULL) isEqual:record]);
+    NSConfigurationCoordinator *competing = [NSConfigurationCoordinator new];
+    REQUIRE(![competing begin:NULL]);
+
+    [NSConfigurationCoordinator checkPendingSave];
+    probe = manager.callbacks.lastObject;
+    manager.providerConfiguration.vendorConfiguration = committed;
+    probe(nil);
+    probe(nil);
+    REQUIRE(deliveries == 1 && !NSReadDocument(NSPendingConfigurationFile, NULL));
+
+    // A distinct token for the activation save prevents the staging receipt
+    // and a delayed staging callback from settling activation.
+    [owner saveWithAuthorization:manager completion:complete];
+    NSDictionary *second = NSReadDocument(NSPendingConfigurationFile, NULL);
+    REQUIRE(second && ![second[@"receipt"] isEqual:record[@"receipt"]]);
+    firstSaveCallback(nil);
+    REQUIRE(deliveries == 1 && [NSReadDocument(NSPendingConfigurationFile, NULL) isEqual:second]);
+    void (^secondSaveCallback)(NSError *) = manager.callbacks.lastObject;
+    [NSConfigurationCoordinator checkPendingSave];
+    probe = manager.callbacks.lastObject;
+    secondSaveCallback(nil);
+    REQUIRE(deliveries == 1 && !NSReadDocument(NSPendingConfigurationFile, NULL));
+    probe(nil);
+    REQUIRE(deliveries == 2);
+    [owner finish];
+    [manager.callbacks removeAllObjects];
+
+    // A relaunched app or helper must load preferences before it can clear a
+    // receipt record. A matching committed receipt works on the same boot.
+    NSString *boot = NSUUID.UUID.UUIDString;
+    NSMutableDictionary *orphan = [second mutableCopy];
+    orphan[@"boot"] = boot;
+    orphan[@"bootState"] = @"known";
+    REQUIRE(NSWriteDocument(orphan, NSPendingConfigurationFile, NULL));
+    owner.bootIdentifier = ^{
+        return boot;
+    };
+    REQUIRE([owner beginReadOnly:NULL] == NSConfigurationMarkerUnresolved);
+    [owner load:manager
+        completion:^(NSError *error) {
+            REQUIRE(!error && owner.markerState == NSConfigurationMarkerUnresolved);
+        }];
+    manager.providerConfiguration.vendorConfiguration = committed; // token from the first save
+    void (^readCallback)(NSError *) = manager.callbacks.lastObject;
+    readCallback(nil);
+    [owner finish];
+
+    REQUIRE([owner begin:NULL]); // admission to read only until receipt proof
+    [owner remove:manager
+        completion:^(NSError *error) {
+            REQUIRE(error && manager.writes == 2);
+        }];
+    [owner load:manager
+        completion:^(NSError *error) {
+            REQUIRE(!error && owner.reconciledMarker && owner.markerState == NSConfigurationMarkerNone);
+        }];
+    manager.providerConfiguration.vendorConfiguration = @{NSPreferenceSaveReceiptKey : second[@"receipt"]};
+    readCallback = manager.callbacks.lastObject;
+    readCallback(nil);
+    [owner remove:manager completion:complete];
+    void (^removeCallback)(NSError *) = manager.callbacks.lastObject;
+    removeCallback(nil);
+    REQUIRE(deliveries == 3 && manager.writes == 3 && !NSReadDocument(NSPendingConfigurationFile, NULL));
+    [owner finish];
+    [manager.callbacks removeAllObjects];
+}
+
+static void TestLateSaveReceipt(void) {
+    NSConfigurationCoordinator *owner = [NSConfigurationCoordinator new];
+    ControlledPreferences *manager = [ControlledPreferences new];
+    manager.providerConfiguration = [ReceiptConfiguration new];
+    NSMutableArray *deadlines = [NSMutableArray new];
+    owner.schedule = ^(NSTimeInterval delay, void (^work)(void)) {
+        [deadlines addObject:[work copy]];
+    };
+    REQUIRE([owner begin:NULL]);
+    __block NSUInteger deliveries = 0;
+    [owner save:manager
+        completion:^(NSError *error) {
+            REQUIRE(error.code == ETIMEDOUT);
+            deliveries++;
+            [owner finish];
+        }];
+    void (^timeout)(void) = deadlines.lastObject;
+    timeout(); // starts the one final receipt read
+    REQUIRE(deliveries == 0 && manager.callbacks.count == 2);
+    void (^readbackTimeout)(void) = deadlines.lastObject;
+    readbackTimeout();
+    REQUIRE(deliveries == 1 && owner.uncertain && NSReadDocument(NSPendingConfigurationFile, NULL));
+    void (^probe)(NSError *) = manager.callbacks.lastObject;
+    probe(nil); // fake NE has returned the persisted token from the submitted configuration
+    REQUIRE(deliveries == 1 && manager.writes == 1 && !NSReadDocument(NSPendingConfigurationFile, NULL));
+    NSConfigurationCoordinator *another = [NSConfigurationCoordinator new];
+    REQUIRE([another begin:NULL]);
+    [another finish];
+    [manager.callbacks removeAllObjects];
+    [deadlines removeAllObjects];
+}
+
 static void TestDurableRecovery(void) {
     NSURL *original = NSSharedURL(@"");
     NSURL *alias =
@@ -165,6 +300,8 @@ static void TestDurableRecovery(void) {
 }
 void NSRunConfigurationTests(void) {
     TestDurableRecovery();
+    TestCommittedSaveReceipt();
+    TestLateSaveReceipt();
     for (NSUInteger kind = 0; kind < 3; kind++) {
         NSConfigurationCoordinator *owner = [NSConfigurationCoordinator new];
         NSMutableArray *deadlines = [NSMutableArray new];

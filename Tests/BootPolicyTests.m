@@ -2,6 +2,7 @@
 #import "../App/NSFilterRemoval.h"
 #import "../App/NSFilterRestart.h"
 #import "../Shared/NSProviderHealth.h"
+#import "../Shared/NSStore.h"
 
 #define CHECK(...)                                                                                           \
     do {                                                                                                     \
@@ -120,6 +121,7 @@ static BootConfiguration *BootConfig(NSString *activation, BOOL sockets) {
 @property(nonatomic, copy) NSSet *stripOnSaves;
 @property(nonatomic) NSUInteger hangingLoad;
 @property(nonatomic) NSUInteger hangingSave;
+@property(nonatomic) NSUInteger commitWithoutSaveCallback;
 @property(nonatomic, copy) void (^afterLoad)(BootManager *manager);
 @property(nonatomic, copy) void (^afterSave)(BootManager *manager);
 @property(nonatomic, strong) NSMutableArray *callbacks;
@@ -190,7 +192,9 @@ static BootConfiguration *BootConfig(NSString *activation, BOOL sockets) {
         @"bootPolicy" : @(self.saved.bootPolicy),
         @"fields" : NSFilterConfigurationFields(self.saved)
     }];
-    completion([self.errorsAfterWrite containsObject:@(self.saves)] ? self.failure : nil);
+    if (self.saves != self.commitWithoutSaveCallback) {
+        completion([self.errorsAfterWrite containsObject:@(self.saves)] ? self.failure : nil);
+    }
 }
 @end
 
@@ -639,6 +643,35 @@ static void TestBootCleanupFailures(void) {
     }
 }
 
+static void TestFirstEnableWithCommittedReceipt(void) {
+    for (NSUInteger phase = 1; phase <= 2; phase++) {
+        BootFixture *fresh = [BootFixture new];
+        fresh.manager.saved = nil;
+        fresh.manager.savedEnabled = NO;
+        fresh.manager.savedDescription = nil;
+        fresh.manager.commitWithoutSaveCallback = phase;
+        fresh.restart.coordinator.durableFence = YES;
+        fresh.restart.coordinator.acquireLock = ^NSStoreLock *(NSError **error) {
+            return [NSStoreLock tryLockRoot:NSSharedURL(@"") leaf:NSConfigurationLockFile error:error];
+        };
+        [fresh.restart start:^(NSError *error) {
+            CHECK(!error);
+            fresh.completions++;
+        }];
+        CHECK(fresh.completions == 0 && fresh.manager.saves == phase);
+        NSDictionary *pending = NSReadDocument(NSPendingConfigurationFile, NULL);
+        CHECK([pending[@"receipt"]
+            isEqual:fresh.manager.saved.vendorConfiguration[NSPreferenceSaveReceiptKey]]);
+        [NSConfigurationCoordinator checkPendingSave];
+        [fresh drain];
+        CHECK(fresh.completions == 1 && fresh.restart.state == NSFilterRestartEnabledVerified);
+        CHECK(fresh.manager.saves == 2 && fresh.manager.savedEnabled && fresh.manager.saved.bootPolicy);
+        CHECK(!NSReadDocument(NSPendingConfigurationFile, NULL));
+        [fresh checkStaleCallbacks];
+        [fresh.manager.callbacks removeAllObjects];
+    }
+}
+
 static void TestBootTimeouts(void) {
     for (NSUInteger variant = 0; variant < 2; variant++) {
         BOOL save = variant == 1;
@@ -795,6 +828,7 @@ void NSRunBootPolicyTests(void) {
     TestBootFailureRecovery();
     TestBootSerializationFailures();
     TestBootCleanupFailures();
+    TestFirstEnableWithCommittedReceipt();
     TestBootTimeouts();
     TestBootRemoval();
     TestBootMigrationRetries();

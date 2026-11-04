@@ -48,6 +48,7 @@ static NSInteger NSConfiguredEngine(NEFilterProviderConfiguration *configuration
     self.policyBootstrapPending = self.policy == nil;
     self.configurationOperationError = nil;
     self.message = nil;
+    [NSConfigurationCoordinator checkPendingSave];
     [self loadConfiguration];
 }
 - (void)recordConfigurationError:(NSError *)error operation:(NSString *)operation {
@@ -68,8 +69,7 @@ static NSInteger NSConfiguredEngine(NEFilterProviderConfiguration *configuration
     [self refreshTableKeepingPosition];
     NSConfigurationCoordinator *owner = [NSConfigurationCoordinator new];
     self.configuration = owner;
-    NSError *recoveryError = nil;
-    NSConfigurationMarkerState marker = [owner beginReadOnly:&recoveryError];
+    NSConfigurationMarkerState marker = [owner beginReadOnly:NULL];
     // A refresh that encountered recovery evidence only reads preferences.
     if (marker != NSConfigurationMarkerNone || owner.reconciledMarker) {
         self.attemptedProviderUpgrade = YES;
@@ -81,8 +81,12 @@ static NSInteger NSConfiguredEngine(NEFilterProviderConfiguration *configuration
         completion:^(NSError *error) {
             self.preferencesLoaded = !error;
             self.preferenceReadError = error.localizedDescription;
-            self.configurationReady = marker == NSConfigurationMarkerNone;
-            self.configurationRecoveryError = recoveryError.localizedDescription;
+            self.configurationReady = owner.markerState == NSConfigurationMarkerNone;
+            if (owner.reconciledMarker && self.configurationRecoveryError.length &&
+                [self.configurationOperationError containsString:self.configurationRecoveryError]) {
+                self.configurationOperationError = nil;
+            }
+            self.configurationRecoveryError = owner.markerError.localizedDescription;
             NEFilterProviderConfiguration *configuration = error ? nil : manager.providerConfiguration;
             if (!error) {
                 self.hasSavedPreferences = YES;
@@ -98,7 +102,7 @@ static NSInteger NSConfiguredEngine(NEFilterProviderConfiguration *configuration
             BOOL absent = !error && !configuration && !self.savedEnabled;
             // A recorded removal cannot re-enable the absent filter. Keep the
             // NE fence intact while preparing rules for this fresh app launch.
-            BOOL safeBootstrap = marker == NSConfigurationMarkerNone || (absent && owner.pendingRemoval);
+            BOOL safeBootstrap = self.configurationReady || (absent && owner.pendingRemoval);
             dispatch_async(NSAppStorageQueue(), ^{
                 NSError *policyError = nil;
                 NSPolicy *policy =

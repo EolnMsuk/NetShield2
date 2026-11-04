@@ -1,4 +1,5 @@
 #import "NSFilterBootPolicy.h"
+#import "NSConfigurationCoordinator.h"
 #include <string.h>
 #import "../Shared/NSValidation.h"
 #import "../Shared/NSConstants.h"
@@ -130,9 +131,23 @@ NSDictionary *NSFilterConfigurationFields(id configuration) {
     }
 }
 
+NSDictionary *NSFilterConfigurationWithoutSaveReceipt(NSDictionary *fields) {
+    NSDictionary *vendor = fields[@"vendor"];
+    if (![vendor isKindOfClass:NSDictionary.class] || !vendor[NSPreferenceSaveReceiptKey]) {
+        return fields;
+    }
+    NSMutableDictionary *metadata = [vendor mutableCopy];
+    [metadata removeObjectForKey:NSPreferenceSaveReceiptKey];
+    NSMutableDictionary *normalized = [fields mutableCopy];
+    normalized[@"vendor"] = [metadata copy];
+    return [normalized copy];
+}
+
 BOOL NSFilterConfigurationValidate(id configuration, NSDictionary *expectedFields, BOOL requireBootPolicy,
                                    NSError **error) {
-    if (!expectedFields || ![NSFilterConfigurationFields(configuration) isEqual:expectedFields]) {
+    NSDictionary *actual =
+        NSFilterConfigurationWithoutSaveReceipt(NSFilterConfigurationFields(configuration));
+    if (!expectedFields || ![actual isEqual:NSFilterConfigurationWithoutSaveReceipt(expectedFields)]) {
         return NSBootPolicyFail(error, NSFilterBootPolicyPersistenceFailed,
                                 @"Filter scope, organization, or activation/engine metadata changed.");
     }

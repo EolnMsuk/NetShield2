@@ -18,6 +18,8 @@ FOUNDATION_EXPORT NSString *NSFilterBootPolicyStatus(id configuration, BOOL load
 // Capture public scope and the complete vendor metadata independently of copies.
 // The private flag is read separately; it is never stored in vendorConfiguration.
 FOUNDATION_EXPORT NSDictionary *NSFilterConfigurationFields(id configuration);
+// Receipts are per-save bookkeeping. Match all other fields for restart ownership.
+FOUNDATION_EXPORT NSDictionary *NSFilterConfigurationWithoutSaveReceipt(NSDictionary *fields);
 FOUNDATION_EXPORT BOOL NSFilterConfigurationValidate(id configuration, NSDictionary *expectedFields,
                                                      BOOL requireBootPolicy, NSError **error);
 FOUNDATION_EXPORT id NSFilterConfigurationCheckedCopy(id configuration, BOOL requireBootPolicy,

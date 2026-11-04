@@ -98,8 +98,10 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
 }
 
 - (void)rememberFields:(NSDictionary *)fields description:(NSString *)description {
-    [self.ownedFingerprints
-        addObject:@{@"fields" : fields ?: (id)NSNull.null, @"description" : description ?: (id)NSNull.null}];
+    [self.ownedFingerprints addObject:@{
+        @"fields" : NSFilterConfigurationWithoutSaveReceipt(fields) ?: (id)NSNull.null,
+        @"description" : description ?: (id)NSNull.null
+    }];
 }
 - (BOOL)ownsLoadedConfiguration {
     NSDictionary *fields = NSFilterConfigurationFields(self.manager.providerConfiguration);
@@ -107,7 +109,7 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
         return NO;
     }
     return [self.ownedFingerprints containsObject:@{
-        @"fields" : fields ?: (id)NSNull.null,
+        @"fields" : NSFilterConfigurationWithoutSaveReceipt(fields) ?: (id)NSNull.null,
         @"description" : self.manager.localizedDescription ?: (id)NSNull.null
     }];
 }
