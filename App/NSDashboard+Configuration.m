@@ -1,5 +1,6 @@
 #import "NSDashboard+Internal.h"
 #import "NSRespring.h"
+#import "NSFilterRemoval.h"
 #include <errno.h>
 #import "../Shared/NSProviderHealth.h"
 #import "../Shared/NSValidation.h"
@@ -94,14 +95,18 @@ static NSInteger NSConfiguredEngine(NEFilterProviderConfiguration *configuration
             }
             self.bootPolicyStatus = NSFilterBootPolicyStatus(configuration, self.preferencesLoaded);
             NSSharedDirectory *directory = owner.directory;
+            BOOL absent = !error && !configuration && !self.savedEnabled;
+            // A recorded removal cannot re-enable the absent filter. Keep the
+            // NE fence intact while preparing rules for this fresh app launch.
+            BOOL safeBootstrap = marker == NSConfigurationMarkerNone || (absent && owner.pendingRemoval);
             dispatch_async(NSAppStorageQueue(), ^{
                 NSError *policyError = nil;
                 NSPolicy *policy =
                     directory ? NSReadPolicyIn(directory, &policyError) : NSReadPolicy(&policyError);
                 // Hold configuration ownership across bootstrap so a queued task
                 // cannot repopulate policy after concurrent uninstall cleanup.
-                if (mayBootstrap && directory && marker == NSConfigurationMarkerNone && !policy &&
-                    NSFileIsAbsent(policyError) && NSEnsurePolicyIn(directory, &policyError)) {
+                if (mayBootstrap && directory && safeBootstrap && !policy && NSFileIsAbsent(policyError) &&
+                    NSEnsurePolicyIn(directory, &policyError)) {
                     policy = NSReadPolicyIn(directory, &policyError);
                 }
                 dispatch_async(dispatch_get_main_queue(), ^{
@@ -114,6 +119,7 @@ static NSInteger NSConfiguredEngine(NEFilterProviderConfiguration *configuration
                         if (policy) {
                             self.policyBootstrapPending = NO;
                         }
+                        self.policyMissing = !policy && NSFileIsAbsent(policyError);
                         self.policyReadError = policy ? nil : policyError.localizedDescription;
                     }
                     NSInteger engine = NSConfiguredEngine(configuration);
@@ -480,8 +486,18 @@ static NSInteger NSConfiguredEngine(NEFilterProviderConfiguration *configuration
                 failed(error);
                 return;
             }
-            self.resetRequiresLegacyStop =
-                manager.enabled && NSConfiguredEngine(manager.providerConfiguration) < 20014;
+            self.resetRequiresLegacyStop = manager.enabled && manager.providerConfiguration &&
+                                           NSConfiguredEngine(manager.providerConfiguration) < 20014;
+            if (self.removeFilterAfterReset) {
+                NSRemoveLoadedFilter(owner, (id<NSFilterRemovalManager>)manager, ^(NSError *removeError) {
+                    if (removeError) {
+                        failed(removeError);
+                    } else {
+                        [self finishResetWhenStopped:0];
+                    }
+                });
+                return;
+            }
             void (^verify)(NSError *) = ^(NSError *saveError) {
                 if (saveError && !owner.acknowledgementError) {
                     failed(saveError);
@@ -489,8 +505,7 @@ static NSInteger NSConfiguredEngine(NEFilterProviderConfiguration *configuration
                 }
                 [owner load:manager
                     completion:^(NSError *verifyError) {
-                        if (!verifyError && (manager.enabled || (self.removeFilterAfterReset &&
-                                                                 manager.providerConfiguration))) {
+                        if (!verifyError && manager.enabled) {
                             verifyError = [NSError errorWithDomain:@"NetShield2.Configuration"
                                                               code:1
                                                           userInfo:@{
@@ -508,9 +523,7 @@ static NSInteger NSConfiguredEngine(NEFilterProviderConfiguration *configuration
                         [self finishResetWhenStopped:0];
                     }];
             };
-            if (self.removeFilterAfterReset && (manager.providerConfiguration || manager.enabled)) {
-                [owner remove:manager completion:verify];
-            } else if (manager.enabled) {
+            if (manager.enabled) {
                 manager.enabled = NO;
                 [owner save:manager completion:verify];
             } else {

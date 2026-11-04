@@ -224,6 +224,7 @@
                 if (policy) {
                     owner.policyBootstrapPending = NO;
                 }
+                owner.policyMissing = !policy && NSFileIsAbsent(policyError);
                 owner.policyReadError = policy ? @"" : policyError.localizedDescription;
                 owner.monitorReadError =
                     monitorError && !NSFileIsAbsent(monitorError) ? monitorError.localizedDescription : @"";

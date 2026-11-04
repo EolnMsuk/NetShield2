@@ -1,7 +1,8 @@
 #import <Foundation/Foundation.h>
 #import "NSConfigurationCoordinator.h"
+#import "NSFilterRemoval.h"
 
-@protocol NSFilterRestartManager <NSObject>
+@protocol NSFilterRestartManager <NSFilterRemovalManager>
 @property(nonatomic, strong) id providerConfiguration;
 @property(nonatomic, getter=isEnabled) BOOL enabled;
 @property(nonatomic, copy) NSString *localizedDescription;

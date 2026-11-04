@@ -154,7 +154,7 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
         [owner finish:error];
     };
     NSError *lockError = nil;
-    if (![self.coordinator begin:&lockError]) {
+    if (![self.coordinator beginWithAuthorizationBudget:&lockError]) {
         [self finish:lockError];
         return;
     }
@@ -329,6 +329,7 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
     self.manager.enabled = YES;
     self.state = NSFilterRestartUnknown;
     [self preferences:YES
+        authorization:!self.previous && !self.restoring
            completion:^(NSError *saveError) {
                if (saveError) {
                    [self recover:saveError];
@@ -379,7 +380,11 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
     if (!self.originalError) {
         self.originalError = error;
     }
-    if (self.restoring || !self.wasEnabled || !self.touchedPreferences || !self.previous) {
+    if (!self.previous && self.touchedPreferences) {
+        [self removeFailedFirstConfiguration:error];
+        return;
+    }
+    if (self.restoring || !self.wasEnabled || !self.touchedPreferences) {
         [self disableFailedConfiguration:error];
         return;
     }
@@ -402,6 +407,45 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
                }
                [self disableForStaging];
            }];
+}
+- (void)removeFailedFirstConfiguration:(NSError *)startupError {
+    [self preferences:NO
+           completion:^(NSError *loadError) {
+               if (loadError) {
+                   [self finishFirstConfigurationRecovery:startupError error:loadError];
+                   return;
+               }
+               if ((self.manager.providerConfiguration || self.manager.enabled) &&
+                   ![self ownsLoadedConfiguration]) {
+                   [self finishExternalChange];
+                   return;
+               }
+               // A failed first installation should return to absence. Leaving
+               // a disabled staged profile behind can strand an invalid entry.
+               NSRemoveLoadedFilter(self.coordinator, self.manager, ^(NSError *removeError) {
+                   [self finishFirstConfigurationRecovery:startupError error:removeError];
+               });
+           }];
+}
+- (void)finishFirstConfigurationRecovery:(NSError *)startupError error:(NSError *)recoveryError {
+    self.state = recoveryError ? NSFilterRestartUnknown : NSFilterRestartOffVerified;
+    if (!recoveryError) {
+        [self record:@"first-install-absence-reloaded"];
+    }
+    NSString *detail =
+        recoveryError
+            ? [NSString stringWithFormat:@"Could not verify removal of the new profile. %@ (%@ %ld).",
+                                         recoveryError.localizedDescription, recoveryError.domain,
+                                         (long)recoveryError.code]
+            : @"The new profile is absent from saved preferences. Your rules are saved.";
+    [self
+        finish:[NSError errorWithDomain:startupError.domain
+                                   code:startupError.code
+                               userInfo:@{
+                                   NSLocalizedDescriptionKey : [NSString
+                                       stringWithFormat:@"%@ %@", startupError.localizedDescription, detail],
+                                   NSUnderlyingErrorKey : startupError
+                               }]];
 }
 - (void)finishDisabledConfiguration:(NSError *)startupError {
     self.state = NSFilterRestartOffVerified;

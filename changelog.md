@@ -1,3 +1,10 @@
+# 2.6.7
+
+- Allow time for iOS authorization during either save on first enable. If a completed first installation fails validation or startup, verify removal of the profile created by that attempt.
+- Verify filter removal with a fresh preference load even when the remove callback returns an error. Keep unresolved writes fenced.
+- Retry a policy read interrupted by replacement and briefly retry initial control-provider reporting under storage contention. Record the failing startup stage and error code.
+- Clarify recovery after downgrade and reinstall. Initialize missing policy when a fresh read confirms absence and the remaining record is for removal only.
+
 # 2.6.6
 
 - Fixed shared app-group file and lock access through both `/var` and `/private/var` paths.

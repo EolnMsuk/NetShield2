@@ -20,6 +20,7 @@
 @property(nonatomic) BOOL pendingWrite;
 @property(nonatomic, readwrite) BOOL uncertain;
 @property(nonatomic, readwrite) BOOL reconciledMarker;
+@property(nonatomic, readwrite) BOOL pendingRemoval;
 @property(nonatomic, readwrite) NSError *acknowledgementError;
 @property(nonatomic, strong) dispatch_source_t phaseTimer;
 @property(nonatomic, strong) dispatch_source_t overallTimer;
@@ -223,14 +224,21 @@ static BOOL NSMatchesLocalAcknowledgement(NSDictionary *record, NSSharedDirector
         }
         return state;
     }
+    self.pendingRemoval =
+        state == NSConfigurationMarkerUnresolved && !legacy && [marker[@"kind"] isEqual:@"remove"];
     if (error) {
         NSString *message;
         if (!boot) {
             message = @"The kernel boot identity is unavailable. The preference write cannot be ruled out. "
                       @"Check the filter in iOS Settings and refresh when boot identity is available.";
         } else if (state == NSConfigurationMarkerUnresolved && recordedBoot) {
-            message = @"An earlier preference write may still complete. Wait for its callback or reboot "
-                      @"the device, then refresh. The filter is also accessible in iOS Settings.";
+            NSString *operation =
+                legacy ? @"preference write" : (self.pendingRemoval ? @"filter removal" : @"filter save");
+            message = [NSString stringWithFormat:@"An earlier %@ may still complete. If the original app "
+                                                 @"session has ended, fully reboot the device, return to the "
+                                                 @"jailbreak and refresh. A respring "
+                                                 @"does not clear this recovery state.",
+                                                 operation];
         } else {
             message = @"The pending preference record has no usable boot evidence. This boot has been "
                       @"recorded for recovery. Reboot the device, then refresh. A respring is insufficient.";
@@ -267,6 +275,13 @@ static BOOL NSMatchesLocalAcknowledgement(NSDictionary *record, NSSharedDirector
     self.phaseTimer = nil;
 }
 - (BOOL)begin:(NSError **)error {
+    return [self beginWithDeadline:120 error:error];
+}
+- (BOOL)beginWithAuthorizationBudget:(NSError **)error {
+    // Initial staging and activation can each need a separate authorization phase.
+    return [self beginWithDeadline:180 error:error];
+}
+- (BOOL)beginWithDeadline:(NSTimeInterval)duration error:(NSError **)error {
     NSAssert(NSThread.isMainThread, @"Configuration state belongs to the main queue");
     if (self.active || self.pendingWrite) {
         if (error) {
@@ -276,6 +291,7 @@ static BOOL NSMatchesLocalAcknowledgement(NSDictionary *record, NSSharedDirector
         return NO;
     }
     self.reconciledMarker = NO;
+    self.pendingRemoval = NO;
     self.lock = self.acquireLock(error);
     if (!self.lock) {
         if (error && !*error) {
@@ -295,7 +311,7 @@ static BOOL NSMatchesLocalAcknowledgement(NSDictionary *record, NSSharedDirector
     self.uncertain = NO;
     NSString *operation = self.operation;
     __weak typeof(self) weakSelf = self;
-    [self deadline:120
+    [self deadline:duration
            overall:YES
               work:^{
                   NSConfigurationCoordinator *owner = weakSelf;
@@ -320,6 +336,7 @@ static BOOL NSMatchesLocalAcknowledgement(NSDictionary *record, NSSharedDirector
         return NSConfigurationMarkerUnavailable;
     }
     self.reconciledMarker = NO;
+    self.pendingRemoval = NO;
     self.lock = self.acquireLock(error);
     self.readOnly = YES;
     self.active = YES;
@@ -445,6 +462,9 @@ static BOOL NSMatchesLocalAcknowledgement(NSDictionary *record, NSSharedDirector
                 self.pendingWrite = NO;
                 if (record) {
                     self.acknowledgementError = [self acknowledge:record];
+                    NSLog(@"NetShield2 preference %@ callback phase=%lu os=%@/%ld local=%@/%ld",
+                          record[@"kind"], (unsigned long)phase, error.domain ?: @"ok", (long)error.code,
+                          self.acknowledgementError.domain ?: @"ok", (long)self.acknowledgementError.code);
                 }
             }
             if (!self.active || self.phase != phase) {
@@ -470,6 +490,10 @@ static BOOL NSMatchesLocalAcknowledgement(NSDictionary *record, NSSharedDirector
         }
     };
     self.pendingWrite = kind != 0;
+    if (kind && self.durableFence) {
+        NSLog(@"NetShield2 preference %@ submitted phase=%lu authorization=%d",
+              kind == 1 ? @"save" : @"remove", (unsigned long)phase, authorization);
+    }
     if (kind == 1) {
         [manager saveToPreferencesWithCompletionHandler:callback];
     } else if (kind == 2) {

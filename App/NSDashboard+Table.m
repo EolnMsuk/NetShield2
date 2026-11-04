@@ -200,6 +200,7 @@
         self.bootPolicyStatus ?: @"",
         self.notificationStatus ?: @"",
         self.policyReadError ?: @"",
+        @(self.policyMissing),
         self.monitorReadError ?: @"",
         self.monitor[@"overflowCount"] ?: @0,
         self.monitor[@"droppedWorkCount"] ?: @0,
@@ -659,10 +660,16 @@
         }
         if (self.configurationRecoveryError.length) {
             [details addObject:self.configurationRecoveryError];
-        } else if (self.configurationOperationError.length) {
+        }
+        if (self.configurationOperationError.length &&
+            (!self.configurationRecoveryError.length ||
+             ![self.configurationOperationError containsString:self.configurationRecoveryError])) {
             [details addObject:self.configurationOperationError];
         }
-        if (self.policyReadError.length) {
+        if (self.policyMissing && !self.configurationReady) {
+            [details addObject:@"The policy file is missing. Recover the pending preference operation to "
+                               @"initialize rules."];
+        } else if (self.policyReadError.length) {
             [details addObject:[@"Policy storage: " stringByAppendingString:self.policyReadError]];
         }
         if (enabled && self.monitorReadError.length) {

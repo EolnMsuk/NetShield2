@@ -34,6 +34,7 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 @interface NSDashboard () <UISearchBarDelegate, UIGestureRecognizerDelegate>
 @property(nonatomic, strong) NSPolicy *policy;
 @property(nonatomic, copy) NSString *policyReadError;
+@property(nonatomic) BOOL policyMissing;
 @property(nonatomic) BOOL policyBootstrapPending;
 @property(nonatomic, copy) NSDictionary *monitor;
 @property(nonatomic, copy) NSArray<NSDictionary *> *activityGroups;

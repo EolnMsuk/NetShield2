@@ -1,4 +1,5 @@
 #import <Foundation/Foundation.h>
+@class NSConfigurationCoordinator;
 
 // Matches the NEFilterManager operations used here; also permits testing without
 // accessing a real device's Network Extension preferences.
@@ -8,6 +9,11 @@
 - (void)loadFromPreferencesWithCompletionHandler:(void (^)(NSError *error))completion;
 - (void)removeFromPreferencesWithCompletionHandler:(void (^)(NSError *error))completion;
 @end
+
+// The caller owns configuration.lock and has just loaded the saved preferences.
+FOUNDATION_EXPORT void NSRemoveLoadedFilter(NSConfigurationCoordinator *owner,
+                                            id<NSFilterRemovalManager> manager,
+                                            void (^completion)(NSError *error));
 
 FOUNDATION_EXPORT void NSRemoveInstalledFilter(id<NSFilterRemovalManager> manager,
                                                void (^completion)(NSError *error));

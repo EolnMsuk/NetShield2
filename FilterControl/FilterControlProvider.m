@@ -22,6 +22,7 @@ static char NSControlPathContext;
 @property(nonatomic) BOOL acceptDNS;
 @property(nonatomic) NSUInteger lifecycle; // 0 stopped, 1 starting, 2 running, 3 stopping
 @property(nonatomic, strong) NSMutableArray *stopCompletions;
+@property(nonatomic, copy) void (^startupCompletion)(NSError *);
 @property(nonatomic, strong) NSMutableArray<NSDictionary *> *events;
 @property(nonatomic, copy) NSString *revision;
 @property(nonatomic, copy) NSString *session;
@@ -128,6 +129,8 @@ static char NSControlPathContext;
 }
 
 - (void)failStartup:(NSError *)error completion:(void (^)(NSError *))completion {
+    NSLog(@"NetShield2 control startup failed stage=%@ error=%@/%ld",
+          error.userInfo[@"stage"] ?: @"initialize or publish", error.domain, (long)error.code);
     self.lifecycle = 3;
     self.stopped = YES;
     [self.notifications stop];
@@ -285,6 +288,30 @@ static char NSControlPathContext;
         [owner refresh];
     });
 }
+- (void)publishInitialSnapshot:(NSUInteger)attempt session:(NSString *)session {
+    if (self.lifecycle != 1 || ![self.session isEqual:session]) {
+        return;
+    }
+    NSError *error = nil;
+    BOOL published = NSWriteMonitorSnapshot([self snapshotWithRunning:YES policyError:nil], &error);
+    if (!published && attempt < 3 && (NSIsLockContention(error) || NSFileReadChanged(error))) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_MSEC * 100), self.work.queue, ^{
+            [self publishInitialSnapshot:attempt + 1 session:session];
+        });
+        return;
+    }
+    void (^completion)(NSError *) = self.startupCompletion;
+    self.startupCompletion = nil;
+    if (!published) {
+        [self failStartup:error completion:completion];
+        return;
+    }
+    self.stopped = NO;
+    self.lifecycle = 2;
+    [self deliver:^{
+        completion(nil);
+    }];
+}
 - (void)startFilterWithCompletionHandler:(void (^)(NSError *))completionHandler {
     dispatch_async(self.work.queue, ^{
         if (self.lifecycle != 0) {
@@ -304,6 +331,8 @@ static char NSControlPathContext;
         self.stopped = YES;
         self.providerLock = NSAcquireProviderLock(&error);
         if (!self.providerLock) {
+            NSLog(@"NetShield2 control startup lock failed stage=%@ error=%@/%ld", error.userInfo[@"stage"],
+                  error.domain, (long)error.code);
             self.lifecycle = 0;
             [self deliver:^{
                 completionHandler(error);
@@ -311,6 +340,8 @@ static char NSControlPathContext;
             return;
         }
         if (!NSReadPolicy(&error)) {
+            NSLog(@"NetShield2 control startup policy failed stage=%@ error=%@/%ld",
+                  error.userInfo[@"stage"] ?: @"decode", error.domain, (long)error.code);
             [self.providerLock unlock];
             self.providerLock = nil;
             self.lifecycle = 0;
@@ -393,15 +424,8 @@ static char NSControlPathContext;
             }
         });
         dispatch_resume(self.timer);
-        if (!NSWriteMonitorSnapshot([self snapshotWithRunning:YES policyError:nil], &error)) {
-            [self failStartup:error completion:completionHandler];
-            return;
-        }
-        self.stopped = NO;
-        self.lifecycle = 2;
-        [self deliver:^{
-            completionHandler(nil);
-        }];
+        self.startupCompletion = completionHandler;
+        [self publishInitialSnapshot:0 session:session];
     });
 }
 - (void)handleReport:(NEFilterReport *)report {
@@ -537,6 +561,13 @@ static char NSControlPathContext;
         }
         [self.stopCompletions addObject:[completionHandler copy]];
         if (self.lifecycle == 3) {
+            return;
+        }
+        if (self.lifecycle == 1) {
+            void (^startup)(NSError *) = self.startupCompletion;
+            self.startupCompletion = nil;
+            [self failStartup:[NSError errorWithDomain:NSPOSIXErrorDomain code:ECANCELED userInfo:nil]
+                   completion:startup];
             return;
         }
         self.lifecycle = 3;

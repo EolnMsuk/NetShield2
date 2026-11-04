@@ -13,7 +13,10 @@
 }
 - (void)startFilterWithCompletionHandler:(void (^)(NSError *))completionHandler {
     NSError *error = nil;
-    NSReadPolicy(&error);
+    if (!NSReadPolicy(&error)) {
+        NSLog(@"NetShield2 data startup policy failed stage=%@ error=%@/%ld",
+              error.userInfo[@"stage"] ?: @"decode", error.domain, (long)error.code);
+    }
     completionHandler(error);
 }
 - (NEFilterNewFlowVerdict *)handleNewFlow:(NEFilterFlow *)flow {

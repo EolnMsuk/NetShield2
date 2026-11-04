@@ -77,6 +77,39 @@ static NSError *NSUninstallCleanupPending(NSError *error) {
                            }];
 }
 
+void NSRemoveLoadedFilter(NSConfigurationCoordinator *owner, id<NSFilterRemovalManager> manager,
+                          void (^completion)(NSError *)) {
+    if (!manager.providerConfiguration && !manager.enabled) {
+        completion(nil);
+        return;
+    }
+    [owner remove:manager
+        completion:^(NSError *removeError) {
+            if (owner.uncertain) {
+                completion(removeError);
+                return;
+            }
+            // A delivered error can accompany a completed removal, for example
+            // when the profile disappears in Settings. Verify the result freshly.
+            [owner load:manager
+                completion:^(NSError *readError) {
+                    if (!readError && !manager.providerConfiguration && !manager.enabled) {
+                        completion(owner.acknowledgementError);
+                        return;
+                    }
+                    if (!readError && !removeError) {
+                        readError = [NSError errorWithDomain:@"NetShield2.Uninstall"
+                                                        code:1
+                                                    userInfo:@{
+                                                        NSLocalizedDescriptionKey :
+                                                            @"The system filter still exists after removal."
+                                                    }];
+                    }
+                    completion([owner writeErrorWithPreferenceError:removeError readbackError:readError]);
+                }];
+        }];
+}
+
 static void NSRemoveFilter(id<NSFilterRemovalManager> manager, NSTimeInterval deadline,
                            void (^clearAppState)(void), void (^completion)(NSError *)) {
     NSConfigurationCoordinator *owner = [NSConfigurationCoordinator new];
@@ -148,35 +181,12 @@ static void NSRemoveFilter(id<NSFilterRemovalManager> manager, NSTimeInterval de
                 finished(loadError);
                 return;
             }
-            if (!manager.providerConfiguration && !manager.enabled) {
-                removed(nil);
-                return;
-            }
-            [owner remove:manager
-                completion:^(NSError *removeError) {
-                    if (removeError && !owner.acknowledgementError) {
-                        finished(removeError);
-                        return;
-                    }
-                    [owner load:manager
-                        completion:^(NSError *verifyError) {
-                            if (!verifyError && (manager.providerConfiguration || manager.enabled)) {
-                                verifyError =
-                                    [NSError errorWithDomain:@"NetShield2.Uninstall"
-                                                        code:1
-                                                    userInfo:@{
-                                                        NSLocalizedDescriptionKey :
-                                                            @"The system filter still exists after removal."
-                                                    }];
-                            }
-                            NSError *result = [owner writeErrorWithPreferenceError:removeError
-                                                                     readbackError:verifyError];
-                            if (clearAppState && result && !removeError && !verifyError) {
-                                result = NSUninstallCleanupPending(result);
-                            }
-                            removed(result);
-                        }];
-                }];
+            NSRemoveLoadedFilter(owner, manager, ^(NSError *result) {
+                if (clearAppState && result && result == owner.acknowledgementError) {
+                    result = NSUninstallCleanupPending(result);
+                }
+                removed(result);
+            });
         }];
 }
 void NSRemoveInstalledFilter(id<NSFilterRemovalManager> manager, void (^completion)(NSError *)) {

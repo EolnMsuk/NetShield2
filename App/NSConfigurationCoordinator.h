@@ -23,9 +23,12 @@ FOUNDATION_EXPORT NSNotificationName const NSConfigurationLateAcknowledgement;
 @property(nonatomic, copy) void (^abort)(NSError *);
 @property(nonatomic, readonly) BOOL uncertain;
 @property(nonatomic, readonly) BOOL reconciledMarker;
+// A recognized outstanding remove cannot create or enable a profile.
+@property(nonatomic, readonly) BOOL pendingRemoval;
 @property(nonatomic, readonly) NSSharedDirectory *directory;
 @property(nonatomic, readonly) NSError *acknowledgementError;
 - (BOOL)begin:(NSError **)error;
+- (BOOL)beginWithAuthorizationBudget:(NSError **)error;
 - (NSConfigurationMarkerState)beginReadOnly:(NSError **)error;
 - (void)load:(id)manager completion:(void (^)(NSError *))completion;
 - (void)save:(id)manager completion:(void (^)(NSError *))completion;
