@@ -32,7 +32,15 @@ case "${1:-}" in
                 esac
             done
             printf 'NetShield2: filter cleanup failed (exit %s); uninstall cancelled.\n' "$cleanup_status" >&2
-            printf '%s\n' 'Open NetShield2 > Configuration > Remove Filter & Settings, then retry removal.' >&2
+            case "$cleanup_output" in
+                *'NetShield2: saved-state cleanup failed:'*)
+                    printf '%s\n' 'Close any open export and address the reported storage error, then retry package removal.' >&2
+                    ;;
+                *)
+                    printf '%s\n' 'Follow the helper diagnostic above. In NetShield2, tap the Firewall status row to refresh.' >&2
+                    printf '%s\n' 'If filter removal is still needed, use Configuration > Remove Filter & Settings, then retry package removal.' >&2
+                    ;;
+            esac
             exit 1
         fi
         if /var/jb/usr/bin/uicache -u /var/jb/Applications/NetShield2.app >/dev/null 2>&1; then
