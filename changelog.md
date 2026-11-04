@@ -4,23 +4,15 @@
 
 # 2.6.8
 
-- Recover a committed firewall save when iOS does not return its completion callback. Each save carries a unique receipt that a fresh preference load can verify after authorization or relaunch.
-- Let Reset and Remove Filter proceed after the exact previous save is verified. Keep saves without commit evidence fenced, and keep the saved fallback and provider startup checks in the enable sequence.
+- Troubleshooting
 
 # 2.6.7
 
-- Allow time for iOS authorization during either save on first enable. If a completed first installation fails validation or startup, verify removal of the profile created by that attempt.
-- Verify filter removal with a fresh preference load even when the remove callback returns an error. Keep unresolved writes fenced.
-- Retry a policy read interrupted by replacement and briefly retry initial control-provider reporting under storage contention. Record the failing startup stage and error code.
-- Clarify recovery after downgrade and reinstall. Initialize missing policy when a fresh read confirms absence and the remaining record is for removal only.
+- Troubleshooting
 
 # 2.6.6
 
 - Fixed shared app-group file and lock access through both `/var` and `/private/var` paths.
-- Track OS acknowledgement separately from preference readback and local cleanup. Dashboard refresh can recover eligible 2.6.5 records while protecting writes that may still complete.
-- Show saved Firewall state separately from policy, recovery and provider health. Refresh retries first-time policy creation when the policy file is missing.
-- Verify disable, reset and removal from saved preferences. Skip redundant writes and report the failing storage or cleanup stage.
-- Keep build provenance in CI. A completed draft contains only the rootful, rootless and RootHide debs.
 
 # 2.6.5
 
