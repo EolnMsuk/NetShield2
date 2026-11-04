@@ -591,6 +591,8 @@
     }
     cell.textLabel.text = nil;
     cell.detailTextLabel.text = nil;
+    cell.textLabel.textColor = UIColor.labelColor;
+    cell.detailTextLabel.textColor = UIColor.secondaryLabelColor;
     cell.imageView.image = nil;
     cell.backgroundColor = nil;
     cell.accessoryView = nil;

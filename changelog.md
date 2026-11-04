@@ -1,3 +1,7 @@
+# 2.6.9
+
+- Fixed the color leak. Dashboard cells now reset both labels to their adaptive colors before applying row-specific styling
+
 # 2.6.8
 
 - Recover a committed firewall save when iOS does not return its completion callback. Each save carries a unique receipt that a fresh preference load can verify after authorization or relaunch.
