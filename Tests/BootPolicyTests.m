@@ -122,6 +122,8 @@ static BootConfiguration *BootConfig(NSString *activation, BOOL sockets) {
 @property(nonatomic) NSUInteger hangingLoad;
 @property(nonatomic) NSUInteger hangingSave;
 @property(nonatomic) NSUInteger commitWithoutSaveCallback;
+@property(nonatomic) NSUInteger delayedSave;
+@property(nonatomic, copy) void (^pendingCommit)(void);
 @property(nonatomic, copy) void (^afterLoad)(BootManager *manager);
 @property(nonatomic, copy) void (^afterSave)(BootManager *manager);
 @property(nonatomic, strong) NSMutableArray *callbacks;
@@ -178,22 +180,33 @@ static BootConfiguration *BootConfig(NSString *activation, BOOL sockets) {
         completion(self.failure);
         return;
     }
-    self.saved = [self.providerConfiguration copy];
-    self.savedEnabled = self.enabled;
-    self.savedDescription = self.localizedDescription;
-    if ([self.stripOnSaves containsObject:@(self.saves)]) {
-        self.saved.bootPolicy = NO;
-    }
-    if (self.afterSave) {
-        self.afterSave(self);
-    }
-    [self.saveRecords addObject:@{
-        @"enabled" : @(self.savedEnabled),
-        @"bootPolicy" : @(self.saved.bootPolicy),
-        @"fields" : NSFilterConfigurationFields(self.saved)
-    }];
-    if (self.saves != self.commitWithoutSaveCallback) {
-        completion([self.errorsAfterWrite containsObject:@(self.saves)] ? self.failure : nil);
+    NSUInteger save = self.saves;
+    BootConfiguration *submitted = [self.providerConfiguration copy];
+    BOOL submittedEnabled = self.enabled;
+    NSString *submittedDescription = self.localizedDescription;
+    void (^commit)(void) = ^{
+        self.saved = submitted;
+        self.savedEnabled = submittedEnabled;
+        self.savedDescription = submittedDescription;
+        if ([self.stripOnSaves containsObject:@(save)]) {
+            self.saved.bootPolicy = NO;
+        }
+        if (self.afterSave) {
+            self.afterSave(self);
+        }
+        [self.saveRecords addObject:@{
+            @"enabled" : @(self.savedEnabled),
+            @"bootPolicy" : @(self.saved.bootPolicy),
+            @"fields" : NSFilterConfigurationFields(self.saved)
+        }];
+        if (save != self.commitWithoutSaveCallback) {
+            completion([self.errorsAfterWrite containsObject:@(save)] ? self.failure : nil);
+        }
+    };
+    if (save == self.delayedSave) {
+        self.pendingCommit = commit;
+    } else {
+        commit();
     }
 }
 @end
@@ -643,19 +656,16 @@ static void TestBootCleanupFailures(void) {
     }
 }
 
-static void TestFirstEnableWithCommittedReceipt(void) {
-    for (NSUInteger phase = 1; phase <= 2; phase++) {
+static void TestFirstEnableAfterAuthorization(void) {
+    // Normal save callback, missing stage callback, then missing enable callback.
+    for (NSUInteger missingCallback = 0; missingCallback <= 2; missingCallback++) {
         BootFixture *fresh = [BootFixture new];
         fresh.manager.saved = nil;
         fresh.manager.savedEnabled = NO;
         fresh.manager.savedDescription = nil;
-        fresh.manager.commitWithoutSaveCallback = phase;
-        __block BootConfiguration *staged = nil;
-        fresh.manager.afterSave = ^(BootManager *manager) {
-            if (phase == 2 && manager.saves == 1) {
-                staged = [manager.saved copy];
-            }
-        };
+        NSUInteger phase = missingCallback ?: 1;
+        fresh.manager.delayedSave = phase;
+        fresh.manager.commitWithoutSaveCallback = missingCallback;
         fresh.restart.coordinator.durableFence = YES;
         fresh.restart.coordinator.acquireLock = ^NSStoreLock *(NSError **error) {
             return [NSStoreLock tryLockRoot:NSSharedURL(@"") leaf:NSConfigurationLockFile error:error];
@@ -663,24 +673,40 @@ static void TestFirstEnableWithCommittedReceipt(void) {
         [fresh.restart start:^(NSError *error) {
             CHECK(!error);
             fresh.completions++;
+            fresh.completedAt = fresh.clock;
         }];
-        CHECK(fresh.completions == 0 && fresh.manager.saves == phase);
+        CHECK(fresh.completions == 0 && fresh.manager.saves == phase && fresh.manager.pendingCommit);
         NSDictionary *pending = NSReadDocument(NSPendingConfigurationFile, NULL);
-        CHECK([pending[@"receipt"]
-            isEqual:fresh.manager.saved.vendorConfiguration[NSPreferenceSaveReceiptKey]]);
-        // An early signal still sees absence or the prior disabled stage.
-        fresh.manager.afterLoad = ^(BootManager *manager) {
-            manager.providerConfiguration = staged;
-            manager.enabled = NO;
-            manager.localizedDescription = staged ? NSFilterLocalizedDescription : nil;
-            manager.afterLoad = nil;
-        };
+        CHECK(pending[@"receipt"] && !fresh.manager.savedEnabled);
+        CHECK(phase == 1 ? !fresh.manager.saved : fresh.manager.saved.bootPolicy);
+
+        // Lifecycle signals arrive during consent. A speculative load would
+        // stay pending past its old 10-second deadline, before the save commits.
+        NSUInteger loads = fresh.manager.loads;
+        fresh.manager.hangingLoad = loads + 1;
         [NSConfigurationCoordinator checkPendingSave];
-        CHECK(fresh.completions == 0 && fresh.manager.saves == phase);
-        CHECK([NSReadDocument(NSPendingConfigurationFile, NULL) isEqual:pending]);
+        fresh.restart.schedule(15, ^{
+            [NSConfigurationCoordinator checkPendingSave];
+            CHECK(fresh.completions == 0 && fresh.manager.saves == phase && fresh.manager.loads == loads);
+            CHECK([NSReadDocument(NSPendingConfigurationFile, NULL) isEqual:pending]);
+        });
+        fresh.restart.schedule(20, ^{
+            fresh.manager.hangingLoad = 0;
+            void (^commit)(void) = fresh.manager.pendingCommit;
+            fresh.manager.pendingCommit = nil;
+            commit();
+        });
         [fresh drain];
         CHECK(fresh.completions == 1 && fresh.restart.state == NSFilterRestartEnabledVerified);
+        CHECK(fresh.completedAt == (missingCallback ? 160 : 120));
         CHECK(fresh.manager.saves == 2 && fresh.manager.savedEnabled && fresh.manager.saved.bootPolicy);
+        NSDictionary *staged = fresh.manager.saveRecords[0];
+        NSDictionary *enabled = fresh.manager.saveRecords[1];
+        CHECK(![staged[@"enabled"] boolValue] && [enabled[@"enabled"] boolValue]);
+        CHECK([staged[@"bootPolicy"] boolValue] && [enabled[@"bootPolicy"] boolValue]);
+        NSString *stageReceipt = staged[@"fields"][@"vendor"][NSPreferenceSaveReceiptKey];
+        NSString *enableReceipt = enabled[@"fields"][@"vendor"][NSPreferenceSaveReceiptKey];
+        CHECK(stageReceipt && enableReceipt && ![stageReceipt isEqual:enableReceipt]);
         CHECK(!NSReadDocument(NSPendingConfigurationFile, NULL));
         [fresh checkStaleCallbacks];
         [fresh.manager.callbacks removeAllObjects];
@@ -855,7 +881,7 @@ void NSRunBootPolicyTests(void) {
     TestBootFailureRecovery();
     TestBootSerializationFailures();
     TestBootCleanupFailures();
-    TestFirstEnableWithCommittedReceipt();
+    TestFirstEnableAfterAuthorization();
     TestBootTimeouts();
     TestBootRemoval();
     TestBootMigrationRetries();

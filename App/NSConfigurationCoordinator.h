@@ -43,7 +43,8 @@ FOUNDATION_EXPORT NSString *const NSPreferenceSaveReceiptKey;
 @property(nonatomic, readonly) NSSharedDirectory *directory;
 @property(nonatomic, readonly) NSError *acknowledgementError;
 @property(nonatomic, readonly) NSConfigurationRecoveryAction recoveryAction;
-// Probe the current save on a preference change or return to the foreground.
+// Request a receipt check on preference change or foreground return. A live
+// authorization save waits for its callback or the final deadline check.
 + (void)checkPendingSave;
 // An in-process owner may still hold the manager after its UI attempt ends.
 + (NSConfigurationRecoveryAction)recoveryForManager:(id)manager;

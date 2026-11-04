@@ -50,7 +50,7 @@ static void TestCommittedSaveReceipt(void) {
         REQUIRE(!error);
         deliveries++;
     };
-    [owner saveWithAuthorization:manager completion:complete];
+    [owner save:manager completion:complete];
     void (^firstSaveCallback)(NSError *) = manager.callbacks.lastObject;
     NSDictionary *record = NSReadDocument(NSPendingConfigurationFile, NULL);
     NSDictionary *committed = manager.providerConfiguration.vendorConfiguration;
@@ -79,7 +79,7 @@ static void TestCommittedSaveReceipt(void) {
 
     // A distinct token for the activation save prevents the staging receipt
     // and a delayed staging callback from settling activation.
-    [owner saveWithAuthorization:manager completion:complete];
+    [owner save:manager completion:complete];
     NSDictionary *second = NSReadDocument(NSPendingConfigurationFile, NULL);
     REQUIRE(second && ![second[@"receipt"] isEqual:record[@"receipt"]]);
     firstSaveCallback(nil);
@@ -171,7 +171,9 @@ static void TestAcknowledgedSaveWithLostProbe(void) {
     ControlledPreferences *manager = [ControlledPreferences new];
     manager.providerConfiguration = [ReceiptConfiguration new];
     NSMutableArray *deadlines = [NSMutableArray new];
+    __block NSTimeInterval lastDelay = 0;
     owner.schedule = ^(NSTimeInterval delay, void (^work)(void)) {
+        lastDelay = delay;
         [deadlines addObject:[work copy]];
     };
     REQUIRE([owner begin:NULL]);
@@ -185,7 +187,10 @@ static void TestAcknowledgedSaveWithLostProbe(void) {
                       }];
     void (^saveCallback)(NSError *) = manager.callbacks.lastObject;
     [NSConfigurationCoordinator checkPendingSave];
-    REQUIRE(manager.callbacks.count == 2);
+    REQUIRE(manager.callbacks.count == 1 && lastDelay == 60);
+    void (^authorizationTimeout)(void) = deadlines.lastObject;
+    authorizationTimeout(); // Starts the final receipt read after the authorization wait.
+    REQUIRE(manager.callbacks.count == 2 && lastDelay == 10);
     void (^lateRead)(NSError *) = manager.callbacks.lastObject;
     saveCallback(nil);
     REQUIRE(deliveries == 0 && !NSReadDocument(NSPendingConfigurationFile, NULL));

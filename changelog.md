@@ -1,37 +1,17 @@
-# 2.7.0
+# 2.7.1
 
-When updating from an earlier version, if Firewall cannot be enabled or iOS shows the content filter as Invalid after refreshing saved preferences and retrying, fully reboot, re-jailbreak, and reopen NetShield2.
+- Fixed first-time Firewall setup so approving the iOS content filter can complete activation from a single On action. The dashboard shows setup progress and separates verified saved state from control-provider health.
+- Improved saved-state checks and recovery for Firewall changes, reset, and removal. Delayed preference writes retain ownership, and fresh readbacks detect external changes before another write.
+- Hardened shared app-group file access through both `/var` and `/private/var`, with bounded reads, atomic writes, stricter rule and activity validation, and a smaller read-only data provider. Strengthened stock-boot fallback checks.
+- Improved provider startup, shutdown, and reply handling, with bounded work queues, permission-notification retries, and deadlines for background actions.
+- Improved DNS refresh scheduling and reverse-address matching, bounded lookup work, and tightened expiry and invalidation on rule and network changes.
+- Made Recent Activity distinguish transport and show mixed outcomes and grouped peers, safely total bytes, and keep cleared history from reappearing. Clarified how custom rules combine with legacy rule precedence.
+- Moved storage work off the main thread, fixed dashboard color reuse, protected active exports during cleanup, and improved dialog cleanup and bounded update downloads.
+- Improved reset and uninstall diagnostics and respring cleanup. Version and generation checks keep stale detached workers from triggering a respring.
+- Strengthened GitHub package, signature, and entitlement checks and added build provenance and draft-asset verification for all three variants. Expanded regression and sanitizer coverage, updated the build overview, and removed obsolete documentation and test references.
 
-- Bounded saved-preference receipt checks and added recovery guidance for delayed writes, interrupted reads, and local cleanup. NetShield2 reconciles eligible records automatically and keeps the manual Firewall status refresh.
-- Carried one Firewall On action through notification consent, iOS filter authorization, both saved-state checks, and the current control-provider check. The dashboard shows progress during setup.
-
-# 2.6.9
-
-- Fixed the color leak. Dashboard cells now reset both labels to their adaptive colors before applying row-specific styling
-
-# 2.6.8
-
-= regressions / fixes
-
-# 2.6.7
-
-= regressions / fixes
-
-# 2.6.6
-
-- Fixed shared app-group file and lock access through both `/var` and `/private/var` paths.
-
-# 2.6.5
-
-- Fixed permission notification retries when a delivery callback arrives late or never arrives.
-- Made firewall changes, reset, and uninstall verify saved preferences. Timed-out writes are tracked so a retry cannot race them.
-- Hardened provider startup and shutdown and tightened validation of stored rules and activity.
-- Reworked DNS refresh and expiry handling. The resolver avoids scanning every rule after each lookup, keeps the four-lookup limit, and backs off when answers carry invalid expiry metadata.
-- Clarified global rule precedence and updated Recent Activity to show mixed outcomes and keep cleared history from reappearing.
-- Moved dashboard storage work off the main thread, protected open exports from reset and uninstall cleanup, and capped update-check downloads.
-- Strengthened stock-boot fallback configuration checks and fixed resource cleanup for dialogs and respring helpers.
-- Expanded macOS regression coverage for export staging and DNS scheduling at the 4,096-rule limit.
-- Updated GitHub Actions to check signing identifiers, code hashes, and entitlements directly in the packaged app and both extensions signed by Theos. The workflow records source revisions and final package hashes.
+**After an update**  
+If iOS still shows the content filter as Invalid after refreshing saved preferences and explicitly retrying, a full reboot and re-jailbreak may be needed.
 
 # 2.6.4
 

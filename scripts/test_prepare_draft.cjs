@@ -32,10 +32,9 @@ function mock() {
   return {state, github: {rest: {repos}, paginate: async (method, args) => method(args)}};
 }
 async function run() {
-  const temporaryRoot = path.resolve(__dirname, '../.validation-tmp');
-  fs.mkdirSync(temporaryRoot, {recursive: true});
-  const directory = fs.mkdtempSync(path.join(temporaryRoot, 'draft-'));
-  assert(directory.startsWith(temporaryRoot + path.sep));
+  const projectRoot = fs.realpathSync(path.join(__dirname, '..'));
+  const prefix = '.netshield2-draft-test-';
+  const directory = fs.mkdtempSync(path.join(projectRoot, prefix));
   const version = '2.6.6', packageId = 'com.eolnmsuk.netshield';
   const schemes = ['rootful', 'rootless', 'roothide'];
   const expectedNames = schemes.map(scheme => `${packageId}_${version}_${scheme}.deb`).sort();
@@ -95,8 +94,11 @@ async function run() {
     assert.equal(instance.state.writes, 0);
     return 'Passed draft preparation, stale revision, published release, corruption and partial upload/promotion/cleanup retry fixtures';
   } finally {
-    assert(path.resolve(directory).startsWith(temporaryRoot + path.sep));
-    fs.rmSync(directory, {recursive: true, force: true});
+    const target = fs.realpathSync(directory);
+    assert.equal(target, path.resolve(directory));
+    assert.equal(path.dirname(target), projectRoot);
+    assert(path.basename(target).startsWith(prefix));
+    fs.rmSync(target, {recursive: true, force: true});
   }
 }
 module.exports = {run};

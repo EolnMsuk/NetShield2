@@ -817,6 +817,11 @@ static void NSDeliverPreferenceCallback(void (^work)(void)) {
             }
             [owner checkDeliveryDeadline:phase];
             BOOL live = owner.active && owner.phase == phase;
+            // Consent can hold up a load on this same manager. Wait for the
+            // save callback, or for the bounded final check if it never arrives.
+            if (live && authorization && !finalCheck) {
+                return;
+            }
             if (live && !finalCheck && earlyChecks >= 2) {
                 return;
             }
