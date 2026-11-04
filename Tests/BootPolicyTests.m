@@ -557,7 +557,36 @@ static void TestBootCleanupFailures(void) {
     denied.manager.failingSaves = [NSSet setWithObject:@1];
     [denied run];
     CHECK(denied.result && denied.restart.state == NSFilterRestartOffVerified);
-    CHECK(!denied.manager.saved && denied.manager.saves == 1);
+    CHECK(!denied.manager.saved && denied.manager.saves == 1 && denied.manager.removals == 0);
+    // The first install can leave a staged profile after an enable or startup
+    // failure. Recover to verified absence without touching the policy.
+    for (NSNumber *failedBootReadback in @[ @NO, @YES ]) {
+        BootFixture *fresh = [BootFixture new];
+        fresh.manager.saved = nil;
+        fresh.manager.savedEnabled = NO;
+        fresh.manager.savedDescription = nil;
+        fresh.neverStarts = !failedBootReadback.boolValue;
+        if (failedBootReadback.boolValue) {
+            fresh.manager.stripOnSaves = [NSSet setWithObject:@1];
+        }
+        [fresh run];
+        CHECK(fresh.result && fresh.restart.state == NSFilterRestartOffVerified);
+        CHECK(!fresh.manager.saved && !fresh.manager.savedEnabled && fresh.manager.removals == 1);
+        CHECK(fresh.manager.saves == (failedBootReadback.boolValue ? 1 : 2));
+        [fresh checkStaleCallbacks];
+    }
+
+    for (NSUInteger phase = 1; phase <= 2; phase++) {
+        BootFixture *freshTimeout = [BootFixture new];
+        freshTimeout.manager.saved = nil;
+        freshTimeout.manager.savedEnabled = NO;
+        freshTimeout.manager.savedDescription = nil;
+        freshTimeout.manager.hangingSave = phase;
+        [freshTimeout run];
+        CHECK(freshTimeout.completedAt == 160 && freshTimeout.restart.state == NSFilterRestartUnknown);
+        CHECK(freshTimeout.manager.saves == phase && freshTimeout.manager.removals == 0);
+        [freshTimeout checkStaleCallbacks];
+    }
     // New activation (old state OFF): stage save/load, enable save/load,
     // cleanup load/save/verify failures, plus a lying cleanup save.
     for (NSUInteger mode = 0; mode < 8; mode++) {

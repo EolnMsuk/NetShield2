@@ -12,6 +12,7 @@
 
 FOUNDATION_EXPORT BOOL NSFileFailure(NSString *stage, NSString *leaf, int code, NSError **error);
 FOUNDATION_EXPORT BOOL NSFileIsAbsent(NSError *error);
+FOUNDATION_EXPORT BOOL NSFileReadChanged(NSError *error);
 FOUNDATION_EXPORT BOOL NSIsLockContention(NSError *error);
 FOUNDATION_EXPORT BOOL NSKnownDocumentLeaf(NSString *leaf);
 FOUNDATION_EXPORT BOOL NSKnownLockLeaf(NSString *leaf);

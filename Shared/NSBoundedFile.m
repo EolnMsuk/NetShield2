@@ -6,6 +6,7 @@
 #include <unistd.h>
 
 static NSString *const NSAbsentStage = @"Find document";
+static NSString *const NSReadChangedStage = @"Document changed while reading";
 BOOL NSFileFailure(NSString *stage, NSString *leaf, int code, NSError **error) {
     if (error) {
         NSError *cause = [NSError errorWithDomain:NSPOSIXErrorDomain code:code userInfo:nil];
@@ -24,6 +25,9 @@ BOOL NSFileFailure(NSString *stage, NSString *leaf, int code, NSError **error) {
 BOOL NSFileIsAbsent(NSError *error) {
     return [error.domain isEqual:NSPOSIXErrorDomain] && error.code == ENOENT &&
            [error.userInfo[@"stage"] isEqual:NSAbsentStage];
+}
+BOOL NSFileReadChanged(NSError *error) {
+    return [error.domain isEqual:NSPOSIXErrorDomain] && [error.userInfo[@"stage"] isEqual:NSReadChangedStage];
 }
 BOOL NSIsLockContention(NSError *error) {
     return [error.domain isEqual:NSPOSIXErrorDomain] &&
@@ -153,13 +157,17 @@ int NSOpenRegularFile(NSSharedDirectory *directory, NSString *leaf, struct stat 
 BOOL NSCheckReadIdentity(int fd, NSSharedDirectory *directory, NSString *leaf, struct stat before,
                          NSError **error) {
     struct stat after, named;
-    if (fstat(fd, &after) ||
-        fstatat(directory.descriptor, leaf.fileSystemRepresentation, &named, AT_SYMLINK_NOFOLLOW)) {
+    if (fstat(fd, &after)) {
         return NSFileFailure(@"Recheck open document", leaf, errno, error);
+    }
+    if (fstatat(directory.descriptor, leaf.fileSystemRepresentation, &named, AT_SYMLINK_NOFOLLOW)) {
+        int code = errno;
+        return NSFileFailure(code == ENOENT ? NSReadChangedStage : @"Recheck named document", leaf, code,
+                             error);
     }
     NSArray *identity = NSDescriptorIdentity(before);
     if (![identity isEqual:NSDescriptorIdentity(after)] || ![identity isEqual:NSDescriptorIdentity(named)]) {
-        return NSFileFailure(@"Document changed while reading", leaf, ESTALE, error);
+        return NSFileFailure(NSReadChangedStage, leaf, ESTALE, error);
     }
     return [directory validateForLeaf:leaf error:error];
 }
@@ -191,7 +199,7 @@ NSData *NSReadBoundedDescriptor(int fd, NSSharedDirectory *directory, NSString *
         return nil;
     }
     if (data.length != (NSUInteger)before.st_size) {
-        NSFileFailure(@"Document length changed while reading", leaf, ESTALE, error);
+        NSFileFailure(NSReadChangedStage, leaf, ESTALE, error);
         return nil;
     }
     return [data copy];

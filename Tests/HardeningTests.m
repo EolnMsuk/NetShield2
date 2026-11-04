@@ -54,7 +54,9 @@ static void TestBoundedFiles(void) {
     int fd = NSOpenRegularFile(directory, NSMonitorFile, &before, NULL);
     EXPECT(fd >= 0);
     EXPECT(NSWriteDocument(@{@"value" : @2}, NSMonitorFile, NULL));
-    EXPECT(!NSReadBoundedDescriptor(fd, directory, NSMonitorFile, before, NULL)); // rename after open
+    NSError *replacementError = nil;
+    EXPECT(!NSReadBoundedDescriptor(fd, directory, NSMonitorFile, before, &replacementError) &&
+           NSFileReadChanged(replacementError) && !NSFileIsAbsent(replacementError));
     close(fd);
     fd = NSOpenRegularFile(directory, NSMonitorFile, &before, NULL);
     EXPECT(fd >= 0);

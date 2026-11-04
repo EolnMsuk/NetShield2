@@ -44,5 +44,17 @@ NSPolicy *NSReadPolicy(NSError **error) {
     return NSReadPolicyIn(directory, error);
 }
 NSPolicy *NSReadPolicyIn(NSSharedDirectory *directory, NSError **error) {
-    return [NSSharedPolicyCache() readInDirectory:directory error:error];
+    NSPolicyCache *cache = NSSharedPolicyCache();
+    NSError *readError = nil;
+    NSPolicy *policy = [cache readInDirectory:directory error:&readError];
+    // The control provider can publish a new policy while the data provider is
+    // starting or evaluating a flow. Retry a replaced leaf within the same root.
+    if (!policy && NSFileReadChanged(readError)) {
+        readError = nil;
+        policy = [cache readInDirectory:directory error:&readError];
+    }
+    if (!policy && error) {
+        *error = readError;
+    }
+    return policy;
 }

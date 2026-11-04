@@ -1791,13 +1791,14 @@ static void TestNotificationGenerations(void) {
 @property(nonatomic, strong) NSError *verifyError;
 @property(nonatomic) BOOL retainConfiguration;
 @property(nonatomic) BOOL retainEnabled;
+@property(nonatomic) BOOL absentAfterRemovalError;
 @property(nonatomic) NSUInteger loads;
 @property(nonatomic) NSUInteger removals;
 @end
 @implementation FakeFilterRemovalManager
 - (void)loadFromPreferencesWithCompletionHandler:(void (^)(NSError *))completion {
     self.loads++;
-    if (self.loads > 1 && !self.verifyError && !self.removeError) {
+    if (self.loads > 1 && !self.verifyError && (!self.removeError || self.absentAfterRemovalError)) {
         if (!self.retainConfiguration) {
             self.providerConfiguration = nil;
         }
@@ -1812,12 +1813,13 @@ static void TestNotificationGenerations(void) {
 @end
 static void TestFilterRemoval(void) {
     NSError *failure = [NSError errorWithDomain:@"test.removal" code:1 userInfo:nil];
-    for (NSUInteger scenario = 0; scenario < 8; scenario++) {
+    for (NSUInteger scenario = 0; scenario < 9; scenario++) {
         FakeFilterRemovalManager *manager = [FakeFilterRemovalManager new];
         manager.providerConfiguration = scenario == 0 ? nil : @{};
         manager.enabled = scenario != 0 && scenario != 7;
         manager.loadError = scenario == 2 ? failure : nil;
-        manager.removeError = scenario == 3 ? failure : nil;
+        manager.removeError = (scenario == 3 || scenario == 8) ? failure : nil;
+        manager.absentAfterRemovalError = scenario == 8;
         manager.verifyError = scenario == 4 ? failure : nil;
         manager.retainConfiguration = scenario == 5;
         manager.retainEnabled = scenario == 6;
@@ -1828,9 +1830,9 @@ static void TestFilterRemoval(void) {
             result = error;
         });
         CHECK(completions == 1);
-        CHECK((result == nil) == (scenario == 0 || scenario == 1 || scenario == 7));
+        CHECK((result == nil) == (scenario == 0 || scenario == 1 || scenario == 7 || scenario == 8));
         CHECK(manager.removals == (scenario == 0 || scenario == 2 ? 0 : 1));
-        CHECK(manager.loads == (scenario == 0 || scenario == 2 || scenario == 3 ? 1 : 2));
+        CHECK(manager.loads == (scenario == 0 || scenario == 2 ? 1 : 2));
         if (scenario >= 2 && scenario <= 4) {
             CHECK(result == failure);
         }

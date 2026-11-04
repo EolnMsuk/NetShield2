@@ -112,6 +112,31 @@ static void TestDurableRecovery(void) {
     [refresh finish];
     REQUIRE(deliveries == 3);
 
+    // 2.6.4 cleanup can leave a 2.6.6 marker with no policy document.
+    // A remove is distinguishable from a save even when both still fence NE.
+    for (NSString *kind in @[ @"save", @"remove" ]) {
+        REQUIRE(NSWriteDocument(
+            @{
+                @"version" : @1,
+                @"operation" : operation,
+                @"phase" : @2,
+                @"boot" : boot,
+                @"bootState" : @"known",
+                @"kind" : kind,
+                @"state" : @"pending"
+            },
+            NSPendingConfigurationFile, NULL));
+        REQUIRE([refresh beginReadOnly:NULL] == NSConfigurationMarkerUnresolved);
+        REQUIRE(refresh.pendingRemoval == [kind isEqual:@"remove"]);
+        REQUIRE(!NSReadPolicy(NULL));
+        [refresh finish];
+        REQUIRE(![refresh begin:NULL]);
+    }
+    boot = NSUUID.UUID.UUIDString;
+    REQUIRE([refresh beginReadOnly:NULL] == NSConfigurationMarkerNone && refresh.reconciledMarker);
+    REQUIRE(NSEnsurePolicyIn(refresh.directory, NULL) && NSReadPolicy(NULL));
+    [refresh finish];
+
     NSDictionary *bootless = @{@"operation" : operation, @"phase" : @2, @"boot" : @""};
     REQUIRE(NSWriteDocument(bootless, NSPendingConfigurationFile, NULL));
     for (NSUInteger attempt = 0; attempt < 2; attempt++) {
