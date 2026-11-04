@@ -126,7 +126,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/release_manifest.py --package "packages/${PACKAGE_ID}_${PACKAGE_VERSION}_${PACKAGE_VARIANT}.deb" --source "$GITHUB_SHA" --scheme "$PACKAGE_VARIANT" --theos "$THEOS_REVISION" --sdk "$SDK_SHA256"
-      - name: Upload validated deb
+      - name: Upload deb and internal CI manifest
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: NetShield2-${{ env.PACKAGE_VERSION }}-iOS15-18-${{ matrix.scheme }}
@@ -151,13 +151,13 @@ jobs:
           persist-credentials: false
       - name: Read release metadata
         run: python3 scripts/sync_version.py --github-env "$GITHUB_ENV"
-      - name: Download all three release packages
+      - name: Download debs and internal CI manifests
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: NetShield2-${{ env.PACKAGE_VERSION }}-iOS15-18-*
           path: release-assets
           merge-multiple: true
-      - name: Prepare the current version as a draft with deb assets
+      - name: Verify CI inputs and prepare a three-deb draft
         uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
         with:
           script: |
