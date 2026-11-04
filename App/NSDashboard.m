@@ -146,9 +146,6 @@
         if (returning || [notification.name isEqual:NEFilterConfigurationDidChangeNotification]) {
             [NSConfigurationCoordinator checkPendingSave];
         }
-        if ([notification.name isEqual:NSConfigurationLateAcknowledgement]) {
-            self.configurationOperationError = nil;
-        }
         [self loadConfigurationWithCompletion:^{
             if (returning && !self.busy && self.preferencesLoaded && self.configurationReady &&
                 self.savedEnabled) {
@@ -224,9 +221,6 @@
             if (generation == owner.storageGeneration && !owner.tableView.editing &&
                 !owner.tableView.dragging && !owner.tableView.decelerating) {
                 owner.policy = policy;
-                if (policy) {
-                    owner.policyBootstrapPending = NO;
-                }
                 owner.policyMissing = !policy && NSFileIsAbsent(policyError);
                 owner.policyReadError = policy ? @"" : policyError.localizedDescription;
                 owner.monitorReadError =
@@ -809,28 +803,41 @@
         return;
     }
     NSRemoveAutomaticallyAllowedNotifications();
+    self.attemptedProviderUpgrade = YES;
+    self.configurationOperationError = nil;
+    self.configurationOperationAction = NSConfigurationRecoveryNone;
+    self.message = nil;
+    self.configurationProgress = @"Waiting for notification permission…";
     self.busy = YES;
     [self refreshTableKeepingPosition];
-    NSUInteger generation = ++self.authorizationGeneration;
+    NSUInteger generation = ++self.enableIntentGeneration;
+    NSTimeInterval expiresAt = NSProcessInfo.processInfo.systemUptime + 60;
     __weak typeof(self) weakSelf = self;
     dispatch_block_t expiry = dispatch_block_create(0, ^{
         NSDashboard *owner = weakSelf;
-        if (!owner || owner.authorizationGeneration != generation) {
+        if (!owner || owner.enableIntentGeneration != generation) {
             return;
         }
-        owner.authorizationGeneration++;
+        owner.enableIntentGeneration++;
         owner.busy = NO;
-        owner.message = @"Notification permission response timed out. Firewall change was not started.";
+        owner.configurationProgress = nil;
+        owner.configurationOperationError =
+            @"Notification authorization timed out before the Firewall change started.";
+        owner.configurationOperationAction = NSConfigurationRecoveryRetryEnable;
+        NSLog(@"NetShield2 notification-authorization timed out");
         [owner loadConfiguration];
     });
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 60 * NSEC_PER_SEC), dispatch_get_main_queue(), expiry);
     [self authorizeNotificationsThen:^{
         NSDashboard *owner = weakSelf;
-        if (!owner || owner.authorizationGeneration != generation) {
+        if (!owner || owner.enableIntentGeneration != generation) {
+            return;
+        }
+        if (NSProcessInfo.processInfo.systemUptime >= expiresAt) {
+            expiry();
             return;
         }
         dispatch_block_cancel(expiry);
-        owner.authorizationGeneration++;
         owner.busy = NO;
         [owner changeConfiguration:NSConfigurationEnable];
     }];

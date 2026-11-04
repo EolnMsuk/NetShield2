@@ -650,6 +650,12 @@ static void TestFirstEnableWithCommittedReceipt(void) {
         fresh.manager.savedEnabled = NO;
         fresh.manager.savedDescription = nil;
         fresh.manager.commitWithoutSaveCallback = phase;
+        __block BootConfiguration *staged = nil;
+        fresh.manager.afterSave = ^(BootManager *manager) {
+            if (phase == 2 && manager.saves == 1) {
+                staged = [manager.saved copy];
+            }
+        };
         fresh.restart.coordinator.durableFence = YES;
         fresh.restart.coordinator.acquireLock = ^NSStoreLock *(NSError **error) {
             return [NSStoreLock tryLockRoot:NSSharedURL(@"") leaf:NSConfigurationLockFile error:error];
@@ -662,7 +668,16 @@ static void TestFirstEnableWithCommittedReceipt(void) {
         NSDictionary *pending = NSReadDocument(NSPendingConfigurationFile, NULL);
         CHECK([pending[@"receipt"]
             isEqual:fresh.manager.saved.vendorConfiguration[NSPreferenceSaveReceiptKey]]);
+        // An early signal still sees absence or the prior disabled stage.
+        fresh.manager.afterLoad = ^(BootManager *manager) {
+            manager.providerConfiguration = staged;
+            manager.enabled = NO;
+            manager.localizedDescription = staged ? NSFilterLocalizedDescription : nil;
+            manager.afterLoad = nil;
+        };
         [NSConfigurationCoordinator checkPendingSave];
+        CHECK(fresh.completions == 0 && fresh.manager.saves == phase);
+        CHECK([NSReadDocument(NSPendingConfigurationFile, NULL) isEqual:pending]);
         [fresh drain];
         CHECK(fresh.completions == 1 && fresh.restart.state == NSFilterRestartEnabledVerified);
         CHECK(fresh.manager.saves == 2 && fresh.manager.savedEnabled && fresh.manager.saved.bootPolicy);
@@ -794,6 +809,18 @@ static void TestExternalConfigurationReplacement(void) {
     CHECK(test.result && test.restart.state == NSFilterRestartUnknown);
     CHECK(test.manager.saves == 3);
     CHECK([test.manager.saved.vendorConfiguration[@"activation"] isEqual:@"externally-replaced"]);
+
+    BootFixture *disabled = [BootFixture new];
+    disabled.failNewHeartbeat = YES;
+    [disabled.restart start:^(NSError *error) {
+        CHECK(error);
+        disabled.completions++;
+    }];
+    CHECK(disabled.completions == 0 && disabled.manager.savedEnabled);
+    disabled.manager.savedEnabled = NO;
+    [disabled drain];
+    CHECK(disabled.completions == 1 && disabled.manager.saves == 3 && !disabled.manager.savedEnabled);
+    CHECK(disabled.restart.recoveryAction == NSConfigurationRecoveryExternalChange);
 }
 static void TestBootSnapshotIndependence(void) {
     BootConfiguration *configuration = BootConfig(@"independent", YES);

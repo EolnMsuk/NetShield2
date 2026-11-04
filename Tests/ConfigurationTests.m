@@ -166,6 +166,61 @@ static void TestLateSaveReceipt(void) {
     [deadlines removeAllObjects];
 }
 
+static void TestAcknowledgedSaveWithLostProbe(void) {
+    NSConfigurationCoordinator *owner = [NSConfigurationCoordinator new];
+    ControlledPreferences *manager = [ControlledPreferences new];
+    manager.providerConfiguration = [ReceiptConfiguration new];
+    NSMutableArray *deadlines = [NSMutableArray new];
+    owner.schedule = ^(NSTimeInterval delay, void (^work)(void)) {
+        [deadlines addObject:[work copy]];
+    };
+    REQUIRE([owner begin:NULL]);
+    __block NSUInteger deliveries = 0;
+    [owner saveWithAuthorization:manager
+                      completion:^(NSError *error) {
+                          REQUIRE(error.code == ETIMEDOUT &&
+                                  owner.recoveryAction == NSConfigurationRecoveryReopenApp);
+                          deliveries++;
+                          [owner finish];
+                      }];
+    void (^saveCallback)(NSError *) = manager.callbacks.lastObject;
+    [NSConfigurationCoordinator checkPendingSave];
+    REQUIRE(manager.callbacks.count == 2);
+    void (^lateRead)(NSError *) = manager.callbacks.lastObject;
+    saveCallback(nil);
+    REQUIRE(deliveries == 0 && !NSReadDocument(NSPendingConfigurationFile, NULL));
+    void (^probeTimeout)(void) = deadlines.lastObject;
+    probeTimeout();
+    probeTimeout();
+    REQUIRE(deliveries == 1);
+
+    // A completed write can release the file lock. This process must still
+    // keep other reads/writes off the manager until the outstanding read drains.
+    NSConfigurationCoordinator *refresh = [NSConfigurationCoordinator new];
+    REQUIRE([refresh beginReadOnly:NULL] == NSConfigurationMarkerNone);
+    [refresh load:manager
+        completion:^(NSError *error) {
+            REQUIRE(error.code == EBUSY);
+        }];
+    [refresh finish];
+    REQUIRE(manager.callbacks.count == 2);
+    lateRead(nil);
+    lateRead(nil);
+    saveCallback(nil);
+    REQUIRE(deliveries == 1 &&
+            [NSConfigurationCoordinator recoveryForManager:manager] == NSConfigurationRecoveryNone);
+    REQUIRE([refresh beginReadOnly:NULL] == NSConfigurationMarkerNone);
+    [refresh load:manager
+        completion:^(NSError *error) {
+            REQUIRE(!error);
+        }];
+    REQUIRE(manager.callbacks.count == 3);
+    void (^freshRead)(NSError *) = manager.callbacks.lastObject;
+    freshRead(nil);
+    [refresh finish];
+    [manager.callbacks removeAllObjects];
+}
+
 static void TestDurableRecovery(void) {
     NSURL *original = NSSharedURL(@"");
     NSURL *alias =
@@ -302,6 +357,7 @@ void NSRunConfigurationTests(void) {
     TestDurableRecovery();
     TestCommittedSaveReceipt();
     TestLateSaveReceipt();
+    TestAcknowledgedSaveWithLostProbe();
     for (NSUInteger kind = 0; kind < 3; kind++) {
         NSConfigurationCoordinator *owner = [NSConfigurationCoordinator new];
         NSMutableArray *deadlines = [NSMutableArray new];

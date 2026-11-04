@@ -3,6 +3,35 @@
 #import "NSDashboard+Internal.h"
 #import "../Shared/NSActivity.h"
 
+static UIBackgroundConfiguration *NSDashboardBackground(UICellConfigurationState *state, UIColor *tint) {
+    UIBackgroundConfiguration *background =
+        [[UIBackgroundConfiguration listGroupedCellConfiguration] updatedConfigurationForState:state];
+    if (tint && !state.highlighted && !state.selected) {
+        UIColor *base = UIColor.secondarySystemGroupedBackgroundColor;
+        UIColor *resolvedBase = [base resolvedColorWithTraitCollection:state.traitCollection];
+        UIColor *resolvedTint = [tint resolvedColorWithTraitCollection:state.traitCollection];
+        CGFloat red, green, blue, tintRed, tintGreen, tintBlue;
+        if ([resolvedBase getRed:&red green:&green blue:&blue alpha:NULL] && [resolvedTint getRed:&tintRed
+                                                                                            green:&tintGreen
+                                                                                             blue:&tintBlue
+                                                                                            alpha:NULL]) {
+            background.backgroundColor = [UIColor colorWithRed:red * 0.86 + tintRed * 0.14
+                                                         green:green * 0.86 + tintGreen * 0.14
+                                                          blue:blue * 0.86 + tintBlue * 0.14
+                                                         alpha:1];
+        }
+    }
+    return background;
+}
+
+static void NSConfigureDashboardBackground(UITableViewCell *cell, UIColor *tint) {
+    cell.automaticallyUpdatesBackgroundConfiguration = NO;
+    cell.backgroundConfiguration = NSDashboardBackground(cell.configurationState, tint);
+    cell.configurationUpdateHandler = ^(UITableViewCell *updated, UICellConfigurationState *state) {
+        updated.backgroundConfiguration = NSDashboardBackground(state, tint);
+    };
+}
+
 // Align the visible field, rather than the UISearchBar's padded outer bounds.
 @interface NSActivitySearchBar : UISearchBar
 @end
@@ -190,12 +219,15 @@
         @(self.hasSavedPreferences),
         @(self.configurationReady),
         @(self.busy),
+        self.configurationProgress ?: @"",
         @(self.savedEnabled),
         @(self.savedSocketFiltering),
         @(self.savedBrowserFiltering),
         self.preferenceReadError ?: @"",
         self.configurationRecoveryError ?: @"",
         self.configurationOperationError ?: @"",
+        @(self.configurationRecoveryAction),
+        @(self.configurationOperationAction),
         self.message ?: @"",
         self.bootPolicyStatus ?: @"",
         self.notificationStatus ?: @"",
@@ -581,6 +613,7 @@
         if (toggle.enabled != enabled) {
             toggle.enabled = enabled;
         }
+        NSConfigureDashboardBackground(cached, nil);
         return cached;
     }
     BOOL persistent = path.section == NSDashboardSectionFirewall && (path.row == 0 || path.row == 2);
@@ -594,7 +627,7 @@
     cell.textLabel.textColor = UIColor.labelColor;
     cell.detailTextLabel.textColor = UIColor.secondaryLabelColor;
     cell.imageView.image = nil;
-    cell.backgroundColor = nil;
+    UIColor *rowTint = nil;
     cell.accessoryView = nil;
     cell.selectionStyle = UITableViewCellSelectionStyleDefault;
     cell.textLabel.numberOfLines = 0;
@@ -621,7 +654,7 @@
             enabled && self.policy && [self hasFreshMonitor] && ![self.monitor[@"policyError"] length];
         NSString *detail = nil;
         if (self.busy) {
-            cell.textLabel.text = @"Updating...";
+            cell.textLabel.text = self.configurationProgress ?: @"Updating…";
         } else if (!self.preferencesLoaded) {
             cell.textLabel.text = @"Saved preferences unavailable";
             if (self.hasSavedPreferences) {
@@ -632,7 +665,8 @@
             cell.textLabel.text =
                 self.savedEnabled ? @"Saved On. Changes paused." : @"Saved Off. Changes paused.";
         } else if (!enabled) {
-            cell.textLabel.text = @"Off";
+            cell.textLabel.text =
+                self.configurationOperationError.length ? @"Firewall off. Setup needs attention." : @"Off";
             if (self.policy) {
                 detail = @"Turn on Firewall to apply your rules.";
             }
@@ -663,10 +697,18 @@
         if (self.configurationRecoveryError.length) {
             [details addObject:self.configurationRecoveryError];
         }
-        if (self.configurationOperationError.length &&
-            (!self.configurationRecoveryError.length ||
-             ![self.configurationOperationError containsString:self.configurationRecoveryError])) {
+        if (self.configurationOperationError.length) {
             [details addObject:self.configurationOperationError];
+        }
+        if (!self.busy) {
+            NSConfigurationRecoveryAction action = self.configurationRecoveryAction;
+            if (action == NSConfigurationRecoveryNone) {
+                action = self.configurationOperationAction;
+            }
+            NSString *guidance = [NSConfigurationCoordinator guidanceForRecovery:action];
+            if (guidance) {
+                [details addObject:guidance];
+            }
         }
         if (self.policyMissing && !self.configurationReady) {
             [details addObject:@"The policy file is missing. Recover the pending preference operation to "
@@ -761,14 +803,11 @@
     } else if (path.section == NSDashboardSectionGlobalRules) {
         NSString *key = self.globalRuleKeys[path.row];
         NSString *rule = self.policy.document[@"globalRules"][key];
-        UIColor *color =
+        rowTint =
             [rule isKindOfClass:NSDictionary.class]
                 ? (NSAppRuleSelections(rule).count == 1 ? NSRuleColor(NSAppRuleSelections(rule).firstObject)
                                                         : nil)
                 : NSRuleColor(rule);
-        if (color) {
-            cell.backgroundColor = [color colorWithAlphaComponent:0.14];
-        }
         cell.textLabel.text = [self globalRuleTitle:key];
         cell.detailTextLabel.text = [self ruleTitle:rule];
     } else if (path.section == NSDashboardSectionRules || path.section == NSDashboardSectionSystemRules) {
@@ -781,10 +820,7 @@
         } else {
             NSString *identity = identities[path.row];
             id rule = self.policy.document[@"rules"][identity];
-            UIColor *color = NSAppRuleColor(rule);
-            if (color) {
-                cell.backgroundColor = [color colorWithAlphaComponent:0.14];
-            }
+            rowTint = NSAppRuleColor(rule);
             cell.textLabel.text = NSIdentityDisplayName(identity);
             cell.detailTextLabel.text =
                 [self.policy automaticallyAllowsIdentity:identity]
@@ -814,10 +850,7 @@
                 allowed   ? @"Allowed"
                 : blocked ? @"Blocked"
                           : ([event[@"action"] isEqual:@"mixed"] ? @"Mixed outcomes" : @"Connection");
-            UIColor *color = allowed ? NSRuleColor(@"allow") : blocked ? NSRuleColor(@"block") : nil;
-            if (color) {
-                cell.backgroundColor = [color colorWithAlphaComponent:0.14];
-            }
+            rowTint = allowed ? NSRuleColor(@"allow") : blocked ? NSRuleColor(@"block") : nil;
             cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
             cell.selectionStyle = UITableViewCellSelectionStyleDefault;
             cell.textLabel.text =
@@ -853,6 +886,7 @@
         ][path.row];
         cell.textLabel.textColor = path.row == 0 ? UIColor.systemBlueColor : UIColor.systemRedColor;
     }
+    NSConfigureDashboardBackground(cell, rowTint);
     if (path.section == NSDashboardSectionFirewall && path.row == 0) {
         self.firewallCell = cell;
     }

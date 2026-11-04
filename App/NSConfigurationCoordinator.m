@@ -26,15 +26,22 @@
 @property(nonatomic) BOOL active;
 @property(nonatomic) BOOL readOnly;
 @property(nonatomic) BOOL pendingWrite;
-@property(nonatomic) BOOL saveProbeInFlight;
+@property(nonatomic, weak) id preferenceManager;
+@property(nonatomic) BOOL readInFlight;
+@property(nonatomic) BOOL abandonedRead;
+@property(nonatomic) NSUInteger probeGeneration;
+@property(nonatomic) NSTimeInterval phaseExpiry;
+@property(nonatomic) NSTimeInterval overallExpiry;
+@property(nonatomic) NSConfigurationRecoveryAction markerRecovery;
 @property(nonatomic, readwrite) BOOL uncertain;
 @property(nonatomic, readwrite) BOOL reconciledMarker;
 @property(nonatomic, readwrite) BOOL pendingRemoval;
 @property(nonatomic, readwrite) NSConfigurationMarkerState markerState;
 @property(nonatomic, readwrite) NSError *markerError;
 @property(nonatomic, copy) NSDictionary *recoverySave;
-@property(nonatomic, copy) void (^checkSave)(void);
+@property(nonatomic, copy) void (^checkSave)(BOOL finalCheck);
 @property(nonatomic, copy) void (^phaseCompletion)(NSError *);
+@property(nonatomic, strong) NSError *preferenceCallbackError;
 @property(nonatomic, readwrite) NSError *acknowledgementError;
 @property(nonatomic, strong) dispatch_source_t phaseTimer;
 @property(nonatomic, strong) dispatch_source_t overallTimer;
@@ -43,6 +50,17 @@
 NSNotificationName const NSConfigurationLateAcknowledgement = @"NSConfigurationLateAcknowledgement";
 NSString *const NSPreferenceSaveReceiptKey = @"netShieldPreferenceSaveReceipt";
 static __weak NSConfigurationCoordinator *NSPendingSaveOwner;
+// The manager is mutable and its loads cannot be cancelled. Keep the lane
+// reserved even when a caller has stopped waiting for the callback.
+static NSMapTable *NSPreferenceOwners(void) {
+    static NSMapTable *owners;
+    if (!owners) {
+        owners = [NSMapTable
+            mapTableWithKeyOptions:NSPointerFunctionsWeakMemory | NSPointerFunctionsObjectPointerPersonality
+                      valueOptions:NSPointerFunctionsStrongMemory];
+    }
+    return owners;
+}
 static const NSUInteger NSMarkerDecodeLimit = 8192;
 static NSError *NSConfigurationError(NSInteger code, NSString *message) {
     return [NSError errorWithDomain:@"NetShield2.Configuration"
@@ -116,8 +134,53 @@ static void NSDeliverPreferenceCallback(void (^work)(void)) {
 + (void)checkPendingSave {
     NSConfigurationCoordinator *owner = NSPendingSaveOwner;
     if (owner.checkSave) {
-        owner.checkSave();
+        owner.checkSave(NO);
     }
+}
++ (NSConfigurationRecoveryAction)recoveryForManager:(id)manager {
+    NSConfigurationCoordinator *owner = [NSPreferenceOwners() objectForKey:manager];
+    if (!owner) {
+        return NSConfigurationRecoveryNone;
+    }
+    return owner.abandonedRead ? NSConfigurationRecoveryReopenApp : NSConfigurationRecoveryWaitForWrite;
+}
++ (NSString *)guidanceForRecovery:(NSConfigurationRecoveryAction)action {
+    switch (action) {
+    case NSConfigurationRecoveryWaitForWrite:
+        return @"An earlier preference operation is still pending. Refresh to check again. If an "
+               @"unresolved write persists, close NetShield2 from the app switcher and reopen it to "
+               @"check the saved record.";
+    case NSConfigurationRecoveryRetryRead:
+        return @"Refresh saved preferences to retry the read or local cleanup.";
+    case NSConfigurationRecoveryReopenApp:
+        return @"A preference read timed out. Close NetShield2 from the app switcher and reopen it. "
+               @"Returning to the foreground alone does not restart the app.";
+    case NSConfigurationRecoveryRetryEnable:
+        return @"If saved preferences show Firewall off, use the Firewall switch to retry.";
+    case NSConfigurationRecoveryProvider:
+        return @"Refresh and check Content Filter in iOS Settings. If an explicit retry still fails or "
+               @"iOS shows Invalid, a full reboot and re-jailbreak may be needed.";
+    case NSConfigurationRecoveryConsent:
+        return @"iOS did not grant content filter authorization. Use the Firewall switch to try again.";
+    case NSConfigurationRecoveryExternalChange:
+        return @"Saved settings changed during setup. Check the refreshed state before trying again.";
+    case NSConfigurationRecoveryReboot:
+    case NSConfigurationRecoveryCheckStorageOrSettings:
+    case NSConfigurationRecoveryNone:
+        return nil; // These marker states carry their specific reason and next action.
+    }
+}
+- (NSConfigurationRecoveryAction)recoveryAction {
+    if (self.abandonedRead) {
+        return NSConfigurationRecoveryReopenApp;
+    }
+    if (self.pendingWrite) {
+        return NSConfigurationRecoveryWaitForWrite;
+    }
+    if (self.acknowledgementError || self.uncertain) {
+        return NSConfigurationRecoveryRetryRead;
+    }
+    return self.markerRecovery;
 }
 - (instancetype)init {
     if ((self = [super init])) {
@@ -282,16 +345,19 @@ static void NSDeliverPreferenceCallback(void (^work)(void)) {
             NSString *operation =
                 legacy ? @"preference write" : (self.pendingRemoval ? @"filter removal" : @"filter save");
             message = [NSString stringWithFormat:@"An earlier %@ may still complete. If the original app "
-                                                 @"session has ended, fully reboot the device, return to the "
-                                                 @"jailbreak and refresh. A respring "
+                                                 @"session has ended, fully reboot, re-jailbreak and reopen "
+                                                 @"NetShield2. A respring "
                                                  @"does not clear this recovery state.",
                                                  operation];
         } else {
             message = @"The pending preference record has no usable boot evidence. This boot has been "
-                      @"recorded for recovery. Reboot the device, then refresh. A respring is insufficient.";
+                      @"recorded for recovery. Fully reboot, re-jailbreak and reopen NetShield2. "
+                      @"A respring is insufficient.";
         }
         *error = NSMarkerError(message, nil);
     }
+    self.markerRecovery =
+        boot ? NSConfigurationRecoveryReboot : NSConfigurationRecoveryCheckStorageOrSettings;
     return state;
 }
 - (void)deadline:(NSTimeInterval)delay overall:(BOOL)overall work:(void (^)(void))work {
@@ -328,9 +394,27 @@ static void NSDeliverPreferenceCallback(void (^work)(void)) {
     // Initial staging and activation can each need a separate authorization phase.
     return [self beginWithDeadline:180 error:error];
 }
+- (void)expireOverall {
+    self.uncertain = YES;
+    NSError *error = NSConfigurationError(
+        ETIMEDOUT, @"The overall configuration deadline expired. Saved state is unverified.");
+    if (self.abort) {
+        self.abort(error);
+    } else {
+        [self finish];
+    }
+}
+- (BOOL)expireIfNeeded {
+    if (self.active && self.overallExpiry && !self.schedule &&
+        NSProcessInfo.processInfo.systemUptime >= self.overallExpiry) {
+        [self expireOverall];
+        return YES;
+    }
+    return NO;
+}
 - (BOOL)beginWithDeadline:(NSTimeInterval)duration error:(NSError **)error {
     NSAssert(NSThread.isMainThread, @"Configuration state belongs to the main queue");
-    if (self.active || self.pendingWrite || self.saveProbeInFlight) {
+    if (self.active || self.pendingWrite || self.readInFlight) {
         if (error) {
             *error =
                 NSConfigurationError(EBUSY, @"A configuration operation or unresolved write is pending.");
@@ -360,6 +444,7 @@ static void NSDeliverPreferenceCallback(void (^work)(void)) {
     self.operation = NSUUID.UUID.UUIDString;
     self.active = YES;
     self.uncertain = NO;
+    self.overallExpiry = NSProcessInfo.processInfo.systemUptime + duration;
     NSString *operation = self.operation;
     __weak typeof(self) weakSelf = self;
     [self deadline:duration
@@ -367,26 +452,29 @@ static void NSDeliverPreferenceCallback(void (^work)(void)) {
               work:^{
                   NSConfigurationCoordinator *owner = weakSelf;
                   if (owner.active && [owner.operation isEqual:operation]) {
-                      owner.uncertain = YES;
-                      void (^abort)(NSError *) = owner.abort;
-                      if (abort) {
-                          abort(NSConfigurationError(
-                              ETIMEDOUT,
-                              @"The overall configuration deadline expired. Saved state is unverified."));
-                      }
+                      [owner expireOverall];
                   }
               }];
     return self.active;
 }
 - (void)inspectMarker {
     self.recoverySave = nil;
+    self.markerRecovery = NSConfigurationRecoveryNone;
     NSError *error = nil;
     self.markerState = [self reconcile:&error];
     self.markerError = error;
+    if (self.markerRecovery == NSConfigurationRecoveryNone) {
+        if (self.markerState == NSConfigurationMarkerAcknowledged ||
+            self.markerState == NSConfigurationMarkerPriorBoot) {
+            self.markerRecovery = NSConfigurationRecoveryRetryRead;
+        } else if (self.markerState != NSConfigurationMarkerNone) {
+            self.markerRecovery = NSConfigurationRecoveryCheckStorageOrSettings;
+        }
+    }
 }
 - (NSConfigurationMarkerState)beginReadOnly:(NSError **)error {
     NSAssert(NSThread.isMainThread, @"Configuration state belongs to the main queue");
-    if (self.active || self.pendingWrite || self.saveProbeInFlight) {
+    if (self.active || self.pendingWrite || self.readInFlight) {
         if (error) {
             *error = NSConfigurationError(EBUSY, @"Configuration inspection is busy.");
         }
@@ -397,11 +485,14 @@ static void NSDeliverPreferenceCallback(void (^work)(void)) {
     NSError *lockError = nil;
     self.lock = self.acquireLock(&lockError);
     self.readOnly = YES;
+    self.overallExpiry = 0;
     self.active = YES;
     self.uncertain = NO;
     if (!self.lock) {
         self.markerState = NSConfigurationMarkerUnavailable;
         self.markerError = lockError;
+        self.markerRecovery = NSIsLockContention(lockError) ? NSConfigurationRecoveryWaitForWrite
+                                                            : NSConfigurationRecoveryCheckStorageOrSettings;
         if (error) {
             *error = lockError;
         }
@@ -457,6 +548,7 @@ static void NSDeliverPreferenceCallback(void (^work)(void)) {
     NSError *error = [self acknowledge:record];
     self.markerError = error;
     self.markerState = error ? NSConfigurationMarkerAcknowledged : NSConfigurationMarkerNone;
+    self.markerRecovery = error ? NSConfigurationRecoveryRetryRead : NSConfigurationRecoveryNone;
     if (!error) {
         self.reconciledMarker = YES;
         self.recoverySave = nil;
@@ -480,12 +572,21 @@ static void NSDeliverPreferenceCallback(void (^work)(void)) {
         [self completePhase:phase error:error];
         return;
     }
-    if (!self.active && !self.pendingWrite && !self.saveProbeInFlight) {
-        [self.lock unlock];
-        self.lock = nil;
-    }
+    [self releaseIdleOwnership];
     // A late proof releases ownership without resuming an expired transaction.
     [NSNotificationCenter.defaultCenter postNotificationName:NSConfigurationLateAcknowledgement object:nil];
+}
+
+- (void)releaseIdleOwnership {
+    if (!self.active && !self.pendingWrite) {
+        [self.lock unlock];
+        self.lock = nil;
+        id manager = self.preferenceManager;
+        if (!self.readInFlight && manager && [NSPreferenceOwners() objectForKey:manager] == self) {
+            [NSPreferenceOwners() removeObjectForKey:manager];
+            self.preferenceManager = nil;
+        }
+    }
 }
 
 - (NSDictionary *)prepareWrite:(NSUInteger)kind
@@ -562,10 +663,31 @@ static void NSDeliverPreferenceCallback(void (^work)(void)) {
         return;
     }
     self.uncertain = YES;
-    NSString *message = self.pendingWrite
+    self.abandonedRead = self.readInFlight;
+    NSString *message = self.abandonedRead ? @"Preference read timed out. Saved state is unverified."
+                        : self.pendingWrite
                             ? @"Preference write timed out and may still complete. Saved state is unverified."
                             : @"Preference completion or readback timed out. Saved state is unverified.";
-    [self completePhase:phase error:NSConfigurationError(ETIMEDOUT, message)];
+    NSError *timeout = NSConfigurationError(ETIMEDOUT, message);
+    [self completePhase:phase
+                  error:[self writeErrorWithPreferenceError:self.preferenceCallbackError
+                                              readbackError:timeout]];
+}
+
+- (void)checkDeliveryDeadline:(NSUInteger)phase {
+    if (![self expireIfNeeded] && self.active && self.phase == phase && !self.schedule &&
+        NSProcessInfo.processInfo.systemUptime >= self.phaseExpiry) {
+        [self expirePhase:phase];
+    }
+}
+
+- (void)scheduleProbeWork:(NSTimeInterval)delay work:(void (^)(void))work {
+    if (self.schedule) {
+        self.schedule(delay, work);
+    } else {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), work);
+    }
 }
 
 - (void)perform:(NSUInteger)kind
@@ -573,41 +695,51 @@ static void NSDeliverPreferenceCallback(void (^work)(void)) {
           manager:(id<NSConfigurationPreferences>)manager
        completion:(void (^)(NSError *))completion {
     NSAssert(NSThread.isMainThread, @"Configuration state belongs to the main queue");
+    if ([self expireIfNeeded]) {
+        return;
+    }
     if (kind && (self.acknowledgementError || self.recoverySave)) {
         completion(self.acknowledgementError ?: self.markerError);
         return;
     }
-    if (!self.active || self.pendingWrite || self.saveProbeInFlight || self.uncertain ||
-        (kind && self.readOnly)) {
+    if (!self.active || self.pendingWrite || self.readInFlight || self.uncertain || (kind && self.readOnly)) {
         completion(NSConfigurationError(EBUSY, @"Configuration is busy or an earlier result is unverified."));
         return;
     }
+    NSConfigurationCoordinator *existing = [NSPreferenceOwners() objectForKey:manager];
+    if (existing && existing != self) {
+        NSConfigurationRecoveryAction action = [NSConfigurationCoordinator recoveryForManager:manager];
+        completion(NSConfigurationError(EBUSY, [NSConfigurationCoordinator guidanceForRecovery:action]));
+        return;
+    }
+    [NSPreferenceOwners() setObject:self forKey:manager];
+    self.preferenceManager = manager;
+    self.preferenceCallbackError = nil;
     NSUInteger phase = ++self.phase;
     self.phaseCompletion = completion;
+    NSTimeInterval budget = authorization ? 60 : 10;
+    self.phaseExpiry = NSProcessInfo.processInfo.systemUptime + budget;
     __weak typeof(self) weakSelf = self;
     __weak id<NSConfigurationPreferences> weakManager = manager;
-    [self deadline:authorization ? 60 : 10
+    [self deadline:budget
            overall:NO
               work:^{
                   NSConfigurationCoordinator *owner = weakSelf;
                   if (!owner.active || owner.phase != phase) {
                       return;
                   }
-                  if (!owner.checkSave || owner.saveProbeInFlight) {
+                  [owner checkDeliveryDeadline:phase];
+                  if (!owner.active || owner.phase != phase) {
+                      return;
+                  }
+                  if (!owner.checkSave || owner.readInFlight) {
                       [owner expirePhase:phase];
                       return;
                   }
                   // One final bounded check also covers a missing configuration-change
                   // notification. A nonmatching read leaves the original fence intact.
                   [owner cancelPhaseTimer];
-                  [owner deadline:10
-                          overall:NO
-                             work:^{
-                                 [weakSelf expirePhase:phase];
-                             }];
-                  if (owner.active && owner.phase == phase && owner.checkSave) {
-                      owner.checkSave();
-                  }
+                  owner.checkSave(YES);
               }];
     if (!self.active || self.phase != phase) {
         return;
@@ -632,6 +764,7 @@ static void NSDeliverPreferenceCallback(void (^work)(void)) {
             settledError = error;
             if (kind) {
                 owner.pendingWrite = NO;
+                owner.preferenceCallbackError = error;
                 owner.checkSave = nil;
                 if (NSPendingSaveOwner == owner) {
                     NSPendingSaveOwner = nil;
@@ -643,42 +776,110 @@ static void NSDeliverPreferenceCallback(void (^work)(void)) {
                           error.domain ?: @"ok", (long)error.code, owner.acknowledgementError.domain ?: @"ok",
                           (long)owner.acknowledgementError.code);
                 }
-                if (!owner.saveProbeInFlight) {
+                if (!owner.readInFlight) {
                     [owner completeWritePhase:phase error:error];
                 }
                 return;
-            } else if (owner.active && owner.phase == phase && !error) {
-                [owner reconcileLoadedSave:weakManager];
-                if (!owner.readOnly && owner.recoverySave) {
-                    settledError = owner.markerError;
+            }
+            owner.readInFlight = NO;
+            BOOL abandoned = owner.abandonedRead;
+            owner.abandonedRead = NO;
+            if (owner.active && owner.phase == phase) {
+                if (!error) {
+                    [owner reconcileLoadedSave:weakManager];
+                    if (!owner.readOnly && owner.recoverySave) {
+                        settledError = owner.markerError;
+                    }
+                } else if (owner.recoverySave) {
+                    owner.markerRecovery = NSConfigurationRecoveryRetryRead;
+                    owner.markerError = NSMarkerError(@"The saved receipt could not be checked.", error);
                 }
             }
             [owner completePhase:phase error:settledError];
+            if (abandoned) {
+                [owner releaseIdleOwnership];
+                [NSNotificationCenter.defaultCenter postNotificationName:NSConfigurationLateAcknowledgement
+                                                                  object:nil];
+            }
         };
     if (record[@"receipt"]) {
+        self.phaseExpiry += 10;
         NSPendingSaveOwner = self;
-        self.checkSave = ^{
+        __block NSUInteger earlyChecks = 0;
+        self.checkSave = ^(BOOL finalCheck) {
             NSConfigurationCoordinator *owner = weakSelf;
             id<NSConfigurationPreferences> currentManager = weakManager;
-            if (settled || owner.saveProbeInFlight || !owner.pendingWrite || !currentManager) {
+            if (settled || owner.readInFlight || !owner.pendingWrite || !currentManager) {
+                if (finalCheck) {
+                    [owner expirePhase:phase];
+                }
                 return;
             }
-            owner.saveProbeInFlight = YES;
-            __block BOOL delivered = NO;
+            [owner checkDeliveryDeadline:phase];
+            BOOL live = owner.active && owner.phase == phase;
+            if (live && !finalCheck && earlyChecks >= 2) {
+                return;
+            }
+            if (live && !finalCheck) {
+                earlyChecks++;
+            }
+            NSUInteger probe = ++owner.probeGeneration;
+            NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
+            NSTimeInterval probeBudget = live && !owner.schedule ? MIN(10, owner.phaseExpiry - now) : 10;
+            NSTimeInterval probeExpiry = now + probeBudget;
+            owner.readInFlight = YES;
+            [owner
+                scheduleProbeWork:MAX(0, probeBudget)
+                             work:^{
+                                 NSConfigurationCoordinator *current = weakSelf;
+                                 if (!current.readInFlight || current.probeGeneration != probe) {
+                                     return;
+                                 }
+                                 current.abandonedRead = YES;
+                                 NSLog(@"NetShield2 receipt-probe timed out phase=%lu", (unsigned long)phase);
+                                 [current expirePhase:phase];
+                             }];
             [currentManager loadFromPreferencesWithCompletionHandler:^(NSError *readError) {
                 NSDeliverPreferenceCallback(^{
-                    if (delivered) {
+                    if (!owner.readInFlight || owner.probeGeneration != probe) {
                         return;
                     }
-                    delivered = YES;
-                    owner.saveProbeInFlight = NO;
+                    [owner checkDeliveryDeadline:phase];
+                    if (!owner.schedule && NSProcessInfo.processInfo.systemUptime >= probeExpiry) {
+                        owner.abandonedRead = YES;
+                        [owner expirePhase:phase];
+                    }
+                    owner.readInFlight = NO;
+                    BOOL abandoned = owner.abandonedRead;
+                    owner.abandonedRead = NO;
+                    NSLog(@"NetShield2 receipt-probe returned phase=%lu error=%@/%ld late=%d",
+                          (unsigned long)phase, readError.domain ?: @"ok", (long)readError.code, abandoned);
                     if (settled) {
-                        // A save callback that arrived during this read already
-                        // retired its marker. Wait for this read before advancing.
+                        // The save callback handled the marker independently.
+                        // Only the live phase may advance after this load drains.
                         [owner completeWritePhase:phase error:settledError];
                     } else if (!readError &&
                                [NSSavedReceipt(weakManager) isEqual:NSNormalizedUUID(record[@"receipt"])]) {
                         settle(owner, nil, YES);
+                    } else if (finalCheck) {
+                        [owner expirePhase:phase];
+                    } else if (live && owner.active && owner.phase == phase && earlyChecks < 2) {
+                        // The first OS signal can precede commit visibility. A second
+                        // signal can use this slot sooner, invalidating the queued retry.
+                        [owner scheduleProbeWork:0.75
+                                            work:^{
+                                                NSConfigurationCoordinator *current = weakSelf;
+                                                if (current.active && current.phase == phase &&
+                                                    current.probeGeneration == probe && current.checkSave) {
+                                                    current.checkSave(NO);
+                                                }
+                                            }];
+                    }
+                    if (abandoned && owner.pendingWrite) {
+                        // The in-process write fence remains. Refresh can now probe again.
+                        [NSNotificationCenter.defaultCenter
+                            postNotificationName:NSConfigurationLateAcknowledgement
+                                          object:nil];
                     }
                 });
             }];
@@ -688,10 +889,18 @@ static void NSDeliverPreferenceCallback(void (^work)(void)) {
     // can also be reconciled from the durable record on a subsequent launch.
     void (^callback)(NSError *) = ^(NSError *error) {
         NSDeliverPreferenceCallback(^{
+            if (settled) {
+                return;
+            }
+            if (kind) {
+                self.preferenceCallbackError = error;
+            }
+            [self checkDeliveryDeadline:phase];
             settle(self, error, NO);
         });
     };
     self.pendingWrite = kind != 0;
+    self.readInFlight = kind == 0;
     if (kind && self.durableFence) {
         NSLog(@"NetShield2 preference %@ submitted phase=%lu authorization=%d",
               kind == 1 ? @"save" : @"remove", (unsigned long)phase, authorization);
@@ -719,6 +928,7 @@ static void NSDeliverPreferenceCallback(void (^work)(void)) {
 - (void)finish {
     NSAssert(NSThread.isMainThread, @"Configuration state belongs to the main queue");
     self.active = NO;
+    self.abandonedRead = self.readInFlight;
     self.phase++;
     self.phaseCompletion = nil;
     self.abort = nil;
@@ -727,9 +937,6 @@ static void NSDeliverPreferenceCallback(void (^work)(void)) {
         dispatch_source_cancel(self.overallTimer);
     }
     self.overallTimer = nil;
-    if (!self.pendingWrite && !self.saveProbeInFlight) {
-        [self.lock unlock];
-        self.lock = nil;
-    }
+    [self releaseIdleOwnership];
 }
 @end

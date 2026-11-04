@@ -15,9 +15,14 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
 @property(nonatomic) BOOL restoring;
 @property(nonatomic) NSUInteger generation;
 @property(nonatomic, strong) NSError *originalError;
+@property(nonatomic, copy) NSString *stage;
+@property(nonatomic, copy) NSDictionary *providerFailureFields;
+@property(nonatomic, copy) NSString *providerFailureDescription;
+@property(nonatomic, strong) NSNumber *recoveryExpectedEnabled;
 @property(nonatomic, copy) void (^defaultSchedule)(NSTimeInterval, void (^)(void));
 @property(nonatomic, strong) dispatch_source_t waitTimer;
 @property(nonatomic, readwrite) NSFilterRestartState state;
+@property(nonatomic, readwrite) NSConfigurationRecoveryAction recoveryAction;
 @end
 
 @implementation NSFilterRestart
@@ -37,6 +42,22 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
                            userInfo:@{NSLocalizedDescriptionKey : message}];
 }
 - (void)finish:(NSError *)error {
+    if (error) {
+        NSError *first = self.originalError ?: error;
+        NSString *stage = first.userInfo[@"stage"] ?: self.stage ?: @"ownership";
+        NSMutableDictionary *info = [first.userInfo mutableCopy] ?: [NSMutableDictionary new];
+        info[@"stage"] = stage;
+        if (error == self.coordinator.acknowledgementError) {
+            info[@"acknowledgementOnly"] = @YES;
+        }
+        NSString *detail = error.localizedDescription;
+        if (first != error && ![detail containsString:first.localizedDescription]) {
+            detail = [NSString stringWithFormat:@"%@ %@", first.localizedDescription, detail];
+        }
+        info[NSLocalizedDescriptionKey] = [NSString stringWithFormat:@"%@: %@", stage, detail];
+        error = [NSError errorWithDomain:first.domain code:first.code userInfo:info];
+        NSLog(@"NetShield2 filter failure stage=%@ error=%@/%ld", stage, first.domain, (long)first.code);
+    }
     void (^completion)(NSError *) = self.completion;
     self.completion = nil;
     [self.coordinator finish];
@@ -47,6 +68,9 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
     self.previous = nil;
     self.candidate = nil;
     self.expectedFields = nil;
+    self.providerFailureFields = nil;
+    self.providerFailureDescription = nil;
+    self.recoveryExpectedEnabled = nil;
     self.ownedFingerprints = nil;
     self.generation++;
     if (completion) {
@@ -61,10 +85,14 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
 // Every preference operation owns a generation and a deadline. Duplicate and
 // late callbacks cannot start a later phase. A timed-out write may still reach
 // the OS: do not race it with a cleanup write or claim a verified final state.
-- (void)preferences:(BOOL)save completion:(void (^)(NSError *))completion {
-    [self preferences:save authorization:NO completion:completion];
+- (void)preferences:(BOOL)save stage:(NSString *)stage completion:(void (^)(NSError *))completion {
+    [self preferences:save stage:stage authorization:NO completion:completion];
 }
-- (void)preferences:(BOOL)save authorization:(BOOL)authorization completion:(void (^)(NSError *))completion {
+- (void)preferences:(BOOL)save
+              stage:(NSString *)stage
+      authorization:(BOOL)authorization
+         completion:(void (^)(NSError *))completion {
+    self.stage = stage;
     void (^callback)(NSError *) = ^(NSError *error) {
         self.generation++;
         if (!self.completion) {
@@ -104,7 +132,21 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
     }];
 }
 - (BOOL)ownsLoadedConfiguration {
+    if (self.recoveryExpectedEnabled && self.manager.enabled != self.recoveryExpectedEnabled.boolValue) {
+        return NO;
+    }
+    self.recoveryExpectedEnabled = nil;
     NSDictionary *fields = NSFilterConfigurationFields(self.manager.providerConfiguration);
+    if (self.providerFailureFields) {
+        BOOL owned = self.manager.enabled && [fields isEqual:self.providerFailureFields] &&
+                     [self.manager.localizedDescription isEqual:self.providerFailureDescription] &&
+                     NSFilterConfigurationValidate(self.manager.providerConfiguration, fields, YES, NULL);
+        if (owned) {
+            self.providerFailureFields = nil;
+            self.providerFailureDescription = nil;
+        }
+        return owned;
+    }
     if (self.manager.providerConfiguration && !fields) {
         return NO;
     }
@@ -115,6 +157,7 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
 }
 - (void)finishExternalChange {
     self.state = NSFilterRestartUnknown;
+    self.recoveryAction = NSConfigurationRecoveryExternalChange;
     [self finish:[self error:@"Saved configuration no longer matches this transaction. No automatic write "
                              @"was made after the mismatch; state is unknown/unverified."]];
 }
@@ -145,6 +188,9 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
         return;
     }
     self.completion = completion;
+    self.stage = @"ownership";
+    self.originalError = nil;
+    self.recoveryAction = NSConfigurationRecoveryNone;
     if (!self.coordinator) {
         self.coordinator = [NSConfigurationCoordinator new];
     }
@@ -163,7 +209,6 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
     self.restoring = NO;
     self.ownedFingerprints = [NSMutableArray new];
     self.touchedPreferences = NO;
-    self.originalError = nil;
     self.state = NSFilterRestartUnchanged;
     if (!self.manager || !self.configuration || !self.isStopped || !self.isRunning) {
         [self finish:[self error:@"Filter restart dependencies are incomplete; configuration unchanged."]];
@@ -171,9 +216,14 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
     }
     [self
         preferences:NO
+              stage:@"initial-load"
          completion:^(NSError *error) {
              if (error) {
                  [self finish:error];
+                 return;
+             }
+             if (self.acceptInitialState && !self.acceptInitialState()) {
+                 [self finishExternalChange];
                  return;
              }
              self.previousDescription = self.manager.localizedDescription;
@@ -220,14 +270,19 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
     self.touchedPreferences = YES;
     self.state = NSFilterRestartUnknown;
     [self preferences:YES
+                stage:@"old-disable"
            completion:^(NSError *saveError) {
                if (saveError) {
                    [self recover:saveError];
                    return;
                }
                [self preferences:NO
+                           stage:@"old-disable-readback"
                       completion:^(NSError *loadError) {
                           if (loadError || self.manager.enabled) {
+                              if (!loadError) {
+                                  self.recoveryExpectedEnabled = @NO;
+                              }
                               [self recover:loadError ?: [self error:@"The old filter did not persist OFF."]];
                               return;
                           }
@@ -258,11 +313,16 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
     dispatch_resume(self.waitTimer);
 }
 - (void)waitForStop:(NSUInteger)attempt {
+    self.stage = @"previous-provider-stop";
+    if ([self.coordinator expireIfNeeded]) {
+        return;
+    }
     if (self.isStopped(self.wasEnabled)) {
         [self stageConfiguration];
         return;
     }
     if (attempt >= 60) {
+        self.recoveryAction = NSConfigurationRecoveryProvider;
         [self recover:[self error:@"The previous filter did not finish stopping within 15 seconds."]];
         return;
     }
@@ -289,6 +349,7 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
 }
 - (void)stageConfiguration {
     [self preferences:NO
+                stage:@"pre-stage-load"
            completion:^(NSError *loadError) {
                if (loadError) {
                    [self recover:loadError];
@@ -306,6 +367,7 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
                self.touchedPreferences = YES;
                self.state = NSFilterRestartUnknown;
                [self preferences:YES
+                           stage:@"stage-save"
                    authorization:firstSave
                       completion:^(NSError *saveError) {
                           if (saveError) {
@@ -313,10 +375,14 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
                               return;
                           }
                           [self preferences:NO
+                                      stage:@"stage-readback"
                                  completion:^(NSError *reloadError) {
                                      NSError *validationError = nil;
                                      if (reloadError || ![self validateReloadEnabled:NO
                                                                                error:&validationError]) {
+                                         if (!reloadError && self.manager.enabled) {
+                                             self.recoveryExpectedEnabled = @NO;
+                                         }
                                          [self recover:reloadError ?: validationError];
                                          return;
                                      }
@@ -331,6 +397,7 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
     self.manager.enabled = YES;
     self.state = NSFilterRestartUnknown;
     [self preferences:YES
+                stage:@"enable-save"
         authorization:!self.previous && !self.restoring
            completion:^(NSError *saveError) {
                if (saveError) {
@@ -338,9 +405,13 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
                    return;
                }
                [self preferences:NO
+                           stage:@"enable-readback"
                       completion:^(NSError *loadError) {
                           NSError *validationError = nil;
                           if (loadError || ![self validateReloadEnabled:YES error:&validationError]) {
+                              if (!loadError && !self.manager.enabled) {
+                                  self.recoveryExpectedEnabled = @YES;
+                              }
                               [self recover:loadError ?: validationError];
                               return;
                           }
@@ -350,6 +421,10 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
            }];
 }
 - (void)waitForStart:(NSUInteger)attempt {
+    self.stage = @"current-provider-wait";
+    if ([self.coordinator expireIfNeeded]) {
+        return;
+    }
     if (self.isRunning(self.candidate)) {
         self.state = NSFilterRestartEnabledVerified;
         [self record:@"current-control-heartbeat"];
@@ -365,6 +440,9 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
         return;
     }
     if (attempt >= 60) {
+        self.recoveryAction = NSConfigurationRecoveryProvider;
+        self.providerFailureFields = NSFilterConfigurationFields(self.manager.providerConfiguration);
+        self.providerFailureDescription = self.manager.localizedDescription;
         [self
             recover:[self error:@"The enabled filter did not report its current activation's healthy control "
                                 @"provider within 15 seconds."]];
@@ -380,7 +458,15 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
 }
 - (void)recover:(NSError *)error {
     if (!self.originalError) {
-        self.originalError = error;
+        NSMutableDictionary *info = [error.userInfo mutableCopy] ?: [NSMutableDictionary new];
+        info[@"stage"] = self.stage;
+        self.originalError = [NSError errorWithDomain:error.domain code:error.code userInfo:info];
+    }
+    if (self.isExternalPreferenceError && self.isExternalPreferenceError(error)) {
+        self.state = NSFilterRestartUnknown;
+        self.recoveryAction = NSConfigurationRecoveryExternalChange;
+        [self finish:error];
+        return;
     }
     if (!self.previous && self.touchedPreferences) {
         [self removeFailedFirstConfiguration:error];
@@ -398,6 +484,7 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
         return;
     }
     [self preferences:NO
+                stage:@"rollback-load"
            completion:^(NSError *loadError) {
                if (loadError) {
                    [self disableFailedConfiguration:loadError];
@@ -412,18 +499,21 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
 }
 - (void)removeFailedFirstConfiguration:(NSError *)startupError {
     [self preferences:NO
+                stage:@"failed-first-install-load"
            completion:^(NSError *loadError) {
                if (loadError) {
                    [self finishFirstConfigurationRecovery:startupError error:loadError];
                    return;
                }
-               if ((self.manager.providerConfiguration || self.manager.enabled) &&
+               if ((self.recoveryExpectedEnabled || self.providerFailureFields ||
+                    self.manager.providerConfiguration || self.manager.enabled) &&
                    ![self ownsLoadedConfiguration]) {
                    [self finishExternalChange];
                    return;
                }
                // A failed first installation should return to absence. Leaving
                // a disabled staged profile behind can strand an invalid entry.
+               self.stage = @"failed-first-install-removal";
                NSRemoveLoadedFilter(self.coordinator, self.manager, ^(NSError *removeError) {
                    [self finishFirstConfigurationRecovery:startupError error:removeError];
                });
@@ -473,6 +563,7 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
                                                       cleanupError.localizedDescription]]];
     };
     [self preferences:NO
+                stage:@"rollback-off-load"
            completion:^(NSError *loadError) {
                if (loadError) {
                    failed(loadError);
@@ -488,12 +579,14 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
                }
                self.manager.enabled = NO;
                [self preferences:YES
+                           stage:@"rollback-off-save"
                       completion:^(NSError *saveError) {
                           if (saveError) {
                               failed(saveError);
                               return;
                           }
                           [self preferences:NO
+                                      stage:@"rollback-off-readback"
                                  completion:^(NSError *verifyError) {
                                      if (verifyError || self.manager.enabled) {
                                          failed(verifyError

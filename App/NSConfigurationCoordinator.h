@@ -9,6 +9,18 @@ typedef NS_ENUM(NSUInteger, NSConfigurationMarkerState) {
     NSConfigurationMarkerInvalid,
     NSConfigurationMarkerUnavailable,
 };
+typedef NS_ENUM(NSUInteger, NSConfigurationRecoveryAction) {
+    NSConfigurationRecoveryNone,
+    NSConfigurationRecoveryWaitForWrite,
+    NSConfigurationRecoveryRetryRead,
+    NSConfigurationRecoveryReopenApp,
+    NSConfigurationRecoveryReboot,
+    NSConfigurationRecoveryCheckStorageOrSettings,
+    NSConfigurationRecoveryRetryEnable,
+    NSConfigurationRecoveryProvider,
+    NSConfigurationRecoveryConsent,
+    NSConfigurationRecoveryExternalChange,
+};
 FOUNDATION_EXPORT NSNotificationName const NSConfigurationLateAcknowledgement;
 FOUNDATION_EXPORT NSString *const NSPreferenceSaveReceiptKey;
 
@@ -30,8 +42,12 @@ FOUNDATION_EXPORT NSString *const NSPreferenceSaveReceiptKey;
 @property(nonatomic, readonly) NSError *markerError;
 @property(nonatomic, readonly) NSSharedDirectory *directory;
 @property(nonatomic, readonly) NSError *acknowledgementError;
+@property(nonatomic, readonly) NSConfigurationRecoveryAction recoveryAction;
 // Probe the current save on a preference change or return to the foreground.
 + (void)checkPendingSave;
+// An in-process owner may still hold the manager after its UI attempt ends.
++ (NSConfigurationRecoveryAction)recoveryForManager:(id)manager;
++ (NSString *)guidanceForRecovery:(NSConfigurationRecoveryAction)action;
 - (BOOL)begin:(NSError **)error;
 - (BOOL)beginWithAuthorizationBudget:(NSError **)error;
 - (NSConfigurationMarkerState)beginReadOnly:(NSError **)error;
@@ -39,6 +55,7 @@ FOUNDATION_EXPORT NSString *const NSPreferenceSaveReceiptKey;
 - (void)save:(id)manager completion:(void (^)(NSError *))completion;
 - (void)saveWithAuthorization:(id)manager completion:(void (^)(NSError *))completion;
 - (void)remove:(id)manager completion:(void (^)(NSError *))completion;
+- (BOOL)expireIfNeeded;
 - (void)finish;
 // Keep the OS result and acknowledgement cleanup error independently inspectable.
 - (NSError *)writeErrorWithPreferenceError:(NSError *)preferenceError readbackError:(NSError *)readbackError;

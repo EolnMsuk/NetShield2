@@ -1,14 +1,21 @@
+# 2.7.0
+
+When updating from an earlier version, if Firewall cannot be enabled or iOS shows the content filter as Invalid after refreshing saved preferences and retrying, fully reboot, re-jailbreak, and reopen NetShield2.
+
+- Bounded saved-preference receipt checks and added recovery guidance for delayed writes, interrupted reads, and local cleanup. NetShield2 reconciles eligible records automatically and keeps the manual Firewall status refresh.
+- Carried one Firewall On action through notification consent, iOS filter authorization, both saved-state checks, and the current control-provider check. The dashboard shows progress during setup.
+
 # 2.6.9
 
 - Fixed the color leak. Dashboard cells now reset both labels to their adaptive colors before applying row-specific styling
 
 # 2.6.8
 
-- Troubleshooting
+= regressions / fixes
 
 # 2.6.7
 
-- Troubleshooting
+= regressions / fixes
 
 # 2.6.6
 

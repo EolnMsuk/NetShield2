@@ -25,11 +25,14 @@ typedef NS_ENUM(NSInteger, NSFilterRestartState) {
 @interface NSFilterRestart : NSObject
 @property(nonatomic, strong) id<NSFilterRestartManager> manager;
 @property(nonatomic, strong) NSConfigurationCoordinator *coordinator;
+@property(nonatomic, copy) BOOL (^acceptInitialState)(void);
+@property(nonatomic, copy) BOOL (^isExternalPreferenceError)(NSError *);
 @property(nonatomic, copy) id (^configuration)(id previous, BOOL restoring, NSError **error);
 @property(nonatomic, copy) BOOL (^isStopped)(BOOL previouslyEnabled);
 @property(nonatomic, copy) BOOL (^isRunning)(id configuration);
 @property(nonatomic, copy) void (^schedule)(NSTimeInterval delay, void (^work)(void));
 @property(nonatomic, copy) void (^report)(NSString *stage, id configuration, BOOL enabled);
 @property(nonatomic, readonly) NSFilterRestartState state;
+@property(nonatomic, readonly) NSConfigurationRecoveryAction recoveryAction;
 - (void)start:(void (^)(NSError *error))completion;
 @end

@@ -18,14 +18,20 @@
 }
 - (void)authorizeNotificationsThen:(void (^)(void))completion {
     NSRegisterPermissionActions();
-    NSUInteger generation = self.storageGeneration;
+    NSUInteger intent = self.enableIntentGeneration;
+    NSUInteger storage = self.storageGeneration;
+    __block BOOL delivered = NO;
     [UNUserNotificationCenter.currentNotificationCenter
         requestAuthorizationWithOptions:UNAuthorizationOptionAlert | UNAuthorizationOptionSound
                       completionHandler:^(BOOL granted, NSError *error) {
                           dispatch_async(dispatch_get_main_queue(), ^{
-                              if (generation != self.storageGeneration) {
+                              if (delivered || (completion ? intent != self.enableIntentGeneration
+                                                           : storage != self.storageGeneration)) {
                                   return;
                               }
+                              delivered = YES;
+                              NSLog(@"NetShield2 notification-authorization granted=%d error=%@/%ld", granted,
+                                    error.domain ?: @"ok", (long)error.code);
                               [self refreshNotificationSettings];
                               if (error) {
                                   [self showError:error operation:@"Notification authorization"];
@@ -33,7 +39,7 @@
                                   self.message = @"Notifications are off. Enable Allow Notifications and "
                                                  @"Banners in notification settings.";
                               }
-                              if (generation == self.storageGeneration && !self.busy) {
+                              if (!self.busy) {
                                   NSWriteNotificationRetryRevision(NULL);
                               }
                               if (completion) {
