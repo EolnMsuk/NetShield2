@@ -29,6 +29,7 @@ sources = [
     "Shared/NSPermissionQueue.m",
     "Shared/NSPolicyCache.m",
     "Shared/NSPolicyReader.m",
+    "Shared/NSConfigurationRecord.m",
     "Shared/NSStoreLock.m",
     "Shared/NSBoundedFile.m",
     "Shared/NSMonitorSchema.m",
