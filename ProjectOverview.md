@@ -10,41 +10,13 @@ NetShield2 is a firewall and network monitor for jailbroken iOS 15–18 devices 
 
 The app and providers use an iOS app-group container. Bounded, descriptor-based file access, typed validation, atomic writes, and shared locks protect policy and monitor data. The data provider reads policy without linking the shared store's write and cleanup code.
 
-## Firewall setup and recovery
-
-One explicit On action starts setup. The app proceeds after the notification permission response, including denial. The restart checks fresh preferences against the dashboard's saved baseline, verifies an independent copy of the candidate and its boot fallback, saves it Off, and verifies that saved profile before saving it On. After verifying the enabled profile, it waits for the current activation's control heartbeat. The switch follows verified saved preferences, with separate status for setup progress and control health. Checking enforcement requires a new connection against a known rule.
-
-During an authorization save, foreground and preference-change signals queue a refresh. The coordinator waits for the save callback or uses a final bounded receipt probe after the 60-second authorization wait. This keeps an early receipt load from ending setup during consent. Each save has a unique receipt and only a fresh persisted load can prove a save by receipt. A callback arriving during the final probe waits for the probe to drain before the transaction can advance. Ordinary preference operations and provider startup retain their own deadlines.
-
-A cross-process configuration lock and durable pending-write record protect against overlapping app and removal operations. A timed-out read reserves the mutable manager until its callback drains or the app process restarts. An unresolved write retains its durable record across relaunch. Late callbacks and receipt proof can reconcile ownership without resuming an expired intent. Cleanup and rollback check that the loaded profile still belongs to the transaction. Reset verifies the filter is disabled before clearing shared state. **Remove Filter & Settings** and uninstall verify absence before cleanup.
-
-Launch, foreground entry, preference changes, and late completion drive saved-state reconciliation. Tap **Firewall status** to refresh manually. Follow the dashboard's recovery guidance if a read or write remains unresolved. If an updated content filter still shows Invalid after refreshing and explicitly retrying, a full reboot and re-jailbreak may be needed.
-
-### Stock-boot fallback
-
-When a provider is active and cannot load valid policy, its filtering path blocks affected flows. For a stock boot where jailbreak providers are unavailable, NetShield2 applies and reads back the private `disableDefaultDrop` property to request the system's connectivity fallback. The copy and persisted readback checks are part of activation. Stock-boot connectivity and rule enforcement need device testing on the target iOS and jailbreak combinations.
-
 ## GitHub build and release
-
-GitHub Actions builds all three `.deb` variants. The matrix runs on `macos-15`, installs `make`, `ldid`, `xz`, and `dpkg` via Homebrew, checks out pinned Theos revisions (`theos/theos` for rootless and rootful, `roothide/theos` for RootHide), and verifies the downloaded iOS 16.5 SDK against the workflow's SHA-256. The top-level `Makefile` sets `arm64` and an iOS 15.0 deployment target for each variant. The Debian architecture labels describe the package schemes. [Build workflow](.github/workflows/build.yml)
 
 | Variant | `THEOS_PACKAGE_SCHEME` | Debian architecture | App path inside the extracted package |
 | --- | --- | --- | --- |
 | rootless | `rootless` | `iphoneos-arm64` | `var/jb/Applications/NetShield2.app` |
 | RootHide | `roothide` | `iphoneos-arm64e` | `Applications/NetShield2.app` |
 | rootful | empty string | `iphoneos-arm` | `Applications/NetShield2.app` |
-
-1. CI reads the package ID and release version from `control`, validates source inputs, runs the Python metadata and signature fixtures and the Node draft-release fixtures, checks maintainer-script syntax, and checks Objective-C formatting with clang-format 19.1.7.
-2. The native suite compiles and runs on macOS using `xcrun` and the Xcode tools. It exercises the app's configuration, boot-policy, removal, and release-fetch code, the control provider's DNS, notification, and work-queue helpers, and the shared policy, store, lock, export, and permission-queue code. The runner also invokes `scripts/test_respring.py` with `App/NSRespring.m`. The rootless job additionally runs the shared-code suite with ASan and UBSan. The two runners' source lists define the test link inputs.
-3. Theos builds one app and two Network Extension bundles into each `.deb`. Before signing, `scripts/bundle_metadata.mk` calls `scripts/sync_version.py` to generate the three staged `Info.plist` files from their source templates. `CFBundleShortVersionString` comes from `control` (`2.7.1`), and `CFBundleVersion` comes from `NSEngineVersion` (`20047`) in `Shared/NSConstants.h`. Leave both keys out of the source templates. The root Makefile runs `scripts/prepare_package.py` to stamp the version and adapt `postinst` and `prerm` for the selected layout.
-4. CI extracts the finished `.deb` with `dpkg-deb` and validates its layout, metadata, and maintainer scripts. It checks the actual packaged app and extension binaries by reading Theos/ldid Mach-O CodeDirectories, and extracts and checks each binary's signed entitlements with `ldid -e`. `scripts/check_signing_identity.py` is a wrapper around the Mach-O verifier. Its tests use synthetic signed binaries from `scripts/test_macho.py`.
-5. Each job uploads its renamed `.deb` and an internal provenance manifest recording the source revision, package hash, and toolchain. After all three jobs succeed on a push to `main`, the release job uses the matching section in `changelog.md` and checks the three packages and manifests against the source revision and expected hashes. It verifies staged uploads before leaving exactly three final `.deb` assets in an unpublished draft. Pull requests and manual workflow runs stop after the build jobs.
-
-```text
-com.eolnmsuk.netshield_2.7.1_rootless.deb
-com.eolnmsuk.netshield_2.7.1_roothide.deb
-com.eolnmsuk.netshield_2.7.1_rootful.deb
-```
 
 The packaging and source validators share helpers. `prepare_package.py` imports `sync_version.py`. `validate.py`, `test_packaging.py`, and `release_manifest.py` use both. The mocked draft test imports `prepare_draft.cjs`.
 
@@ -143,6 +115,8 @@ NetShield2/
 │   ├── NSRuleChoices.h                       # Defines rule choices and directional selection behavior.
 │   ├── NSStore.h                             # Declares shared policy, monitoring, and cleanup operations.
 │   ├── NSStore.m                             # Persists rules and monitor data, applies decisions, and clears state.
+│   ├── NSConfigurationRecord.h               # Defines record admission, immutable tokens, and execution hooks.
+│   ├── NSConfigurationRecord.m               # Validates records and bounds physical locking.
 │   ├── NSStoreLock.h                         # Declares the shared filesystem lock.
 │   ├── NSStoreLock.m                         # Acquires and releases locks across the app and providers.
 │   └── NSValidation.h                        # Validates stored strings, Boolean values, and unsigned integers.

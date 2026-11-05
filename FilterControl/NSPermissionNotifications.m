@@ -2,6 +2,26 @@
 #import "NSPermissionNotifications.h"
 #import "../Shared/NSNotifications.h"
 #import "../Shared/NSNotificationPolicy.h"
+#import "../Shared/NSDestination.h"
+#import "../Shared/NSGlobalRule.h"
+
+static NSString *NSPermissionNotificationBody(NSDictionary *request) {
+    NSDictionary *destination =
+        [request[@"destination"] isKindOfClass:NSDictionary.class] ? request[@"destination"] : @{};
+    NSString *domain = NSCleanDestinationHost(destination[@"domain"]);
+    NSString *address = NSCleanDestinationHost(destination[@"address"]);
+    NSString *domainKey = NSGlobalHostKey(domain);
+    NSString *addressKey = NSGlobalHostKey(address);
+    NSString *peer = [domainKey hasPrefix:@"domain:"] ? domain
+                     : [addressKey hasPrefix:@"ip:"]  ? address
+                     : [domainKey hasPrefix:@"ip:"]   ? domain
+                                                      : @"";
+    if (!NSConnectionRuleValues(request[@"direction"]).count) {
+        return peer.length ? [@"Open NetShield2 to review " stringByAppendingString:peer]
+                           : @"Open NetShield2 to review this request";
+    }
+    return peer.length ? [@"Long press to Allow " stringByAppendingString:peer] : @"Long press to Allow";
+}
 
 // One bounded record per current logical request. Callbacks retain only their
 // own identifier; a retired operation can never withdraw its replacement.
@@ -143,7 +163,8 @@ static void NSWithdrawNotifications(id<NSPermissionNotificationCenter> center, N
                 ]]
                     isEqual:[current dictionaryWithValuesForKeys:@[
                         @"identity", @"direction", @"askGeneration", @"session", @"activation"
-                    ]]]) {
+                    ]]] ||
+                ![NSPermissionNotificationBody(previous) isEqual:NSPermissionNotificationBody(current)]) {
                 [self retire:token];
             }
         }
@@ -177,7 +198,7 @@ static void NSWithdrawNotifications(id<NSPermissionNotificationCenter> center, N
     self.submissions[token] = record;
     UNMutableNotificationContent *content = [UNMutableNotificationContent new];
     content.title = NSIdentityDisplayName(identity);
-    content.body = @"Long-press this banner to Allow or Block";
+    content.body = NSPermissionNotificationBody(request);
     content.categoryIdentifier = NSPermissionCategoryForDirection(request[@"direction"]);
     content.sound = UNNotificationSound.defaultSound;
     content.userInfo =

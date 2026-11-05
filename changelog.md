@@ -1,9 +1,14 @@
+# 2.7.3
+
+- Ask Me banners show the requested domain, or the remote IP when a domain is unavailable.
+- Banners refresh when the displayed peer changes.
+
 # 2.7.2
 
+**After an update**  
+If iOS still shows the content filter as Invalid after refreshing saved preferences and explicitly retrying, a full reboot and re-jailbreak may be needed.
+
 - Fixed first-time Firewall setup so approving the iOS content filter can complete activation from a single On action. The dashboard shows setup progress and separates verified saved state from control-provider health.
-
-# 2.7.1
-
 - Improved saved-state checks and recovery for Firewall changes, reset, and removal. Delayed preference writes retain ownership, and fresh readbacks detect external changes before another write.
 - Hardened shared app-group file access through both `/var` and `/private/var`, with bounded reads, atomic writes, stricter rule and activity validation, and a smaller read-only data provider. Strengthened stock-boot fallback checks.
 - Improved provider startup, shutdown, and reply handling, with bounded work queues, permission-notification retries, and deadlines for background actions.
@@ -12,9 +17,6 @@
 - Moved storage work off the main thread, fixed dashboard color reuse, protected active exports during cleanup, and improved dialog cleanup and bounded update downloads.
 - Improved reset and uninstall diagnostics and respring cleanup. Version and generation checks keep stale detached workers from triggering a respring.
 - Strengthened GitHub package, signature, and entitlement checks and added build provenance and draft-asset verification for all three variants. Expanded regression and sanitizer coverage, updated the build overview, and removed obsolete documentation and test references.
-
-**After an update**  
-If iOS still shows the content filter as Invalid after refreshing saved preferences and explicitly retrying, a full reboot and re-jailbreak may be needed.
 
 # 2.6.4
 

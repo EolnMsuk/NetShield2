@@ -1645,14 +1645,14 @@ static void TestLateNotifications(void) {
     CHECK(center.requests.count == 1);
     UNNotificationRequest *banner = center.requests.firstObject;
     CHECK([banner.content.title isEqual:@"app"]);
-    CHECK([banner.content.body isEqual:@"Long-press this banner to Allow or Block"]);
+    CHECK([banner.content.body isEqual:@"Open NetShield2 to review notify.example"]);
+    CHECK([banner.content.categoryIdentifier isEqual:NSPermissionCategoryForDirection(@"unknown")]);
     CHECK(banner.content.subtitle.length == 0);
     CHECK(banner.content.attachments.count == 0);
     CHECK([banner.content.userInfo
         isEqual:@{@"token" : @"old-token", @"identity" : @"notify.app", @"direction" : @"unknown"}]);
     CHECK([request[@"destination"][@"domain"] isEqual:@"notify.example"]);
     CHECK([request[@"destination"][@"address"] isEqual:@"192.0.2.1"]);
-    CHECK(![banner.content.body containsString:@"notify.example"]);
     CHECK(![banner.content.body containsString:@"192.0.2.1"]);
     [old updateRequests:@[] policy:NSReadPolicy(NULL) retryRevision:nil];
     [center.removed removeAllObjects];
@@ -1661,8 +1661,10 @@ static void TestLateNotifications(void) {
     CHECK(old.deliveryIssue.length == 0);
 
     NSPermissionNotifications *current = [[NSPermissionNotifications alloc] initWithCenter:center];
-    NSDictionary *next = @{@"token" : @"new-token", @"identity" : @"notify.app"};
+    NSDictionary *next = @{@"token" : @"new-token", @"identity" : @"notify.app", @"direction" : @"unknown"};
     [current updateRequests:@[ next ] policy:NSReadPolicy(NULL) retryRevision:nil];
+    CHECK([((UNNotificationRequest *)center.requests[1]).content.body
+        isEqual:@"Open NetShield2 to review this request"]);
     [center finish:1 error:nil];
     CHECK(center.settingsCompletions.count == 1);
     [current stop];
@@ -1691,28 +1693,97 @@ static void TestDirectionalNotifications(void) {
     CHECK(NSWriteDocument([NSPolicy defaultDocument], NSPolicyFile, NULL));
     FakeNotificationCenter *center = [FakeNotificationCenter new];
     NSPermissionNotifications *notifications = [[NSPermissionNotifications alloc] initWithCenter:center];
-    NSDictionary *incoming =
-        @{@"token" : @"mixed-token", @"identity" : @"mixed.app", @"direction" : @"inbound"};
-    NSDictionary *outgoing =
-        @{@"token" : @"mixed-token", @"identity" : @"mixed.app", @"direction" : @"outbound"};
+    NSDictionary *incoming = @{
+        @"token" : @"mixed-token",
+        @"identity" : @"mixed.app",
+        @"direction" : @"inbound",
+        @"destination" : @{@"address" : @"192.0.2.10"}
+    };
+    NSDictionary *outgoing = @{
+        @"token" : @"mixed-token",
+        @"identity" : @"mixed.app",
+        @"direction" : @"outbound",
+        @"destination" : @{@"domain" : @"api.example.com", @"address" : @"192.0.2.10", @"port" : @443},
+        @"session" : @"notify-session",
+        @"activation" : @"notify-activation",
+        @"askGeneration" : @""
+    };
     [notifications updateRequests:@[ incoming ] policy:NSReadPolicy(NULL) retryRevision:nil];
     CHECK(center.requests.count == 1);
+    UNNotificationRequest *incomingBanner = center.requests[0];
+    CHECK([incomingBanner.content.body isEqual:@"Long press to Allow 192.0.2.10"]);
+    CHECK([incomingBanner.content.categoryIdentifier isEqual:NSPermissionCategoryForDirection(@"inbound")]);
     SaveRule(@"mixed.app", @"allow-inbound");
     // The same queue token now represents the remaining opposite-direction waiter.
     [notifications updateRequests:@[ outgoing ] policy:NSReadPolicy(NULL) retryRevision:nil];
-    [center.removed removeAllObjects];
     CHECK(center.requests.count == 2);
-    CHECK([((UNNotificationRequest *)center.requests[1]).content.categoryIdentifier
-        isEqual:NSPermissionCategoryForDirection(@"outbound")]);
-    void (^duplicate)(NSError *) = center.completions[1];
+    CHECK([center.removed containsObject:incomingBanner.identifier]);
+    UNNotificationRequest *outgoingBanner = center.requests[1];
+    CHECK([outgoingBanner.content.body isEqual:@"Long press to Allow api.example.com"]);
+    CHECK([outgoingBanner.content.categoryIdentifier isEqual:NSPermissionCategoryForDirection(@"outbound")]);
+    CHECK([outgoingBanner.content.userInfo isEqual:@{
+        @"token" : @"mixed-token",
+        @"identity" : @"mixed.app",
+        @"direction" : @"outbound",
+        @"session" : @"notify-session",
+        @"activation" : @"notify-activation",
+        @"askGeneration" : @""
+    }]);
+    // The remaining waiter changes peer without changing the token or direction.
+    NSMutableDictionary *nextPeer = [outgoing mutableCopy];
+    nextPeer[@"destination"] = @{@"address" : @"2001:db8::10", @"port" : @443};
+    [center.removed removeAllObjects];
+    [notifications updateRequests:@[ [nextPeer copy] ] policy:NSReadPolicy(NULL) retryRevision:nil];
+    CHECK(center.requests.count == 3);
+    CHECK([center.removed containsObject:outgoingBanner.identifier]);
+    UNNotificationRequest *peerBanner = center.requests[2];
+    CHECK(![peerBanner.identifier isEqual:outgoingBanner.identifier]);
+    CHECK([peerBanner.content.body isEqual:@"Long press to Allow 2001:db8::10"]);
+    CHECK([peerBanner.content.categoryIdentifier isEqual:NSPermissionCategoryForDirection(@"outbound")]);
+    [center.removed removeAllObjects];
+    [notifications updateRequests:@[ [nextPeer copy] ] policy:NSReadPolicy(NULL) retryRevision:nil];
+    nextPeer[@"destination"] = @{@"address" : @"2001:db8::10", @"port" : @8443};
+    [notifications updateRequests:@[ nextPeer ] policy:NSReadPolicy(NULL) retryRevision:nil];
+    CHECK(center.requests.count == 3);
+    CHECK(center.removed.count == 0);
+    void (^duplicate)(NSError *) = center.completions[2];
     [center finish:0 error:nil];
     [center finish:1 error:nil];
+    CHECK([center.removed containsObject:incomingBanner.identifier]);
+    CHECK([center.removed containsObject:outgoingBanner.identifier]);
+    CHECK(![center.removed containsObject:peerBanner.identifier]);
+    [center finish:2 error:nil];
     duplicate(nil);
-    CHECK(![center.removed containsObject:((UNNotificationRequest *)center.requests[1]).identifier]);
+    CHECK(![center.removed containsObject:peerBanner.identifier]);
     CHECK(center.settingsCompletions.count == 1);
     [notifications updateRequests:@[ incoming ] policy:NSReadPolicy(NULL) retryRevision:nil];
-    CHECK([center.removed containsObject:((UNNotificationRequest *)center.requests[1]).identifier]);
+    CHECK([center.removed containsObject:peerBanner.identifier]);
     [notifications stop];
+    FakeNotificationCenter *copyCenter = [FakeNotificationCenter new];
+    NSPermissionNotifications *copyNotifications =
+        [[NSPermissionNotifications alloc] initWithCenter:copyCenter];
+    for (NSArray *example in @[
+             @[ @{}, @"Long press to Allow" ],
+             @[
+                 @{@"domain" : @"https://bad.example/path", @"address" : @"192.0.2.10"},
+                 @"Long press to Allow 192.0.2.10"
+             ],
+             @[ @{@"domain" : @"2001:db8::20"}, @"Long press to Allow 2001:db8::20" ],
+             @[ @{@"domain" : @"api.example.com",
+                  @"address" : @42},
+                @"Long press to Allow api.example.com" ],
+             @[ @{@"domain" : @42,
+                  @"address" : @"not-an-address"},
+                @"Long press to Allow" ]
+         ]) {
+        NSMutableDictionary *request = [outgoing mutableCopy];
+        request[@"destination"] = example[0];
+        [copyNotifications updateRequests:@[ request ] policy:NSReadPolicy(NULL) retryRevision:nil];
+        UNNotificationRequest *banner = copyCenter.requests.lastObject;
+        CHECK([banner.content.body isEqual:example[1]]);
+        CHECK([banner.content.categoryIdentifier isEqual:NSPermissionCategoryForDirection(@"outbound")]);
+    }
+    [copyNotifications stop];
     for (NSString *action in @[ @"block-inbound", @"block-outbound" ]) {
         NSMutableDictionary *document = [[NSPolicy defaultDocument] mutableCopy];
         document[@"globalRules"] = @{NSCustomGlobalRuleKey(@"mixed.app", @"", @"", @"any") : action};
