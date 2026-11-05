@@ -1711,7 +1711,7 @@ static void TestDirectionalNotifications(void) {
     [notifications updateRequests:@[ incoming ] policy:NSReadPolicy(NULL) retryRevision:nil];
     CHECK(center.requests.count == 1);
     UNNotificationRequest *incomingBanner = center.requests[0];
-    CHECK([incomingBanner.content.body isEqual:@"Long press to Allow 192.0.2.10"]);
+    CHECK([incomingBanner.content.body isEqual:@"192.0.2.10\nLong press to Allow"]);
     CHECK([incomingBanner.content.categoryIdentifier isEqual:NSPermissionCategoryForDirection(@"inbound")]);
     SaveRule(@"mixed.app", @"allow-inbound");
     // The same queue token now represents the remaining opposite-direction waiter.
@@ -1719,7 +1719,7 @@ static void TestDirectionalNotifications(void) {
     CHECK(center.requests.count == 2);
     CHECK([center.removed containsObject:incomingBanner.identifier]);
     UNNotificationRequest *outgoingBanner = center.requests[1];
-    CHECK([outgoingBanner.content.body isEqual:@"Long press to Allow api.example.com"]);
+    CHECK([outgoingBanner.content.body isEqual:@"api.example.com\nLong press to Allow"]);
     CHECK([outgoingBanner.content.categoryIdentifier isEqual:NSPermissionCategoryForDirection(@"outbound")]);
     CHECK([outgoingBanner.content.userInfo isEqual:@{
         @"token" : @"mixed-token",
@@ -1738,7 +1738,7 @@ static void TestDirectionalNotifications(void) {
     CHECK([center.removed containsObject:outgoingBanner.identifier]);
     UNNotificationRequest *peerBanner = center.requests[2];
     CHECK(![peerBanner.identifier isEqual:outgoingBanner.identifier]);
-    CHECK([peerBanner.content.body isEqual:@"Long press to Allow 2001:db8::10"]);
+    CHECK([peerBanner.content.body isEqual:@"2001:db8::10\nLong press to Allow"]);
     CHECK([peerBanner.content.categoryIdentifier isEqual:NSPermissionCategoryForDirection(@"outbound")]);
     [center.removed removeAllObjects];
     [notifications updateRequests:@[ [nextPeer copy] ] policy:NSReadPolicy(NULL) retryRevision:nil];
@@ -1766,12 +1766,14 @@ static void TestDirectionalNotifications(void) {
              @[ @{}, @"Long press to Allow" ],
              @[
                  @{@"domain" : @"https://bad.example/path", @"address" : @"192.0.2.10"},
-                 @"Long press to Allow 192.0.2.10"
+                 @"192.0.2.10\nLong press to Allow"
              ],
-             @[ @{@"domain" : @"2001:db8::20"}, @"Long press to Allow 2001:db8::20" ],
-             @[ @{@"domain" : @"api.example.com",
-                  @"address" : @42},
-                @"Long press to Allow api.example.com" ],
+             @[ @{@"domain" : @"2001:db8::20"}, @"2001:db8::20\nLong press to Allow" ],
+             @[
+                 @{@"domain" : @"api.example.com",
+                   @"address" : @42},
+                 @"api.example.com\nLong press to Allow"
+             ],
              @[ @{@"domain" : @42,
                   @"address" : @"not-an-address"},
                 @"Long press to Allow" ]

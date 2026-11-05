@@ -1,7 +1,8 @@
-# 2.7.3
+# 2.7.4
 
 - Ask Me banners show the requested domain, or the remote IP when a domain is unavailable.
 - Banners refresh when the displayed peer changes.
+- Renamed the link-opening prompt and shortened its description.
 
 # 2.7.2
 

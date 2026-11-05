@@ -20,7 +20,7 @@ static NSString *NSPermissionNotificationBody(NSDictionary *request) {
         return peer.length ? [@"Open NetShield2 to review " stringByAppendingString:peer]
                            : @"Open NetShield2 to review this request";
     }
-    return peer.length ? [@"Long press to Allow " stringByAppendingString:peer] : @"Long press to Allow";
+    return peer.length ? [peer stringByAppendingString:@"\nLong press to Allow"] : @"Long press to Allow";
 }
 
 // One bounded record per current logical request. Callbacks retain only their

@@ -882,15 +882,9 @@
             return;
         }
         UIAlertController *notice = [UIAlertController
-            alertControllerWithTitle:@"Opening a link with Firewall enabled"
-                             message:
-                                 @"If the destination app or browser needs network permission, the link may "
-                                 @"not load. Notification banners are suppressed while you are in "
-                                 @"NetShield2. "
-                                 @"You may need to return to NetShield2 to allow your browser. Choose Allow "
-                                 @"In & Out "
-                                 @"under Waiting for your decision, then open the link again. If you "
-                                 @"previously blocked that app, change its rule under App rules."
+            alertControllerWithTitle:@"Firewall is ON so link may fail"
+                             message:@"If the link fails to load, return to NetShield2 and allow the app. "
+                                     @"Reason: banner notifications are suppressed while in NetShield2."
                       preferredStyle:UIAlertControllerStyleAlert];
         [notice addAction:[UIAlertAction actionWithTitle:@"Open link"
                                                    style:UIAlertActionStyleDefault
