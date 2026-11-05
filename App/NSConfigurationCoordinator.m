@@ -1086,72 +1086,71 @@ static void NSDeliverPreferenceCallback(void (^work)(void)) {
     __block BOOL settled = NO;
     __block BOOL settlementReady = NO;
     __block NSError *settledError = nil;
-    void (^settle)(NSConfigurationCoordinator *, NSError *, BOOL) =
-        ^(NSConfigurationCoordinator *owner, NSError *error, BOOL receipt) {
-            if (!owner || settled) {
-                return;
+    void (^settle)(NSConfigurationCoordinator *, NSError *, BOOL) = ^(NSConfigurationCoordinator *owner,
+                                                                      NSError *error, BOOL receipt) {
+        if (!owner || settled) {
+            return;
+        }
+        settled = YES;
+        settledError = error;
+        if (kind) {
+            owner.pendingWrite = NO;
+            owner.preferenceCallbackError = error;
+            owner.checkSave = nil;
+            if (NSPendingSaveOwner == owner) {
+                NSPendingSaveOwner = nil;
             }
-            settled = YES;
-            settledError = error;
-            if (kind) {
-                owner.pendingWrite = NO;
-                owner.preferenceCallbackError = error;
-                owner.checkSave = nil;
-                if (NSPendingSaveOwner == owner) {
-                    NSPendingSaveOwner = nil;
-                }
-                void (^acknowledged)(NSError *) = ^(NSError *localError) {
-                    owner.acknowledgementError = localError;
-                    settlementReady = YES;
-                    if (localError.code == ESTALE) {
-                        owner.uncertain = YES;
-                    }
-                    NSLog(@"NetShield2 preference %@ %@ phase=%lu os=%@/%ld local=%@/%ld", record[@"kind"],
-                          receipt ? @"receipt verified" : @"callback", (unsigned long)phase,
-                          error.domain ?: @"ok", (long)error.code, localError.domain ?: @"ok",
-                          (long)localError.code);
-                    [owner checkDeliveryDeadline:phase];
-                    if (!owner.readInFlight) {
-                        [owner completeWritePhase:phase error:error];
-                    }
-                };
-                if (record) {
-                    [owner acknowledge:record completion:acknowledged];
-                } else {
-                    acknowledged(nil);
-                }
-                return;
-            }
-            owner.readInFlight = NO;
-            BOOL abandoned = owner.abandonedRead;
-            owner.abandonedRead = NO;
-            void (^loaded)(NSError *) = ^(NSError *localError) {
-                if (localError && localError.code == ESTALE) {
+            void (^acknowledged)(NSError *) = ^(NSError *localError) {
+                owner.acknowledgementError = localError;
+                settlementReady = YES;
+                if (localError.code == ESTALE) {
                     owner.uncertain = YES;
                 }
-                [owner completePhase:phase error:error ?: localError];
-                if (abandoned) {
-                    [owner releaseIdleOwnership];
-                    [NSNotificationCenter.defaultCenter
-                        postNotificationName:NSConfigurationLateAcknowledgement
-                                      object:nil];
+                NSLog(@"NetShield2 preference %@ %@ phase=%lu os=%@/%ld local=%@/%ld", record[@"kind"],
+                      receipt ? @"receipt verified" : @"callback", (unsigned long)phase,
+                      error.domain ?: @"ok", (long)error.code, localError.domain ?: @"ok",
+                      (long)localError.code);
+                [owner checkDeliveryDeadline:phase];
+                if (!owner.readInFlight) {
+                    [owner completeWritePhase:phase error:error];
                 }
             };
-            if (owner.active && owner.phase == phase && !error) {
-                [owner validateLoadedSave:weakManager completion:loaded];
-                return;
+            if (record) {
+                [owner acknowledge:record completion:acknowledged];
+            } else {
+                acknowledged(nil);
             }
-            if (error && owner.recoverySave) {
-                owner.markerRecovery = NSConfigurationRecoveryRetryRead;
-                owner.markerError = NSMarkerError(@"The saved receipt could not be checked.", error);
+            return;
+        }
+        owner.readInFlight = NO;
+        BOOL abandoned = owner.abandonedRead;
+        owner.abandonedRead = NO;
+        void (^loaded)(NSError *) = ^(NSError *localError) {
+            if (localError && localError.code == ESTALE) {
+                owner.uncertain = YES;
             }
-            [owner completePhase:phase error:settledError];
+            [owner completePhase:phase error:error ?: localError];
             if (abandoned) {
                 [owner releaseIdleOwnership];
                 [NSNotificationCenter.defaultCenter postNotificationName:NSConfigurationLateAcknowledgement
                                                                   object:nil];
             }
         };
+        if (owner.active && owner.phase == phase && !error) {
+            [owner validateLoadedSave:weakManager completion:loaded];
+            return;
+        }
+        if (error && owner.recoverySave) {
+            owner.markerRecovery = NSConfigurationRecoveryRetryRead;
+            owner.markerError = NSMarkerError(@"The saved receipt could not be checked.", error);
+        }
+        [owner completePhase:phase error:settledError];
+        if (abandoned) {
+            [owner releaseIdleOwnership];
+            [NSNotificationCenter.defaultCenter postNotificationName:NSConfigurationLateAcknowledgement
+                                                              object:nil];
+        }
+    };
     if (record[@"receipt"]) {
         self.phaseExpiry += 10;
         NSPendingSaveOwner = self;
