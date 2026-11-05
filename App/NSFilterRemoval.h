@@ -10,7 +10,8 @@
 - (void)removeFromPreferencesWithCompletionHandler:(void (^)(NSError *error))completion;
 @end
 
-// The caller owns configuration.lock and has just loaded the saved preferences.
+// The caller owns a logical reservation and has just loaded saved preferences.
+// Preference waits hold no physical lock; every cleanup revalidates the token.
 FOUNDATION_EXPORT void NSRemoveLoadedFilter(NSConfigurationCoordinator *owner,
                                             id<NSFilterRemovalManager> manager,
                                             void (^completion)(NSError *error));

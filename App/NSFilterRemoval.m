@@ -4,9 +4,9 @@
 #include <errno.h>
 
 typedef void (^NSCleanupPrecheck)(void (^)(NSError *));
-static void NSAttemptSharedStateCleanup(NSSharedDirectory *directory, NSTimeInterval deadline,
+static void NSAttemptSharedStateCleanup(NSConfigurationCoordinator *owner, NSTimeInterval deadline,
                                         NSError *lastError, NSCleanupPrecheck precheck,
-                                        void (^completion)(NSError *)) {
+                                        void (^clearAppState)(void), void (^completion)(NSError *)) {
     if (NSProcessInfo.processInfo.systemUptime >= deadline) {
         NSMutableDictionary *info =
             [NSMutableDictionary dictionaryWithObject:@"Timed out waiting for saved-state cleanup locks."
@@ -27,27 +27,44 @@ static void NSAttemptSharedStateCleanup(NSSharedDirectory *directory, NSTimeInte
             return;
         }
         if (NSProcessInfo.processInfo.systemUptime >= deadline) {
-            NSAttemptSharedStateCleanup(directory, deadline, lastError, nil, completion);
+            NSAttemptSharedStateCleanup(owner, deadline, lastError, nil, clearAppState, completion);
             return;
         }
-        NSError *error = nil;
-        BOOL cleaned = directory ? NSRemoveSharedStateIn(directory, &error)
-                                 : NSRemoveSharedStateAfterFilterRemoval(&error);
-        if (cleaned) {
-            completion(nil);
-            return;
-        }
-        if (!NSIsLockContention(error)) {
-            completion(error);
-            return;
-        }
-        NSTimeInterval delay = MIN(0.25, MAX(0, deadline - NSProcessInfo.processInfo.systemUptime));
-        // Only this continuation is pending. Each failed attempt has released its
-        // locks, and completion paths never schedule another attempt.
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)),
-                       dispatch_get_main_queue(), ^{
-                           NSAttemptSharedStateCleanup(directory, deadline, error, precheck, completion);
-                       });
+        [owner
+            performLocalMutation:^BOOL(NSSharedDirectory *directory, NSError **localError) {
+                if (!NSRemoveSharedStateIn(directory, localError)) {
+                    return NO;
+                }
+                if (clearAppState) {
+                    clearAppState();
+                }
+                return YES;
+            }
+            completion:^(NSError *error) {
+                if (!error) {
+                    completion(nil);
+                    return;
+                }
+                if (NSConfigurationExecutionDeferred(error)) {
+                    [owner whenLocalExecutionAvailable:^{
+                        NSAttemptSharedStateCleanup(owner, deadline, error, precheck, clearAppState,
+                                                    completion);
+                    }];
+                    return;
+                }
+                if (!NSIsLockContention(error)) {
+                    completion(error);
+                    return;
+                }
+                NSTimeInterval delay = MIN(0.25, MAX(0, deadline - NSProcessInfo.processInfo.systemUptime));
+                // Only this continuation is pending. Each failed attempt has released its
+                // locks, and completion paths never schedule another attempt.
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)),
+                               dispatch_get_main_queue(), ^{
+                                   NSAttemptSharedStateCleanup(owner, deadline, error, precheck,
+                                                               clearAppState, completion);
+                               });
+            }];
     };
     if (precheck) {
         precheck(attempt);
@@ -58,7 +75,24 @@ static void NSAttemptSharedStateCleanup(NSSharedDirectory *directory, NSTimeInte
 
 void NSRemoveSharedStateAfterFilterRemovalWithRetry(NSTimeInterval deadline, void (^completion)(NSError *)) {
     dispatch_async(dispatch_get_main_queue(), ^{
-        NSAttemptSharedStateCleanup(nil, deadline, nil, nil, completion);
+        NSConfigurationCoordinator *owner = [NSConfigurationCoordinator new];
+        NSError *error = nil;
+        if (![owner begin:&error] || !owner.localAccess) {
+            [owner finish];
+            completion(error ?: owner.markerError);
+            return;
+        }
+        __block BOOL done = NO;
+        void (^finished)(NSError *) = ^(NSError *result) {
+            if (done) {
+                return;
+            }
+            done = YES;
+            [owner finish];
+            completion(result);
+        };
+        owner.abort = finished;
+        NSAttemptSharedStateCleanup(owner, deadline, nil, nil, nil, finished);
     });
 }
 
@@ -146,7 +180,7 @@ static void NSRemoveFilter(id<NSFilterRemovalManager> manager, NSTimeInterval de
             return;
         }
         NSAttemptSharedStateCleanup(
-            owner.directory, deadline, nil,
+            owner, deadline, nil,
             ^(void (^checked)(NSError *)) {
                 [owner load:manager
                     completion:^(NSError *verifyError) {
@@ -166,12 +200,12 @@ static void NSRemoveFilter(id<NSFilterRemovalManager> manager, NSTimeInterval de
                         checked(nil);
                     }];
             },
+            clearAppState,
             ^(NSError *cleanupError) {
                 if (cleanupError) {
                     finished(NSUninstallCleanupPending(cleanupError));
                     return;
                 }
-                clearAppState();
                 finished(nil);
             });
     };

@@ -412,22 +412,28 @@
                                        }]);
         return;
     }
+    NSConfigurationCoordinator *owner = [NSConfigurationCoordinator new];
+    NSError *admissionError = nil;
+    if (![owner begin:&admissionError]) {
+        completion(NO, admissionError);
+        return;
+    }
+    NSConfigurationAccess *access = owner.localAccess;
+    if (!access) {
+        [owner finish];
+        completion(NO, owner.markerError);
+        return;
+    }
     self.busy = YES;
     self.storageGeneration++;
     [self refreshTableKeepingPosition];
     dispatch_async(NSAppStorageQueue(), ^{
         NSError *error = nil;
-        NSStoreLock *lock = [NSStoreLock tryLockRoot:NSSharedURL(@"")
-                                                leaf:NSConfigurationLockFile
-                                               error:&error];
-        BOOL saved = NO;
-        @try {
-            if (lock) {
-                saved = work(&error);
+        BOOL saved = [access
+            perform:^BOOL(NSSharedDirectory *directory, NSError **localError) {
+                return work(localError);
             }
-        } @finally {
-            [lock unlock];
-        }
+              error:&error];
         if (!saved && !error) {
             error = [NSError errorWithDomain:@"NetShield2.Storage"
                                         code:1
@@ -438,6 +444,7 @@
         }
         NSPolicy *persisted = saved ? NSReadPolicy(NULL) : nil;
         dispatch_async(dispatch_get_main_queue(), ^{
+            [owner finish];
             self.busy = NO;
             self.storageGeneration++;
             if (persisted) {
@@ -799,7 +806,20 @@
         return;
     }
     if (!self.policy) {
-        [self refreshSavedState];
+        // This explicit On can recover an idle reservation left before policy
+        // bootstrap. Passive refreshes cannot take another operation's token.
+        [self
+            performStorageCommand:^BOOL(NSError **error) {
+                return NSEnsurePolicy(error);
+            }
+            completion:^(BOOL saved, NSError *error) {
+                if (saved) {
+                    [self firewallChanged:sender];
+                } else {
+                    [self showError:error operation:@"Prepare Firewall rules"];
+                    [self refreshSavedState];
+                }
+            }];
         return;
     }
     NSRemoveAutomaticallyAllowedNotifications();

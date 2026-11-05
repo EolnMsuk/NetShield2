@@ -108,7 +108,8 @@ static NSDictionary *NSSavedFilterFingerprint(NEFilterManager *manager) {
             self.preferencesLoaded = !error;
             self.preferenceReadError = error.localizedDescription;
             self.configurationRecoveryAction = owner.recoveryAction;
-            self.configurationReady = owner.markerState == NSConfigurationMarkerNone &&
+            self.configurationReady = (owner.markerState == NSConfigurationMarkerNone ||
+                                       owner.markerState == NSConfigurationMarkerReserved) &&
                                       self.configurationRecoveryAction != NSConfigurationRecoveryReopenApp;
             self.configurationRecoveryError = owner.markerError.localizedDescription;
             NEFilterProviderConfiguration *configuration = error ? nil : manager.providerConfiguration;
@@ -124,10 +125,8 @@ static NSDictionary *NSSavedFilterFingerprint(NEFilterManager *manager) {
             }
             self.bootPolicyStatus = NSFilterBootPolicyStatus(configuration, self.preferencesLoaded);
             NSSharedDirectory *directory = owner.directory;
-            BOOL absent = !error && !configuration && !self.savedEnabled;
-            // A recorded removal cannot re-enable the absent filter. Keep the
-            // NE fence intact while preparing rules for this fresh app launch.
-            BOOL safeBootstrap = !error && (self.configurationReady || (absent && owner.pendingRemoval));
+            NSConfigurationAccess *access = owner.localAccess;
+            BOOL safeBootstrap = !error && access != nil;
             // An automatic refresh of an already initialized app must not
             // recreate rules after the uninstall helper removes the profile.
             BOOL mayBootstrap = self.policyBootstrapPending || (configuration && !self.savedEnabled);
@@ -135,11 +134,15 @@ static NSDictionary *NSSavedFilterFingerprint(NEFilterManager *manager) {
                 NSError *policyError = nil;
                 NSPolicy *policy =
                     directory ? NSReadPolicyIn(directory, &policyError) : NSReadPolicy(&policyError);
-                // Hold configuration ownership across bootstrap so a queued task
-                // cannot repopulate policy after concurrent uninstall cleanup.
+                // The queued capability must still match under the short lock;
+                // removal can replace the idle reservation before this runs.
                 BOOL bootstrap =
                     mayBootstrap && directory && safeBootstrap && !policy && NSFileIsAbsent(policyError);
-                if (bootstrap && NSEnsurePolicyIn(directory, &policyError)) {
+                if (bootstrap && [access
+                                     perform:^BOOL(NSSharedDirectory *ownedDirectory, NSError **localError) {
+                                         return NSEnsurePolicyIn(ownedDirectory, localError);
+                                     }
+                                       error:&policyError]) {
                     policy = NSReadPolicyIn(directory, &policyError);
                 }
                 dispatch_async(dispatch_get_main_queue(), ^{
@@ -224,6 +227,10 @@ static NSDictionary *NSSavedFilterFingerprint(NEFilterManager *manager) {
         restart.manager = (id<NSFilterRestartManager>)manager;
         BOOL automatic = self.automaticMigrationRequested;
         self.automaticMigrationRequested = NO;
+        if (automatic) {
+            restart.coordinator = [NSConfigurationCoordinator new];
+            restart.coordinator.replaceIdleReservation = NO;
+        }
         NSUInteger intent = self.enableIntentGeneration;
         if (explicitEnable || automatic) {
             NSDictionary *baseline = self.savedConfigurationFingerprint;
@@ -479,68 +486,85 @@ static NSDictionary *NSSavedFilterFingerprint(NEFilterManager *manager) {
         return;
     }
     NSConfigurationCoordinator *owner = self.configuration;
-    NSError *error = nil;
-    if (!NSResetSharedStateIn(owner.directory, self.resetRequiresLegacyStop, NO, &error)) {
-        if (NSIsLockContention(error) && attempt < 60) {
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC / 4), dispatch_get_main_queue(), ^{
-                NEFilterManager *manager = NEFilterManager.sharedManager;
-                if (self.configuration != owner) {
-                    return;
-                }
-                [owner load:manager
-                    completion:^(NSError *readError) {
-                        if (!readError && (manager.enabled ||
-                                           (self.removeFilterAfterReset && manager.providerConfiguration))) {
-                            readError = [NSError
-                                errorWithDomain:@"NetShield2.Configuration"
-                                           code:EBUSY
-                                       userInfo:@{
-                                           NSLocalizedDescriptionKey : @"Saved preferences changed while "
-                                                                       @"waiting. Shared state was preserved."
-                                       }];
-                        }
-                        if (readError) {
-                            if (owner.abort) {
-                                owner.abort(readError);
-                            }
+    [owner
+        performLocalMutation:^BOOL(NSSharedDirectory *directory, NSError **localError) {
+            return NSResetSharedStateIn(directory, self.resetRequiresLegacyStop, NO, localError);
+        }
+        completion:^(NSError *error) {
+            if (self.configuration != owner) {
+                return;
+            }
+            if (error) {
+                if ((NSIsLockContention(error) && attempt < 60) || NSConfigurationExecutionDeferred(error)) {
+                    void (^retry)(void) = ^{
+                        NEFilterManager *manager = NEFilterManager.sharedManager;
+                        if (self.configuration != owner) {
                             return;
                         }
-                        [self finishResetWhenStopped:attempt + 1];
-                    }];
-            });
-            return;
-        }
-        [self.configuration finish];
-        self.configuration = nil;
-        self.busy = NO;
-        self.message = nil;
-        [self recordConfigurationError:error operation:@"Filter verified stopped; finish shared-state reset"];
-        [self loadConfiguration];
-        return;
-    }
-    [UNUserNotificationCenter.currentNotificationCenter removeAllPendingNotificationRequests];
-    [UNUserNotificationCenter.currentNotificationCenter removeAllDeliveredNotifications];
-    self.resetRequiresLegacyStop = NO;
-    [self.deferredRequests removeAllObjects];
-    self.storageGeneration++;
-    self.policy = nil;
-    self.monitor = @{};
-    self.activityGroups = @[];
-    self.activityEvents = @[];
-    self.identities = @[];
-    self.systemIdentities = @[];
-    self.globalRuleKeys = @[];
-    NSResetAppPreferences(NSUserDefaults.standardUserDefaults, NSBundle.mainBundle.bundleIdentifier);
-    [self.configuration finish];
-    self.configuration = nil;
-    self.busy = NO;
-    self.message = self.removeFilterAfterReset
-                       ? @"Filter, settings, rules and history removed. Firewall is off. iOS notification "
-                         @"authorization is managed in Settings."
-                       : @"Settings, rules and history reset. Firewall is off.";
-    [self clearActivitySearch];
-    [self refreshTableKeepingPosition];
-    [self loadConfiguration];
+                        [owner load:manager
+                            completion:^(NSError *readError) {
+                                if (!readError && (manager.enabled || (self.removeFilterAfterReset &&
+                                                                       manager.providerConfiguration))) {
+                                    readError =
+                                        [NSError errorWithDomain:@"NetShield2.Configuration"
+                                                            code:EBUSY
+                                                        userInfo:@{
+                                                            NSLocalizedDescriptionKey :
+                                                                @"Saved preferences changed while "
+                                                                @"waiting. Shared state was preserved."
+                                                        }];
+                                }
+                                if (readError) {
+                                    if (owner.abort) {
+                                        owner.abort(readError);
+                                    }
+                                    return;
+                                }
+                                [self finishResetWhenStopped:attempt + 1];
+                            }];
+                    };
+                    if (NSConfigurationExecutionDeferred(error)) {
+                        [owner whenLocalExecutionAvailable:retry];
+                    } else {
+                        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC / 4),
+                                       dispatch_get_main_queue(), retry);
+                    }
+                    return;
+                }
+                [self.configuration finish];
+                self.configuration = nil;
+                self.busy = NO;
+                self.message = nil;
+                [self recordConfigurationError:error
+                                     operation:@"Filter verified stopped; finish shared-state reset"];
+                [self loadConfiguration];
+                return;
+            }
+            [UNUserNotificationCenter.currentNotificationCenter removeAllPendingNotificationRequests];
+            [UNUserNotificationCenter.currentNotificationCenter removeAllDeliveredNotifications];
+            self.resetRequiresLegacyStop = NO;
+            [self.deferredRequests removeAllObjects];
+            self.storageGeneration++;
+            self.policy = nil;
+            self.monitor = @{};
+            self.activityGroups = @[];
+            self.activityEvents = @[];
+            self.identities = @[];
+            self.systemIdentities = @[];
+            self.globalRuleKeys = @[];
+            NSResetAppPreferences(NSUserDefaults.standardUserDefaults, NSBundle.mainBundle.bundleIdentifier);
+            [self.configuration finish];
+            self.configuration = nil;
+            self.busy = NO;
+            self.message =
+                self.removeFilterAfterReset
+                    ? @"Filter, settings, rules and history removed. Firewall is off. iOS notification "
+                      @"authorization is managed in Settings."
+                    : @"Settings, rules and history reset. Firewall is off.";
+            [self clearActivitySearch];
+            [self refreshTableKeepingPosition];
+            [self loadConfiguration];
+        }];
 }
 - (void)resetNetShield2 {
     if (self.exportPending) {

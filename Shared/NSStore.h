@@ -35,6 +35,8 @@ FOUNDATION_EXPORT NSArray<NSString *> *_Nullable NSClearIdentityRules(NSMutableD
                                                                       NSError **error);
 FOUNDATION_EXPORT NSStoreLock *_Nullable NSAcquireProviderLock(NSError **error);
 // Call only after Network Extension preference removal has been verified.
+// The In variants require a validated NSConfigurationAccess section; the root
+// wrappers take a short configuration lock and reject any logical owner.
 FOUNDATION_EXPORT BOOL NSRemoveSharedStateAfterFilterRemoval(NSError **error);
 FOUNDATION_EXPORT BOOL NSRemoveSharedStateIn(NSSharedDirectory *directory, NSError **error);
 FOUNDATION_EXPORT BOOL NSResetSharedStateIn(NSSharedDirectory *directory, BOOL legacyProviderMayBeRunning,

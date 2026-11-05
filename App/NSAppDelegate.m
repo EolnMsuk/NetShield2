@@ -5,6 +5,7 @@
 
 @implementation NSAppDelegate
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)options {
+    NSRegisterConfigurationExecution();
     NSRegisterPermissionActions();
     UNUserNotificationCenter.currentNotificationCenter.delegate = self;
     if (application.applicationState != UIApplicationStateBackground) {
@@ -23,6 +24,7 @@
     [self.window makeKeyAndVisible];
 }
 - (void)applicationDidBecomeActive:(UIApplication *)application {
+    NSResumeConfigurationExecution();
     [self createInterface];
 }
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center

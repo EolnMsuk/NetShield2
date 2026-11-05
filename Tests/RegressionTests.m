@@ -1797,6 +1797,11 @@ static void TestNotificationGenerations(void) {
 @end
 @implementation FakeFilterRemovalManager
 - (void)loadFromPreferencesWithCompletionHandler:(void (^)(NSError *))completion {
+    NSStoreLock *physical = [NSStoreLock tryLockRoot:NSSharedURL(@"")
+                                                leaf:NSConfigurationLockFile
+                                               error:NULL];
+    CHECK(physical);
+    [physical unlock];
     self.loads++;
     if (self.loads > 1 && !self.verifyError && (!self.removeError || self.absentAfterRemovalError)) {
         if (!self.retainConfiguration) {
@@ -1807,6 +1812,11 @@ static void TestNotificationGenerations(void) {
     completion(self.loads == 1 ? self.loadError : self.verifyError);
 }
 - (void)removeFromPreferencesWithCompletionHandler:(void (^)(NSError *))completion {
+    NSStoreLock *physical = [NSStoreLock tryLockRoot:NSSharedURL(@"")
+                                                leaf:NSConfigurationLockFile
+                                               error:NULL];
+    CHECK(physical);
+    [physical unlock];
     self.removals++;
     completion(self.removeError);
 }

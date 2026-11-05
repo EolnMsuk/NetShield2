@@ -426,17 +426,50 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
         return;
     }
     if (self.isRunning(self.candidate)) {
-        self.state = NSFilterRestartEnabledVerified;
-        [self record:@"current-control-heartbeat"];
-        [self
-            finish:self.restoring
-                       ? [self error:[NSString stringWithFormat:@"%@ Previous configuration restored and "
+        NSUInteger generation = self.generation;
+        [self.coordinator
+            performLocalMutation:^BOOL(NSSharedDirectory *directory, NSError **error) {
+                return YES; // Revalidate the logical token before reporting completion.
+            }
+            completion:^(NSError *ownershipError) {
+                if (!self.completion || generation != self.generation) {
+                    return;
+                }
+                if (NSConfigurationExecutionDeferred(ownershipError)) {
+                    [self.coordinator whenLocalExecutionAvailable:^{
+                        [self waitForStart:attempt];
+                    }];
+                    return;
+                }
+                if (NSIsLockContention(ownershipError) && attempt < 60) {
+                    [self wait:0.25
+                          work:^{
+                              if (self.completion && generation == self.generation) {
+                                  [self waitForStart:attempt + 1];
+                              }
+                          }];
+                    return;
+                }
+                if (ownershipError) {
+                    self.state = NSFilterRestartUnknown;
+                    self.recoveryAction = NSConfigurationRecoveryExternalChange;
+                    [self finish:ownershipError];
+                    return;
+                }
+                self.state = NSFilterRestartEnabledVerified;
+                [self record:@"current-control-heartbeat"];
+                [self
+                    finish:self.restoring
+                               ? [self
+                                     error:[NSString
+                                               stringWithFormat:@"%@ Previous configuration restored and "
                                                                 @"read back with the required fallback "
                                                                 @"policy; its current control provider "
                                                                 @"responded. Control health does not verify "
                                                                 @"every connection.",
                                                                 self.originalError.localizedDescription]]
-                       : nil];
+                               : nil];
+            }];
         return;
     }
     if (attempt >= 60) {

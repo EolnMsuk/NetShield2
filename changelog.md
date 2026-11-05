@@ -1,6 +1,9 @@
-# 2.7.1
+# 2.7.2
 
 - Fixed first-time Firewall setup so approving the iOS content filter can complete activation from a single On action. The dashboard shows setup progress and separates verified saved state from control-provider health.
+
+# 2.7.1
+
 - Improved saved-state checks and recovery for Firewall changes, reset, and removal. Delayed preference writes retain ownership, and fresh readbacks detect external changes before another write.
 - Hardened shared app-group file access through both `/var` and `/private/var`, with bounded reads, atomic writes, stricter rule and activity validation, and a smaller read-only data provider. Strengthened stock-boot fallback checks.
 - Improved provider startup, shutdown, and reply handling, with bounded work queues, permission-notification retries, and deadlines for background actions.

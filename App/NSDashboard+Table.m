@@ -603,7 +603,7 @@ static void NSConfigureDashboardBackground(UITableViewCell *cell, UIColor *tint)
         BOOL on =
             firewall ? self.savedEnabled : [self.policy.document[@"allowAppleSystemProcesses"] boolValue];
         BOOL ready = firewall ? (self.preferencesLoaded && self.configurationReady &&
-                                 (self.savedEnabled || self.policy != nil))
+                                 (self.savedEnabled || self.policy != nil || self.policyMissing))
                               : self.policy != nil;
         BOOL enabled = ready && !self.busy;
         toggle.hidden = firewall && !self.hasSavedPreferences;
@@ -641,7 +641,7 @@ static void NSConfigureDashboardBackground(UITableViewCell *cell, UIColor *tint)
         toggle.on = self.savedEnabled;
         toggle.hidden = !self.hasSavedPreferences;
         toggle.enabled = self.preferencesLoaded && self.configurationReady &&
-                         (self.savedEnabled || self.policy != nil) && !self.busy;
+                         (self.savedEnabled || self.policy != nil || self.policyMissing) && !self.busy;
         toggle.accessibilityLabel = @"Firewall";
         [toggle addTarget:self
                       action:@selector(firewallChanged:)

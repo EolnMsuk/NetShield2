@@ -1,4 +1,5 @@
 #import "NSStore.h"
+#import "NSConfigurationRecord.h"
 #import "NSDestination.h"
 #import "NSGlobalRule.h"
 #import "NSDNSCache.h"
@@ -79,17 +80,25 @@ NSString *NSReadNotificationRetryRevision(void) {
     return document.count == 1 && NSBoundedString(document[@"revision"], 128, YES) ? document[@"revision"]
                                                                                    : nil;
 }
+// A raw physical lock no longer grants admission while an app/helper owns a
+// logical reservation. These callers cannot preempt configuration operations.
+static BOOL NSUnownedConfigurationMutation(BOOL (^work)(NSSharedDirectory *, NSError **), NSError **error) {
+    return NSConfigurationSection(
+        ^NSStoreLock *(NSError **lockError) {
+            return NSAcquireLock(NSConfigurationLockFile, lockError);
+        },
+        ^BOOL(NSSharedDirectory *directory, NSError **localError) {
+            return NSConfigurationAdmission(directory, nil, localError) && work(directory, localError);
+        },
+        error);
+}
 BOOL NSWriteNotificationRetryRevision(NSError **error) {
-    NSStoreLock *lock = NSAcquireLock(NSConfigurationLockFile, error);
-    if (!lock) {
-        return NO;
-    }
-    @try {
-        return NSWriteDocumentIn(lock.directory, @{@"revision" : NSUUID.UUID.UUIDString},
-                                 NSNotificationRetryFile, error);
-    } @finally {
-        [lock unlock];
-    }
+    return NSUnownedConfigurationMutation(
+        ^BOOL(NSSharedDirectory *directory, NSError **localError) {
+            return NSWriteDocumentIn(directory, @{@"revision" : NSUUID.UUID.UUIDString},
+                                     NSNotificationRetryFile, localError);
+        },
+        error);
 }
 NSStoreLock *NSAcquireProviderLock(NSError **error) {
     return NSAcquireLock(@"provider.lock", error);
@@ -121,10 +130,11 @@ static BOOL NSRemoveSavedEntry(NSSharedDirectory *directory, NSString *name, NSE
     return NO;
 }
 BOOL NSRemoveSharedStateAfterFilterRemoval(NSError **error) {
-    NSSharedDirectory *directory = [NSSharedDirectory openRoot:NSSharedURL(@"")
-                                                          leaf:@"provider.lock"
-                                                         error:error];
-    return directory && NSRemoveSharedStateIn(directory, error);
+    return NSUnownedConfigurationMutation(
+        ^BOOL(NSSharedDirectory *directory, NSError **localError) {
+            return NSRemoveSharedStateIn(directory, localError);
+        },
+        error);
 }
 BOOL NSRemoveSharedStateIn(NSSharedDirectory *directory, NSError **error) {
     // This order matches reset: provider first prevents a control provider from
@@ -502,11 +512,13 @@ BOOL NSResetSharedState(BOOL legacyProviderMayBeRunning, NSError **error) {
     return NSResetSharedStateWithOptions(legacyProviderMayBeRunning, NO, error);
 }
 BOOL NSResetSharedStateWithOptions(BOOL legacyProviderMayBeRunning, BOOL preserveSettings, NSError **error) {
-    NSSharedDirectory *directory = [NSSharedDirectory openRoot:NSSharedURL(@"")
-                                                          leaf:@"provider.lock"
-                                                         error:error];
-    return directory && NSResetSharedStateIn(directory, legacyProviderMayBeRunning, preserveSettings, error);
+    return NSUnownedConfigurationMutation(
+        ^BOOL(NSSharedDirectory *directory, NSError **localError) {
+            return NSResetSharedStateIn(directory, legacyProviderMayBeRunning, preserveSettings, localError);
+        },
+        error);
 }
+
 BOOL NSResetSharedStateIn(NSSharedDirectory *directory, BOOL legacyProviderMayBeRunning,
                           BOOL preserveSettings, NSError **error) {
     __attribute__((objc_precise_lifetime)) NSStoreLock *provider =
@@ -638,45 +650,42 @@ BOOL NSAnswerPermissionRequestWithRule(NSDictionary *request, NSString *rule, NS
         }
         return NO;
     }
-    NSStoreLock *lock = NSAcquireLock(NSConfigurationLockFile, error);
-    if (!lock) {
-        return NO;
-    }
-    @try {
-        return NSUpdatePolicy(
-            ^BOOL(NSMutableDictionary *document, NSError **mutationError) {
-                NSPolicy *policy = [NSPolicy policyWithDocument:document error:mutationError];
-                if (!policy) {
-                    return NO;
-                }
-                NSDictionary *monitor = NSReadMonitor();
-                NSDictionary *response = NSPermissionResponseDocument(
-                    request, monitor, policy, NSDate.date, [rule hasPrefix:@"allow"], mutationError);
-                if (!response) {
-                    return NO;
-                }
-                NSString *direction = nil;
-                for (NSDictionary *candidate in monitor[@"requests"]) {
-                    if ([candidate[@"token"] isEqual:request[@"token"]]) {
-                        direction = candidate[@"direction"];
+    return NSUnownedConfigurationMutation(
+        ^BOOL(NSSharedDirectory *directory, NSError **localError) {
+            return NSUpdatePolicy(
+                ^BOOL(NSMutableDictionary *document, NSError **mutationError) {
+                    NSPolicy *policy = [NSPolicy policyWithDocument:document error:mutationError];
+                    if (!policy) {
+                        return NO;
                     }
-                }
-                if (![NSConnectionRuleValues(direction) containsObject:rule] ||
-                    (request[@"direction"] && ![request[@"direction"] isEqual:direction])) {
-                    if (mutationError) {
-                        *mutationError =
-                            NSStorageError(@"This connection changed direction. Review its current request.");
+                    NSDictionary *monitor = NSReadMonitor();
+                    NSDictionary *response = NSPermissionResponseDocument(
+                        request, monitor, policy, NSDate.date, [rule hasPrefix:@"allow"], mutationError);
+                    if (!response) {
+                        return NO;
                     }
-                    return NO;
-                }
-                [document setDictionary:response];
-                return YES;
-            },
-            error);
-    } @finally {
-        [lock unlock];
-    }
+                    NSString *direction = nil;
+                    for (NSDictionary *candidate in monitor[@"requests"]) {
+                        if ([candidate[@"token"] isEqual:request[@"token"]]) {
+                            direction = candidate[@"direction"];
+                        }
+                    }
+                    if (![NSConnectionRuleValues(direction) containsObject:rule] ||
+                        (request[@"direction"] && ![request[@"direction"] isEqual:direction])) {
+                        if (mutationError) {
+                            *mutationError = NSStorageError(
+                                @"This connection changed direction. Review its current request.");
+                        }
+                        return NO;
+                    }
+                    [document setDictionary:response];
+                    return YES;
+                },
+                localError);
+        },
+        error);
 }
+
 NSDictionary *NSPermissionResponseDocument(NSDictionary *request, NSDictionary *monitor, NSPolicy *policy,
                                            NSDate *now, BOOL allow, NSError **error) {
     if (![request isKindOfClass:NSDictionary.class] || ![monitor isKindOfClass:NSDictionary.class] ||

@@ -129,6 +129,20 @@ static BootConfiguration *BootConfig(NSString *activation, BOOL sockets) {
 @property(nonatomic, strong) NSMutableArray *callbacks;
 @property(nonatomic, strong) NSMutableArray<NSDictionary *> *saveRecords;
 @end
+static void CheckBootConfigurationLockAvailable(void) {
+    NSStoreLock *lock = [NSStoreLock tryLockRoot:NSSharedURL(@"") leaf:NSConfigurationLockFile error:NULL];
+    CHECK(lock);
+    [lock unlock];
+}
+@interface BootLocalExecution : NSObject <NSConfigurationExecution>
+@property(atomic) BOOL valid;
+@end
+@implementation BootLocalExecution
+- (void)finish {
+    CheckBootConfigurationLockAvailable();
+    self.valid = NO;
+}
+@end
 @implementation BootManager
 - (instancetype)init {
     if ((self = [super init])) {
@@ -146,6 +160,7 @@ static BootConfiguration *BootConfig(NSString *activation, BOOL sockets) {
                            userInfo:@{NSLocalizedDescriptionKey : @"Injected preference failure"}];
 }
 - (void)removeFromPreferencesWithCompletionHandler:(void (^)(NSError *))completion {
+    CheckBootConfigurationLockAvailable();
     self.removals++;
     self.saved = nil;
     self.savedEnabled = NO;
@@ -153,6 +168,7 @@ static BootConfiguration *BootConfig(NSString *activation, BOOL sockets) {
     completion(nil);
 }
 - (void)loadFromPreferencesWithCompletionHandler:(void (^)(NSError *))completion {
+    CheckBootConfigurationLockAvailable();
     self.loads++;
     [self.callbacks addObject:[completion copy]];
     if (self.loads == self.hangingLoad) {
@@ -171,6 +187,7 @@ static BootConfiguration *BootConfig(NSString *activation, BOOL sockets) {
     completion(nil);
 }
 - (void)saveToPreferencesWithCompletionHandler:(void (^)(NSError *))completion {
+    CheckBootConfigurationLockAvailable();
     self.saves++;
     [self.callbacks addObject:[completion copy]];
     if (self.saves == self.hangingSave) {
@@ -578,6 +595,12 @@ static void TestBootCleanupFailures(void) {
     // The first install can leave a staged profile after an enable or startup
     // failure. Recover to verified absence without touching the policy.
     for (NSNumber *failedBootReadback in @[ @NO, @YES ]) {
+        __block BOOL localBudget = YES;
+        NSSetConfigurationExecutionFactory(^id<NSConfigurationExecution> {
+            BootLocalExecution *execution = [BootLocalExecution new];
+            execution.valid = localBudget;
+            return execution;
+        });
         BootFixture *fresh = [BootFixture new];
         fresh.manager.saved = nil;
         fresh.manager.savedEnabled = NO;
@@ -659,6 +682,12 @@ static void TestBootCleanupFailures(void) {
 static void TestFirstEnableAfterAuthorization(void) {
     // Normal save callback, missing stage callback, then missing enable callback.
     for (NSUInteger missingCallback = 0; missingCallback <= 2; missingCallback++) {
+        __block BOOL localBudget = YES;
+        NSSetConfigurationExecutionFactory(^id<NSConfigurationExecution> {
+            BootLocalExecution *execution = [BootLocalExecution new];
+            execution.valid = localBudget;
+            return execution;
+        });
         BootFixture *fresh = [BootFixture new];
         fresh.manager.saved = nil;
         fresh.manager.savedEnabled = NO;
@@ -678,6 +707,15 @@ static void TestFirstEnableAfterAuthorization(void) {
         CHECK(fresh.completions == 0 && fresh.manager.saves == phase && fresh.manager.pendingCommit);
         NSDictionary *pending = NSReadDocument(NSPendingConfigurationFile, NULL);
         CHECK(pending[@"receipt"] && !fresh.manager.savedEnabled);
+        CheckBootConfigurationLockAvailable();
+        NSConfigurationCoordinator *competing = [NSConfigurationCoordinator new];
+        CHECK([competing begin:NULL] && !competing.localAccess);
+        [competing remove:fresh.manager
+               completion:^(NSError *error) {
+                   CHECK(error);
+               }];
+        [competing finish];
+        CHECK(fresh.manager.saves == phase && fresh.manager.removals == 0);
         CHECK(phase == 1 ? !fresh.manager.saved : fresh.manager.saved.bootPolicy);
 
         // Lifecycle signals arrive during consent. A speculative load would
@@ -689,16 +727,28 @@ static void TestFirstEnableAfterAuthorization(void) {
             [NSConfigurationCoordinator checkPendingSave];
             CHECK(fresh.completions == 0 && fresh.manager.saves == phase && fresh.manager.loads == loads);
             CHECK([NSReadDocument(NSPendingConfigurationFile, NULL) isEqual:pending]);
+            CheckBootConfigurationLockAvailable();
         });
         fresh.restart.schedule(20, ^{
             fresh.manager.hangingLoad = 0;
             void (^commit)(void) = fresh.manager.pendingCommit;
             fresh.manager.pendingCommit = nil;
+            if (!missingCallback) {
+                localBudget = NO;
+            }
             commit();
+            CheckBootConfigurationLockAvailable();
         });
+        if (!missingCallback) {
+            fresh.restart.schedule(21, ^{
+                CHECK(!fresh.completions && fresh.manager.saves == 1);
+                localBudget = YES;
+                [NSConfigurationCoordinator checkPendingSave];
+            });
+        }
         [fresh drain];
         CHECK(fresh.completions == 1 && fresh.restart.state == NSFilterRestartEnabledVerified);
-        CHECK(fresh.completedAt == (missingCallback ? 160 : 120));
+        CHECK(fresh.completedAt == (missingCallback ? 160 : 121));
         CHECK(fresh.manager.saves == 2 && fresh.manager.savedEnabled && fresh.manager.saved.bootPolicy);
         NSDictionary *staged = fresh.manager.saveRecords[0];
         NSDictionary *enabled = fresh.manager.saveRecords[1];
@@ -710,6 +760,7 @@ static void TestFirstEnableAfterAuthorization(void) {
         CHECK(!NSReadDocument(NSPendingConfigurationFile, NULL));
         [fresh checkStaleCallbacks];
         [fresh.manager.callbacks removeAllObjects];
+        NSSetConfigurationExecutionFactory(nil);
     }
 }
 
