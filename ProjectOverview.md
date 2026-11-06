@@ -8,8 +8,6 @@ NetShield2 is a firewall and network monitor for jailbroken iOS 15–18 devices 
 - The control provider handles pending decisions, permission notifications and delivery retries, flow reports, and the current activation's heartbeat. It refreshes DNS-derived blocking addresses with bounded concurrency, invalidates stale results on rule or network changes, and checks expiry using wall time, elapsed time, and boot evidence where available.
 - The app presents verified filter settings, rules, pending requests, and Recent Activity. Its serial storage queue handles policy edits, activity grouping, and export preparation. Activity groups distinguish transport and show mixed outcomes. Clearing activity records a generation boundary while preserving rules and pending requests. JSON export stages recorded events before grouping in the shared cache and protects files while sharing is active.
 
-The app and providers use an iOS app-group container. Bounded, descriptor-based file access, typed validation, atomic writes, and shared locks protect policy and monitor data. The data provider reads policy without linking the shared store's write and cleanup code.
-
 ## GitHub build and release
 
 | Variant | `THEOS_PACKAGE_SCHEME` | Debian architecture | App path inside the extracted package |
@@ -37,10 +35,10 @@ NetShield2/
 │   ├── NSAppStorage.m                        # Creates the serial queue for dashboard storage work.
 │   ├── NSConfigurationCoordinator.h          # Defines the shared filter configuration transaction API.
 │   ├── NSConfigurationCoordinator.m          # Serializes preference changes and tracks unfinished writes.
-│   ├── NSDashboard+Configuration.m           # Handles firewall toggles, socket scope, and settings reset.
-│   ├── NSDashboard+Internal.h                # Shares private dashboard state and methods across categories.
+│   ├── NSDashboard+Configuration.m           # Captures fallback readback state and handles firewall toggles, scope, and reset.
+│   ├── NSDashboard+Internal.h                # Shares dashboard state, fallback attention state, and private category methods.
 │   ├── NSDashboard+Notifications.m           # Manages notification authorization and in-app permission requests.
-│   ├── NSDashboard+Table.m                   # Renders dashboard rows, activity search, and swipe actions.
+│   ├── NSDashboard+Table.m                   # Renders concise status, conditional warnings, pending sections, search, and swipe actions.
 │   ├── NSDashboard+Updates.m                 # Schedules update checks and displays available releases.
 │   ├── NSDashboard.h                         # Declares the main dashboard controller.
 │   ├── NSDashboard.m                         # Coordinates dashboard refreshes, rule edits, and exports.
@@ -51,7 +49,7 @@ NetShield2/
 │   ├── NSFilterRestart.h                     # Defines the filter restart interface and result states.
 │   ├── NSFilterRestart.m                     # Stages, verifies, and rolls back filter restarts as needed.
 │   ├── NSGlobalRuleEditor.h                  # Declares the global rule editor and its save callback.
-│   ├── NSGlobalRuleEditor.m                  # Edits global rule conditions and validates entries before saving.
+│   ├── NSGlobalRuleEditor.m                  # Edits and validates global conditions with shared add/edit descriptions.
 │   ├── NSReleaseFetch.h                      # Declares the bounded release fetcher and response buffer.
 │   ├── NSReleaseFetch.m                      # Streams GitHub release data with size and redirect checks.
 │   ├── NSRespring.h                          # Declares the respring launcher and its test hook.
@@ -85,14 +83,14 @@ NetShield2/
 │       └── Info.plist                        # Registers the Network Extension data provider.
 ├── Makefile                                  # Builds all three targets and runs the Debian packaging hooks.
 ├── Shared/
-│   ├── NSActivity.h                          # Groups activity records and formats connection details.
+│   ├── NSActivity.h                          # Groups activity and shares connection-sheet, search, and clipboard details.
 │   ├── NSAppPreferences.h                    # Defines update-check preferences and app preference reset helpers.
 │   ├── NSBootSession.h                       # Looks up the current system boot identity when available.
 │   ├── NSBoundedFile.h                       # Declares bounded file reads, writes, and removal.
 │   ├── NSBoundedFile.m                       # Checks file descriptors and performs bounded I/O and atomic writes.
-│   ├── NSConstants.h                         # Defines engine and schema versions, limits, and shared filenames.
+│   ├── NSConstants.h                         # Defines engine/build and schema versions, limits, and shared filenames.
 │   ├── NSDNSCache.h                          # Checks DNS answer expiry and merges results into policy.
-│   ├── NSDestination.h                       # Validates and formats network endpoint details.
+│   ├── NSDestination.h                       # Validates destinations and formats hosts before direction/protocol in connection details.
 │   ├── NSExport.h                            # Declares JSON export and temporary file staging helpers.
 │   ├── NSExport.m                            # Builds JSON exports and manages the lifetime of staged files.
 │   ├── NSFlowDestination.h                   # Extracts hosts, ports, and protocol from iOS filter flows.
@@ -105,7 +103,7 @@ NetShield2/
 │   ├── NSPermissionQueue.h                   # Declares the queue for flows waiting on user decisions.
 │   ├── NSPermissionQueue.m                   # Tracks pending flows, timeouts, and completed decisions.
 │   ├── NSPolicy.h                            # Defines the policy interface, flow directions, and verdict types.
-│   ├── NSPolicy.m                            # Validates rule documents and evaluates policy for each flow.
+│   ├── NSPolicy.m                            # Validates rules and shares protocol matching, endpoint acquisition, and flow decisions.
 │   ├── NSPolicyCache.h                       # Declares policy caching and invalidation.
 │   ├── NSPolicyCache.m                       # Tracks policy file identity and caches validated snapshots.
 │   ├── NSPolicyReader.h                      # Declares the shared policy reader and app-group path helpers.
@@ -125,7 +123,7 @@ NetShield2/
 │   ├── ConfigurationTests.m                  # Tests preference transaction timeouts and pending writes.
 │   ├── HardeningTests.m                      # Tests bounded I/O, DNS, reply queues, and activity safety.
 │   ├── RecoveryTests.m                       # Tests DNS recovery, notification retries, and activity clearing.
-│   ├── RegressionTests.m                     # Runs core regressions for rules, requests, storage, and exports.
+│   ├── RegressionTests.m                     # Tests rule protocol/direction matching, requests, storage, and exports.
 │   └── RespringTests.m                       # Tests respring launch and fallback with a mock launcher.
 ├── changelog.md                              # Supplies versioned notes for the GitHub draft release.
 ├── control                                   # Defines the Debian package ID, version, and dependencies.
@@ -159,6 +157,7 @@ NetShield2/
 | --- | --- |
 | `README.md` | User guide and hosted web depiction destination. |
 | `ProjectOverview.md` | Project architecture and build inputs. |
+| `plan.md` | Completed 2.7.5 implementation plan, local validation results, and remaining build/device checks. |
 | `LICENSE` | Project license. |
 | `screenshots/1.PNG` through `screenshots/5.PNG`, `screenshots/ALL.PNG` | Presentation images. |
 | `scripts/check_objc.py` | Optional syntax-only iOS check using the local `.theos-toolchain` SDK and libclang. |

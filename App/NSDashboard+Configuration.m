@@ -83,6 +83,8 @@ static NSDictionary *NSSavedFilterFingerprint(NEFilterManager *manager) {
     NSConfigurationRecoveryAction lane = [NSConfigurationCoordinator recoveryForManager:manager];
     if (lane != NSConfigurationRecoveryNone) {
         self.preferencesLoaded = NO;
+        self.bootPolicyStatus = NSFilterBootPolicyStatus(nil, NO);
+        self.bootPolicyNeedsAttention = YES;
         self.configurationReady = NO;
         self.attemptedProviderUpgrade = YES;
         self.configurationRecoveryAction = lane;
@@ -124,6 +126,11 @@ static NSDictionary *NSSavedFilterFingerprint(NEFilterManager *manager) {
                       @NS_JAILBREAK_TYPE, NSFilterBootPolicyReport(configuration));
             }
             self.bootPolicyStatus = NSFilterBootPolicyStatus(configuration, self.preferencesLoaded);
+            BOOL fallback = NO;
+            BOOL fallbackReadable = configuration && NSFilterBootPolicyRead(configuration, &fallback, NULL);
+            self.bootPolicyNeedsAttention =
+                !self.preferencesLoaded ||
+                (configuration ? !fallbackReadable || !fallback : self.savedEnabled);
             NSSharedDirectory *directory = owner.directory;
             NSConfigurationAccess *access = owner.localAccess;
             BOOL safeBootstrap = !error && access != nil;
@@ -379,9 +386,6 @@ static NSDictionary *NSSavedFilterFingerprint(NEFilterManager *manager) {
                     if (!self.savedEnabled || ![self.savedActivation isEqual:verifiedActivation]) {
                         self.configurationOperationAction = NSConfigurationRecoveryExternalChange;
                         self.configurationOperationError = @"Saved configuration changed after setup.";
-                    } else if (!self.message.length) {
-                        self.message =
-                            @"Filter configuration read back. Current control provider responding.";
                     }
                     [self refreshTableKeepingPosition];
                 }
@@ -408,8 +412,6 @@ static NSDictionary *NSSavedFilterFingerprint(NEFilterManager *manager) {
         self.busy = NO;
         if (error && error != owner.acknowledgementError) {
             [self recordConfigurationError:error operation:@"Disable filter"];
-        } else if (!error) {
-            self.message = @"Firewall preference verified off. Your rules are saved.";
         }
         [self loadConfigurationWithCompletion:completion];
     };

@@ -883,8 +883,9 @@
         }
         UIAlertController *notice = [UIAlertController
             alertControllerWithTitle:@"Firewall is ON so link may fail"
-                             message:@"If the link fails to load, return to NetShield2 and allow the app. "
-                                     @"Reason: banner notifications are suppressed while in NetShield2."
+                             message:@"If the link fails to open or load, return to NetShield2 and tap "
+                                     @"Allow before trying to open the link again. Banner notifications "
+                                     @"are suppressed while in NetShield2 app."
                       preferredStyle:UIAlertControllerStyleAlert];
         [notice addAction:[UIAlertAction actionWithTitle:@"Open link"
                                                    style:UIAlertActionStyleDefault

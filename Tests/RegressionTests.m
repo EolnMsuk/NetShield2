@@ -652,6 +652,7 @@ static void TestCustomGlobalRules(void) {
     CHECK(!NSValidGlobalRuleKey(NSCustomGlobalRuleKey(@"", @"port:443", @"", @"any")));
     CHECK(!NSValidGlobalRuleKey(NSCustomGlobalRuleKey(@"", @"", @"domain:example.com", @"any")));
     CHECK(!NSValidGlobalRuleKey(NSCustomGlobalRuleKey(@"", @"", @"", @"icmp")));
+    CHECK(!NSValidGlobalRuleKey(NSCustomGlobalRuleKey(@"", @"", @"", @"other")));
     CHECK(!NSValidGlobalRuleKey(NSCustomGlobalRuleKey(@"", key, @"", @"any")));
     NSMutableDictionary *document = [[NSPolicy defaultDocument] mutableCopy];
     document[@"default"] = @"allow";
@@ -672,6 +673,9 @@ static void TestCustomGlobalRules(void) {
              @{@"domain" : @"example.com",
                @"port" : @443,
                @"protocol" : @"udp"},
+             @{@"domain" : @"example.com",
+               @"port" : @443,
+               @"protocol" : @"other"},
              @{@"domain" : @"example.com",
                @"port" : @443}
          ]) {
@@ -728,9 +732,87 @@ static void TestCustomGlobalRules(void) {
     policy = [NSPolicy policyWithDocument:document error:NULL];
     CHECK(![policy allowsIdentity:@"test.app" direction:NSFlowDirectionOutbound destination:match]);
     CHECK(![policy allowsIdentity:nil direction:NSFlowDirectionOutbound destination:@{}]);
-    CHECK([policy allowsIdentity:@"test.app"
-                       direction:NSFlowDirectionOutbound
-                     destination:@{@"protocol" : @"other"}]);
+    CHECK(![policy allowsIdentity:@"test.app"
+                        direction:NSFlowDirectionOutbound
+                      destination:@{@"protocol" : @"other"}]);
+    NSArray<NSDictionary *> *protocolPeers =
+        @[ @{@"protocol" : @"tcp"}, @{@"protocol" : @"udp"}, @{@"protocol" : @"other"}, @{} ];
+    for (NSString *action in @[ @"allow", @"block" ]) {
+        NSString *opposite = [action isEqual:@"allow"] ? @"block" : @"allow";
+        document[@"default"] = opposite;
+        document[@"rules"] = @{@"test.app" : opposite};
+        document[@"globalRules"] = @{all : action};
+        policy = [NSPolicy policyWithDocument:document error:NULL];
+        CHECK(policy);
+        for (NSDictionary *peer in protocolPeers) {
+            NSFlowEvaluation decision = [policy evaluateIdentity:@"test.app"
+                                                       direction:NSFlowDirectionOutbound
+                                                     destination:peer
+                                                          socket:YES];
+            CHECK(decision.disposition == ([action isEqual:@"allow"] ? NSFlowAllow : NSFlowDrop));
+            CHECK(decision.reason == NSFlowReasonGlobal);
+        }
+    }
+    document[@"default"] = @"allow";
+    document[@"rules"] = @{@"test.app" : @"allow"};
+    for (NSString *protocol in @[ @"tcp", @"udp" ]) {
+        document[@"globalRules"] = @{NSCustomGlobalRuleKey(@"", @"", @"", protocol) : @"block"};
+        policy = [NSPolicy policyWithDocument:document error:NULL];
+        CHECK(policy);
+        for (NSDictionary *peer in protocolPeers) {
+            BOOL matches = [peer[@"protocol"] isEqual:protocol];
+            NSFlowEvaluation decision = [policy evaluateIdentity:@"test.app"
+                                                       direction:NSFlowDirectionOutbound
+                                                     destination:peer
+                                                          socket:YES];
+            CHECK(decision.disposition == (matches ? NSFlowDrop : NSFlowAllow));
+            CHECK(decision.reason == (matches ? NSFlowReasonGlobal : NSFlowReasonApp));
+        }
+    }
+    document[@"default"] = @"ask";
+    document[@"rules"] = @{};
+    NSString *directional = NSDirectionalGlobalRuleKey(@"", @"", @"", @"any", @"block-outbound");
+    document[@"globalRules"] = @{directional : @"block-outbound"};
+    policy = [NSPolicy policyWithDocument:document error:NULL];
+    NSDictionary *other = @{@"protocol" : @"other"};
+    NSFlowEvaluation system = [policy evaluateIdentity:@"com.apple.test"
+                                             direction:NSFlowDirectionOutbound
+                                           destination:other
+                                                socket:YES];
+    CHECK(system.disposition == NSFlowDrop && system.reason == NSFlowReasonGlobal);
+    CHECK([policy allowsIdentity:@"com.apple.test" direction:NSFlowDirectionInbound destination:other]);
+    CHECK([policy requiresPermissionForIdentity:@"test.app"
+                                      direction:NSFlowDirectionInbound
+                                    destination:other]);
+    document[@"default"] = @"allow";
+    document[@"globalRules"] = @{NSCustomGlobalRuleKey(@"test.app", hosts, @"port:443", @"any") : @"block"};
+    policy = [NSPolicy policyWithDocument:document error:NULL];
+    NSDictionary *otherMatch = @{@"domain" : @"example.com", @"port" : @443, @"protocol" : @"other"};
+    CHECK(![policy allowsIdentity:@"test.app" direction:NSFlowDirectionOutbound destination:otherMatch]);
+    CHECK([policy allowsIdentity:@"other.app" direction:NSFlowDirectionOutbound destination:otherMatch]);
+    for (NSDictionary *miss in @[
+             @{@"domain" : @"other.com",
+               @"address" : @"192.0.2.99",
+               @"port" : @443,
+               @"protocol" : @"other"},
+             @{@"domain" : @"example.com",
+               @"port" : @80,
+               @"protocol" : @"other"},
+             @{@"domain" : @"example.com", @"protocol" : @"other"}
+         ]) {
+        CHECK([policy allowsIdentity:@"test.app" direction:NSFlowDirectionOutbound destination:miss]);
+    }
+    CHECK([policy needsSocketDestination:other identity:@"test.app"]);
+    CHECK(![policy needsSocketDestination:other identity:@"other.app"]);
+    CHECK([policy needsSocketDestination:@{@"port" : @443, @"protocol" : @"other"} identity:@"test.app"]);
+    CHECK([policy needsSocketDestination:@{@"domain" : @"example.com", @"protocol" : @"other"}
+                                identity:@"test.app"]);
+    CHECK(![policy needsSocketDestination:otherMatch identity:@"test.app"]);
+    NSFlowEvaluation incomplete = [policy evaluateIdentity:@"test.app"
+                                                 direction:NSFlowDirectionOutbound
+                                               destination:other
+                                                    socket:YES];
+    CHECK(incomplete.disposition == NSFlowNeedsEndpoints && incomplete.reason == NSFlowReasonEndpoints);
     CHECK(NSValidDestination(@{
         @"protocol" : @"tcp",
         @"port" : @443,

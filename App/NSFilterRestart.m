@@ -458,17 +458,14 @@ NSString *const NSFilterLocalizedDescription = @"Firewall & Monitor";
                 }
                 self.state = NSFilterRestartEnabledVerified;
                 [self record:@"current-control-heartbeat"];
-                [self
-                    finish:self.restoring
-                               ? [self
-                                     error:[NSString
-                                               stringWithFormat:@"%@ Previous configuration restored and "
-                                                                @"read back with the required fallback "
-                                                                @"policy; its current control provider "
-                                                                @"responded. Control health does not verify "
-                                                                @"every connection.",
-                                                                self.originalError.localizedDescription]]
-                               : nil];
+                [self finish:self.restoring
+                                 ? [self error:[NSString
+                                                   stringWithFormat:@"%@ Previous configuration restored and "
+                                                                    @"read back with the required fallback "
+                                                                    @"policy; its current control provider "
+                                                                    @"responded.",
+                                                                    self.originalError.localizedDescription]]
+                                 : nil];
             }];
         return;
     }

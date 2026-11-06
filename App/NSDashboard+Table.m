@@ -230,6 +230,7 @@ static void NSConfigureDashboardBackground(UITableViewCell *cell, UIColor *tint)
         @(self.configurationOperationAction),
         self.message ?: @"",
         self.bootPolicyStatus ?: @"",
+        @(self.bootPolicyNeedsAttention),
         self.notificationStatus ?: @"",
         self.policyReadError ?: @"",
         @(self.policyMissing),
@@ -328,7 +329,7 @@ static void NSConfigureDashboardBackground(UITableViewCell *cell, UIColor *tint)
         return 6;
     }
     if (section == NSDashboardSectionRequests) {
-        return MAX((NSUInteger)1, [self.monitor[@"requests"] count]);
+        return [self.monitor[@"requests"] count];
     }
     if (section == NSDashboardSectionRules) {
         return MAX((NSUInteger)1, self.identities.count);
@@ -354,6 +355,9 @@ static void NSConfigureDashboardBackground(UITableViewCell *cell, UIColor *tint)
     return MAX((NSUInteger)1, self.filteredActivityGroups.count);
 }
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
+    if (section == NSDashboardSectionRequests && ![self.monitor[@"requests"] count]) {
+        return nil;
+    }
     if (section == NSDashboardSectionGlobalRules && !self.globalRuleKeys.count) {
         return nil;
     }
@@ -365,6 +369,29 @@ static void NSConfigureDashboardBackground(UITableViewCell *cell, UIColor *tint)
         @"", @"SYSTEM RULES", @"APP RULES", @"RECENT ACTIVITY"
     ][section];
 }
+- (NSString *)firewallFooterText {
+    BOOL enabled = self.preferencesLoaded && self.savedEnabled;
+    BOOL fresh = [self hasFreshMonitor];
+    BOOL configurationIssue =
+        !self.preferencesLoaded || !self.configurationReady || self.preferenceReadError.length ||
+        self.configurationRecoveryError.length || self.configurationOperationError.length ||
+        self.configurationRecoveryAction != NSConfigurationRecoveryNone ||
+        self.configurationOperationAction != NSConfigurationRecoveryNone || self.bootPolicyNeedsAttention;
+    // A removed policy while normally off does not imply a provider failure.
+    BOOL policyIssue = (self.policyReadError.length && !self.policyMissing) ||
+                       (enabled && (!self.policy || self.policyMissing));
+    BOOL providerIssue =
+        enabled && (!fresh || self.monitorReadError.length ||
+                    (fresh && ([self.monitor[@"policyError"] length] || [self.monitor[@"dnsIssue"] length] ||
+                               [self.monitor[@"droppedWorkCount"] unsignedLongLongValue])));
+    BOOL scopeIssue =
+        enabled &&
+        ((!self.savedBrowserFiltering && !self.savedSocketFiltering) ||
+         (self.policy && self.savedSocketFiltering != [self.policy.document[@"filterSockets"] boolValue]));
+    return configurationIssue || policyIssue || providerIssue || scopeIssue
+               ? (self.bootPolicyStatus ?: @"Fallback policy state unavailable.")
+               : nil;
+}
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     if (section == NSDashboardSectionSystemRules) {
         return [self showsSystemRules] ? @"Tap a system identity to change its rule." : nil;
@@ -374,10 +401,12 @@ static void NSConfigureDashboardBackground(UITableViewCell *cell, UIColor *tint)
         return @"Overrides app & system rules.";
     }
     if (section == NSDashboardSectionFirewall) {
-        return [NSString stringWithFormat:@"Rules are saved when firewall is turned off. %@",
-                                          self.bootPolicyStatus ?: @"Fallback policy state unavailable."];
+        return [self firewallFooterText];
     }
     if (section == NSDashboardSectionRequests) {
+        if (![self.monitor[@"requests"] count]) {
+            return nil;
+        }
         return [NSString stringWithFormat:@"During this filter session: %@ connections rejected at queue "
                                           @"capacity; %@ older requests removed. ",
                                           self.monitor[@"overflowCount"] ?: @0,
@@ -565,6 +594,9 @@ static void NSConfigureDashboardBackground(UITableViewCell *cell, UIColor *tint)
     NSStyleSectionHeader(view);
 }
 - (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section {
+    if (section == NSDashboardSectionRequests && ![self.monitor[@"requests"] count]) {
+        return CGFLOAT_MIN;
+    }
     if (section == NSDashboardSectionGlobalRules) {
         return self.globalRuleKeys.count ? UITableViewAutomaticDimension : CGFLOAT_MIN;
     }
@@ -573,6 +605,10 @@ static void NSConfigureDashboardBackground(UITableViewCell *cell, UIColor *tint)
                : UITableViewAutomaticDimension;
 }
 - (CGFloat)tableView:(UITableView *)tableView heightForFooterInSection:(NSInteger)section {
+    if ((section == NSDashboardSectionFirewall && ![self firewallFooterText].length) ||
+        (section == NSDashboardSectionRequests && ![self.monitor[@"requests"] count])) {
+        return CGFLOAT_MIN;
+    }
     if (section == NSDashboardSectionAddGlobalRule && self.globalRuleKeys.count) {
         return CGFLOAT_MIN;
     }
@@ -629,13 +665,14 @@ static void NSConfigureDashboardBackground(UITableViewCell *cell, UIColor *tint)
     cell.imageView.image = nil;
     UIColor *rowTint = nil;
     cell.accessoryView = nil;
+    cell.accessibilityHint = nil;
     cell.selectionStyle = UITableViewCellSelectionStyleDefault;
     cell.textLabel.numberOfLines = 0;
     cell.detailTextLabel.numberOfLines = 0;
     cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
     if (path.section == NSDashboardSectionFirewall && path.row == 0) {
         cell.textLabel.text = @"Firewall";
-        cell.detailTextLabel.text = @"Control internet access for your apps";
+        cell.detailTextLabel.text = @"Enable firewall and monitor";
         cell.imageView.image = [UIImage systemImageNamed:@"shield.lefthalf.filled"];
         UISwitch *toggle = [UISwitch new];
         toggle.on = self.savedEnabled;
@@ -677,8 +714,7 @@ static void NSConfigureDashboardBackground(UITableViewCell *cell, UIColor *tint)
             } else if (self.savedBrowserFiltering && self.savedSocketFiltering) {
                 detail = @"Browser and socket filtering configured.";
             } else if (self.savedBrowserFiltering) {
-                detail =
-                    @"Browser filtering configured. Enable Filter System Sockets for other app connections.";
+                detail = @"Browser filtering configured. Socket filtering is off.";
             } else if (self.savedSocketFiltering) {
                 detail = @"Socket filtering configured. Browser filtering is off.";
             } else {
@@ -732,9 +768,6 @@ static void NSConfigureDashboardBackground(UITableViewCell *cell, UIColor *tint)
             [details addObject:[NSString stringWithFormat:@"Control work skipped under load: %@.",
                                                           self.monitor[@"droppedWorkCount"]]];
         }
-        if (healthy) {
-            [details addObject:@"Control health does not verify every connection."];
-        }
         if (self.message.length && !self.configurationRecoveryError.length) {
             [details addObject:self.message];
         }
@@ -742,7 +775,10 @@ static void NSConfigureDashboardBackground(UITableViewCell *cell, UIColor *tint)
             cell.accessoryType = UITableViewCellAccessoryNone;
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
         } else {
-            [details addObject:@"Tap to refresh saved preferences and policy."];
+            cell.accessibilityHint = @"Refreshes saved preferences and policy.";
+            if ([self firewallFooterText].length) {
+                [details addObject:@"Tap to refresh saved preferences and policy."];
+            }
         }
         cell.detailTextLabel.text = [details componentsJoinedByString:@"\n"];
     } else if (path.section == NSDashboardSectionFirewall && path.row == 2) {
@@ -761,8 +797,7 @@ static void NSConfigureDashboardBackground(UITableViewCell *cell, UIColor *tint)
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
     } else if (path.section == NSDashboardSectionFirewall && path.row == 1) {
         cell.textLabel.text = @"Filter System Sockets";
-        cell.detailTextLabel.text =
-            @"Required to filter all app network. Only disable if an app crashes on launch";
+        cell.detailTextLabel.text = @"Required to filter all app network.";
         UISwitch *toggle = [UISwitch new];
         toggle.on = [self.policy.document[@"filterSockets"] boolValue];
         toggle.enabled =
@@ -782,20 +817,13 @@ static void NSConfigureDashboardBackground(UITableViewCell *cell, UIColor *tint)
             cell.accessoryType = UITableViewCellAccessoryNone;
         }
     } else if (path.section == NSDashboardSectionRequests) {
-        NSArray *requests = self.monitor[@"requests"];
-        if (!requests.count) {
-            cell.textLabel.text = @"No apps waiting";
-            cell.accessoryType = UITableViewCellAccessoryNone;
-        } else {
-            NSDictionary *request = requests[path.row];
-            cell.textLabel.text = NSIdentityDisplayName(request[@"identity"]);
-            cell.detailTextLabel.text = [request[@"expired"] boolValue]
-                                            ? @"Blocked while waiting. Tap to decide."
-                                            : @"Tap to allow or keep blocking";
-            cell.detailTextLabel.text = [cell.detailTextLabel.text
-                stringByAppendingFormat:@"\nFirst requested peer: %@",
-                                        NSDestinationSummary(request[@"destination"])];
-        }
+        NSDictionary *request = self.monitor[@"requests"][path.row];
+        cell.textLabel.text = NSIdentityDisplayName(request[@"identity"]);
+        cell.detailTextLabel.text = [request[@"expired"] boolValue] ? @"Blocked while waiting. Tap to decide."
+                                                                    : @"Tap to allow or keep blocking";
+        cell.detailTextLabel.text =
+            [cell.detailTextLabel.text stringByAppendingFormat:@"\nFirst requested peer: %@",
+                                                               NSDestinationSummary(request[@"destination"])];
     } else if (path.section == NSDashboardSectionAddGlobalRule) {
         cell.textLabel.text = @"Add a Custom Rule";
         cell.textLabel.textColor = UIColor.systemGreenColor;

@@ -1,3 +1,11 @@
+# 2.7.5
+
+- Global rules using UDP & TCP now apply to all protocols delivered by iOS, including non-TCP/UDP traffic and flows without protocol metadata. TCP-only and UDP-only rules remain protocol-specific; existing combined rules gain the same coverage.
+- Shortened custom-rule descriptions and clarified combined-protocol coverage.
+- Simplified healthy Firewall status, showing fallback details when an issue needs attention, and shortened the Firewall and Filter System Sockets descriptions.
+- Hid Waiting for Your Decision when no apps are waiting.
+- Moved Domain and IP address directly below Process name in connection details.
+
 # 2.7.4
 
 - Ask Me banners show the requested domain, or the remote IP when a domain is unavailable.

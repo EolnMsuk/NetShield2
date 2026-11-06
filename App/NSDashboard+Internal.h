@@ -53,6 +53,7 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 @property(nonatomic, copy) NSArray<NSString *> *globalRuleKeys;
 @property(nonatomic, copy) NSString *message;
 @property(nonatomic, copy) NSString *bootPolicyStatus;
+@property(nonatomic) BOOL bootPolicyNeedsAttention;
 @property(nonatomic, strong) NSTimer *timer;
 @property(nonatomic, strong) NSReleaseFetch *updateTask;
 @property(nonatomic) BOOL updateCheckWasManual;
@@ -150,6 +151,7 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 - (void)dismissActivityKeyboard;
 - (void)clearActivitySearch;
 - (void)refreshTableKeepingPosition;
+- (NSString *)firewallFooterText;
 @end
 
 @interface NSDashboard (Updates)

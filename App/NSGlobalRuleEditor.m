@@ -150,11 +150,11 @@ typedef NS_ENUM(NSInteger, NSGlobalEditorSection) {
 }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     return @[
-        @"Every selected condition must match. Leave apps, destinations and ports unrestricted to apply the action to all traffic for the selected protocol. Saved in Global Rules, overriding app rules and the iOS system traffic allowance. Directional rules leave the opposite direction to other rules or the default policy, including Ask Me. Matching custom rules use blocking priority. Legacy rules keep their ordered address, exact domain, DNS block fallback, remote port, then local port precedence; an earlier allow can win.",
+        @"Saved in Global Rules, overriding app rules and the iOS system allowance.",
         @"Select one or more apps. Tap a checked app to remove it, or choose All apps to clear the selection.",
-        @"Separate entries with commas, e.g. example.com, 192.168.1.10-192.168.1.20. Blank means all destinations. Bare and www domains are separate.",
+        @"Separate entries with commas, e.g. example.com, 192.168.1.10-192.168.1.20. Blank means all destinations.",
         @"Choose remote or local, then enter port numbers separated by commas. Blank means all ports.",
-        @"TCP or UDP applies only when iOS reports that protocol. UDP & TCP also covers browser flows whose protocol is unavailable."
+        @"UDP & TCP covers all protocols available."
     ][section];
 }
 - (UIMenu *)menuForValues:(NSArray<NSString *> *)values
