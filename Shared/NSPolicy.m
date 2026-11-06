@@ -41,10 +41,8 @@ static BOOL NSCustomRuleApplies(NSDictionary *rule, NSString *identity, NSDictio
         return NO;
     }
     NSString *protocol = rule[@"protocol"];
-    // Browser flows do not expose their transport protocol.
-    return [protocol isEqual:@"any"]
-               ? (!destination[@"protocol"] || [@[ @"tcp", @"udp" ] containsObject:destination[@"protocol"]])
-               : [protocol isEqual:destination[@"protocol"]];
+    // Combined rules cover every delivered protocol, including other and missing metadata.
+    return [protocol isEqual:@"any"] || [protocol isEqual:destination[@"protocol"]];
 }
 static BOOL NSMissingGlobalEndpoint(NSString *key, NSString *action, NSDictionary *destination) {
     BOOL needsAddress =

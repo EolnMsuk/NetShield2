@@ -70,16 +70,15 @@ static inline NSArray<NSArray<NSString *> *> *NSConnectionDetailRows(NSDictionar
                                : [direction isEqual:@"outbound"] ? @"Outgoing"
                                                                  : @"Unavailable from iOS";
     NSString *protocol = destination[@"protocol"];
-    NSMutableArray *rows = [NSMutableArray arrayWithArray:@[
-        @[ @"Direction", directionTitle ],
-        @[ @"Protocol", protocol.length ? protocol.uppercaseString : @"Unavailable from iOS" ]
-    ]];
+    NSMutableArray *rows = [NSMutableArray new];
     for (NSArray *field in @[ @[ @"domain", @"Domain" ], @[ @"address", @"IP address" ] ]) {
         NSString *value = NSCleanDestinationHost(destination[field[0]]);
         if (value.length) {
             [rows addObject:@[ field[1], value ]];
         }
     }
+    [rows addObject:@[ @"Direction", directionTitle ]];
+    [rows addObject:@[ @"Protocol", protocol.length ? protocol.uppercaseString : @"Unavailable from iOS" ]];
     for (NSArray *field in @[ @[ @"localPort", @"Local port" ], @[ @"port", @"Remote port" ] ]) {
         NSNumber *port = destination[field[0]];
         if (port.integerValue >= 1 && port.integerValue <= 65535) {
