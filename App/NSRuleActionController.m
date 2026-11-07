@@ -247,6 +247,15 @@
     [super viewDidDisappear:animated];
     [self clearCopyFeedback];
 }
+- (void)finishRuleSelectionWithRules:(NSArray<NSString *> *)rules message:(NSString *)message {
+    if (rules != nil) {
+        self.selectedRules = rules;
+    }
+    self.message = message;
+    [self clearCopyFeedback];
+    [self.tableView reloadData];
+    self.tableView.userInteractionEnabled = YES;
+}
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)path {
     [tableView deselectRowAtIndexPath:path animated:YES];
     NSIndexPath *visiblePath = path;
@@ -266,15 +275,15 @@
     }
     NSString *rule = self.choices[path.row][@"rule"];
     if (self.keepsRuleSelectionsOpen && [NSDirectionRuleValues() containsObject:rule]) {
+        if (!tableView.userInteractionEnabled) {
+            return;
+        }
         if (!self.allowsRuleDeselection && [self.selectedRules containsObject:rule]) {
             return;
         }
         void (^save)(void) = self.choices[path.row][@"handler"];
         tableView.userInteractionEnabled = NO;
         save();
-        tableView.userInteractionEnabled = YES;
-        [self clearCopyFeedback];
-        [tableView reloadData];
         return;
     }
     tableView.userInteractionEnabled = NO;

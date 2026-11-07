@@ -1,3 +1,7 @@
+# 2.7.6
+
+- App Rules and System Rules now show the saved checkmarks as soon as you select or clear a choice in the open sheet.
+
 # 2.7.5
 
 - Global rules using UDP & TCP now apply to all protocols delivered by iOS, including non-TCP/UDP traffic and flows without protocol metadata. TCP-only and UDP-only rules remain protocol-specific; existing combined rules gain the same coverage.

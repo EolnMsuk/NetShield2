@@ -16,4 +16,6 @@
 @property(nonatomic, copy) NSString *clipboardText;
 + (instancetype)controllerWithTitle:(NSString *)title message:(NSString *)message;
 - (void)addActionWithTitle:(NSString *)title rule:(NSString *)rule handler:(void (^)(void))handler;
+// Call on the main queue; nil rules retain the last confirmed choices.
+- (void)finishRuleSelectionWithRules:(NSArray<NSString *> *)rules message:(NSString *)message;
 @end

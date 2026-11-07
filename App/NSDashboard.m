@@ -634,13 +634,20 @@
                                   [self removeAppRuleForIdentity:identity completion:nil];
                                   return;
                               }
+                              __block NSArray<NSString *> *committedRules = nil;
                               [self
                                   updatePolicy:^BOOL(NSMutableDictionary *document, NSError **error) {
                                       if (key) {
                                           document[key] = action;
                                       } else {
                                           if (!connection) {
-                                              return NSToggleAppRule(document, identity, action, error);
+                                              if (!NSToggleAppRule(document, identity, action, error)) {
+                                                  return NO;
+                                              }
+                                              // Capture while locked; publish only after the save succeeds.
+                                              committedRules =
+                                                  [NSAppRuleSelections(document[@"rules"][identity]) copy];
+                                              return YES;
                                           }
                                           NSMutableDictionary *rules = document[@"rules"];
                                           rules[identity] = NSAppRuleBySelecting(rules[identity], action);
@@ -648,10 +655,9 @@
                                       return YES;
                                   }
                                   completion:^(BOOL saved) {
-                                      weakAlert.message = saved ? nil : self.message;
-                                      if (self.policy) {
-                                          weakAlert.selectedRules = NSAppRuleSelections(
-                                              self.policy.document[@"rules"][identity ?: @""]);
+                                      if (!key && !connection) {
+                                          [weakAlert finishRuleSelectionWithRules:saved ? committedRules : nil
+                                                                          message:saved ? nil : self.message];
                                       }
                                   }];
                           }];

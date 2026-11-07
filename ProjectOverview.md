@@ -157,7 +157,6 @@ NetShield2/
 | --- | --- |
 | `README.md` | User guide and hosted web depiction destination. |
 | `ProjectOverview.md` | Project architecture and build inputs. |
-| `plan.md` | Completed 2.7.5 implementation plan, local validation results, and remaining build/device checks. |
 | `LICENSE` | Project license. |
 | `screenshots/1.PNG` through `screenshots/5.PNG`, `screenshots/ALL.PNG` | Presentation images. |
 | `scripts/check_objc.py` | Optional syntax-only iOS check using the local `.theos-toolchain` SDK and libclang. |
