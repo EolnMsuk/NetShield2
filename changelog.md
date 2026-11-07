@@ -1,3 +1,8 @@
+# 2.7.8
+
+- Locked NetShield2 to portrait on iPhone and iPad, with full-screen mode on iPad.
+- Actionable Ask Me banners now say "Long press banner to Allow or Block".
+
 # 2.7.7
 
 - Hide empty App Rules and System Rules sections, including their placeholder messages, headings, descriptions, and spacing. System Rules remain hidden while Allow all iOS system traffic is enabled.
