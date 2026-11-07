@@ -13,17 +13,21 @@ A customizable firewall & live network monitor with actionable notifications for
 
 ## Options
 
-- **Firewall:** on/off; enables/disables the content filter and rules.
-- **Filter System Sockets:** when enabled, the firewall is capable of filtering network for all apps and processes. Disable only if an app is crashing on launch.
-- **Allow all iOS system processes:** when enabled, processes starting with `com.apple` are allowed without prompts or permission notifications.
+- **Firewall:** On/Off; enables/disables the content filter and rules.
+- **Filter System Sockets:** When enabled, the firewall is capable of filtering network for all apps and processes. Disable only if an app is crashing on launch.
+- **Allow all iOS system processes:** When enabled, processes starting with `com.apple` are allowed without prompts or permission notifications.
 - **Unidentified:** Allowed by default, set to blocked to prevent unknown processes from accessing network (not recommended).
 - **Default Rule:** Ask me by default, changing this to Allow or Block will prevent prompting / notifications and block or allow any new requests.
-- **Notifications:** notification settings and instructions for banners and Do Not Disturb.
+- **Notifications:** Notification settings and instructions for banners and Do Not Disturb.
 - **Configuration:** Export Rules and Recent Activity, Reset Rules & History,  Settings, Check for Updates, GitHub Link, and Support Developer Links.
 - **Check for Updates:** Choose Check Now, Check at Launch, Check Daily (the default) or Disable Updates. Check Now always remains available.
 - **Global Rules:** use the Add Custom Rule button to add a global rule (direction, process, domain/ip, remote/local port, udp/tcp etc).
 - **App Rules / System Rules:** Tapping a checked rule clears it; clearing the last checkmark restores **Default Rule**.
-- **Recent Activity:** the rolling 300-event record grouped by process, IP/domain, remote port, direction and allowed/blocked outcome.
+- **Recent Activity:** The rolling 300-event record grouped by process, IP/domain, remote port, direction and allowed/blocked outcome.
+
+## Known Issues
+
+- **Coverage Gap:** When a user enables the firewall, then reboots into non-jailbrokeen state, then re-jailbreaks, the first 10-30 seconds (after boot) will allow all processes to access internet (while the package loads). This is a side-effect from a previous fix, where users would not have internet while in a non jailbroken state if the firewall was left ON (before rebooting). That issue was fixed by allowing all network activity while the firewall is not loaded. The coverage gap is worth keeping the no-internet while not jailbroken issue imo. If a fix is found that doesn't conflict, I will update the readme / release.
 
 ## Coverage
 
