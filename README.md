@@ -27,7 +27,7 @@ A customizable firewall & live network monitor with actionable notifications for
 
 ## Known Issues
 
-- **Coverage Gap:** When a user enables the firewall, then reboots into non-jailbrokeen state, then re-jailbreaks, the first 10-30 seconds (after boot) will allow all processes to access internet (while the package loads). This is a side-effect from a previous fix, where users would not have internet while in a non jailbroken state if the firewall was left ON (before rebooting). That issue was fixed by allowing all network activity while the firewall is not loaded. The coverage gap is worth keeping the no-internet while not jailbroken issue imo. If a fix is found that doesn't conflict, I will update the readme / release.
+- **Coverage Gap:** When a user enables the firewall, then reboots into non-jailbrokeen state, then re-jailbreaks, the first 10-30 seconds (after boot) will allow all processes to access internet (while the package loads). This is a side-effect from a previous fix, where users would not have internet while in a non jailbroken state if the firewall was left ON (before rebooting). That issue was fixed by allowing all network activity while the package is not loaded. The coverage gap is worth keeping vs the no-internet while not jailbroken issue imo. If a fix is found that doesn't conflict, I will update the readme / release.
 
 ## Coverage
 
