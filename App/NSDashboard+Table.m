@@ -143,8 +143,16 @@ static void NSConfigureDashboardBackground(UITableViewCell *cell, UIColor *tint)
     }
     return NO;
 }
+- (BOOL)showsAppRules {
+    return self.identities.count > 0;
+}
 - (BOOL)showsSystemRules {
-    return self.policy && ![self.policy.document[@"allowAppleSystemProcesses"] boolValue];
+    return self.policy && ![self.policy.document[@"allowAppleSystemProcesses"] boolValue] &&
+           self.systemIdentities.count > 0;
+}
+- (BOOL)isRuleSectionHidden:(NSInteger)section {
+    return (section == NSDashboardSectionRules && ![self showsAppRules]) ||
+           (section == NSDashboardSectionSystemRules && ![self showsSystemRules]);
 }
 - (NSArray<NSString *> *)identitiesForSection:(NSInteger)section {
     return section == NSDashboardSectionSystemRules ? self.systemIdentities : self.identities;
@@ -332,10 +340,10 @@ static void NSConfigureDashboardBackground(UITableViewCell *cell, UIColor *tint)
         return [self.monitor[@"requests"] count];
     }
     if (section == NSDashboardSectionRules) {
-        return MAX((NSUInteger)1, self.identities.count);
+        return self.identities.count;
     }
     if (section == NSDashboardSectionSystemRules) {
-        return [self showsSystemRules] ? MAX((NSUInteger)1, self.systemIdentities.count) : 0;
+        return [self showsSystemRules] ? self.systemIdentities.count : 0;
     }
     if (section == NSDashboardSectionNotifications) {
         return 2;
@@ -361,7 +369,7 @@ static void NSConfigureDashboardBackground(UITableViewCell *cell, UIColor *tint)
     if (section == NSDashboardSectionGlobalRules && !self.globalRuleKeys.count) {
         return nil;
     }
-    if (section == NSDashboardSectionSystemRules && ![self showsSystemRules]) {
+    if ([self isRuleSectionHidden:section]) {
         return nil;
     }
     return @[
@@ -413,7 +421,7 @@ static void NSConfigureDashboardBackground(UITableViewCell *cell, UIColor *tint)
                                           self.monitor[@"evictedRequestCount"] ?: @0];
     }
     if (section == NSDashboardSectionRules) {
-        return @"Tap an app identity to change its rule.";
+        return [self showsAppRules] ? @"Tap an app identity to change its rule." : nil;
     }
     if (section == NSDashboardSectionActivity) {
         return @"Up to 300 recorded events";
@@ -421,9 +429,11 @@ static void NSConfigureDashboardBackground(UITableViewCell *cell, UIColor *tint)
     return nil;
 }
 - (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section {
+    if ([self isRuleSectionHidden:section]) {
+        return nil;
+    }
     BOOL scoped = section == NSDashboardSectionActivity || section == NSDashboardSectionRules ||
-                  section == NSDashboardSectionGlobalRules ||
-                  (section == NSDashboardSectionSystemRules && [self showsSystemRules]);
+                  section == NSDashboardSectionGlobalRules || section == NSDashboardSectionSystemRules;
     NSString *heading = [self tableView:tableView titleForHeaderInSection:section];
     BOOL globalRulesHeader = section == NSDashboardSectionGlobalRules && self.globalRuleKeys.count;
     if (heading.length || globalRulesHeader) {
@@ -600,9 +610,7 @@ static void NSConfigureDashboardBackground(UITableViewCell *cell, UIColor *tint)
     if (section == NSDashboardSectionGlobalRules) {
         return self.globalRuleKeys.count ? UITableViewAutomaticDimension : CGFLOAT_MIN;
     }
-    return section == NSDashboardSectionSystemRules && ![self showsSystemRules]
-               ? CGFLOAT_MIN
-               : UITableViewAutomaticDimension;
+    return [self isRuleSectionHidden:section] ? CGFLOAT_MIN : UITableViewAutomaticDimension;
 }
 - (CGFloat)tableView:(UITableView *)tableView heightForFooterInSection:(NSInteger)section {
     if ((section == NSDashboardSectionFirewall && ![self firewallFooterText].length) ||
@@ -620,9 +628,7 @@ static void NSConfigureDashboardBackground(UITableViewCell *cell, UIColor *tint)
     if (section == NSDashboardSectionAdvanced) {
         return CGFLOAT_MIN;
     }
-    return section == NSDashboardSectionSystemRules && ![self showsSystemRules]
-               ? CGFLOAT_MIN
-               : UITableViewAutomaticDimension;
+    return [self isRuleSectionHidden:section] ? CGFLOAT_MIN : UITableViewAutomaticDimension;
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)path {
     UITableViewCell *cached = nil;
@@ -839,24 +845,16 @@ static void NSConfigureDashboardBackground(UITableViewCell *cell, UIColor *tint)
         cell.textLabel.text = [self globalRuleTitle:key];
         cell.detailTextLabel.text = [self ruleTitle:rule];
     } else if (path.section == NSDashboardSectionRules || path.section == NSDashboardSectionSystemRules) {
-        NSArray<NSString *> *identities = [self identitiesForSection:path.section];
-        if (!identities.count) {
-            cell.textLabel.text = path.section == NSDashboardSectionSystemRules
-                                      ? @"System processes appear here when they connect"
-                                      : @"Apps appear here when they connect";
-            cell.accessoryType = UITableViewCellAccessoryNone;
-        } else {
-            NSString *identity = identities[path.row];
-            id rule = self.policy.document[@"rules"][identity];
-            rowTint = NSAppRuleColor(rule);
-            cell.textLabel.text = NSIdentityDisplayName(identity);
-            cell.detailTextLabel.text =
-                [self.policy automaticallyAllowsIdentity:identity]
-                    ? [NSString stringWithFormat:
-                                    @"Allowed by iOS setting unless a global rule matches. Saved rule: %@",
-                                    NSAppRuleSummary(self.policy.document[@"rules"][identity])]
-                    : NSAppRuleSummary(self.policy.document[@"rules"][identity]);
-        }
+        NSString *identity = [self identitiesForSection:path.section][path.row];
+        id rule = self.policy.document[@"rules"][identity];
+        rowTint = NSAppRuleColor(rule);
+        cell.textLabel.text = NSIdentityDisplayName(identity);
+        cell.detailTextLabel.text =
+            [self.policy automaticallyAllowsIdentity:identity]
+                ? [NSString
+                      stringWithFormat:@"Allowed by iOS setting unless a global rule matches. Saved rule: %@",
+                                       NSAppRuleSummary(self.policy.document[@"rules"][identity])]
+                : NSAppRuleSummary(self.policy.document[@"rules"][identity]);
     } else if (path.section == NSDashboardSectionNotifications) {
         cell.textLabel.text = path.row == 0 ? @"Notification Settings" : @"Banners & Do Not Disturb";
         cell.detailTextLabel.text =

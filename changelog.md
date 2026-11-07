@@ -1,3 +1,7 @@
+# 2.7.7
+
+- Hide empty App Rules and System Rules sections, including their placeholder messages, headings, descriptions, and spacing. System Rules remain hidden while Allow all iOS system traffic is enabled.
+
 # 2.7.6
 
 - App Rules and System Rules now show the saved checkmarks as soon as you select or clear a choice in the open sheet.
