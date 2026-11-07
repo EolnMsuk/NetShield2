@@ -20,7 +20,7 @@ static NSString *NSPermissionNotificationBody(NSDictionary *request) {
         return peer.length ? [@"Open NetShield2 to review " stringByAppendingString:peer]
                            : @"Open NetShield2 to review this request";
     }
-    NSString *instruction = @"Long press banner to Allow or Block";
+    NSString *instruction = @"Long press to Allow or Block";
     return peer.length ? [peer stringByAppendingFormat:@"\n%@", instruction] : instruction;
 }
 

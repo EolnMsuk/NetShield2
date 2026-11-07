@@ -1,7 +1,7 @@
 # 2.7.8
 
 - Locked NetShield2 to portrait on iPhone and iPad, with full-screen mode on iPad.
-- Actionable Ask Me banners now say "Long press banner to Allow or Block".
+- Actionable Ask Me banners now say "Long press to Allow or Block".
 
 # 2.7.7
 
