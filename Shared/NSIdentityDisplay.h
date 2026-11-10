@@ -6,24 +6,37 @@ static inline NSString *NSIdentityDisplayName(id identity) {
     if (![identity isKindOfClass:NSString.class] || ![identity length]) {
         return @"Unidentified app";
     }
-    BOOL suppressMainSuffix = [identity hasPrefix:@".Apple.com"] || [identity hasPrefix:@"Apple.com"];
-    NSRange period = [identity rangeOfString:@"."];
-    NSString *name =
-        period.location == NSNotFound ? identity : [identity substringFromIndex:period.location + 1];
+    NSString *rawIdentity = identity;
+    NSRange period = [rawIdentity rangeOfString:@"." options:NSLiteralSearch];
+    if (period.location == NSNotFound) {
+        return rawIdentity;
+    }
+    NSRange comDelimiter = [rawIdentity rangeOfString:@".com." options:NSLiteralSearch];
     BOOL hasMainPrefix = NO;
-    if (period.location != NSNotFound && period.location > 0 &&
-        ([name hasPrefix:@"com."] || [name isEqualToString:@"com"])) {
-        NSRange lettersOrNumbers = [identity rangeOfString:@"[\\p{L}\\p{N}]"
-                                                   options:NSRegularExpressionSearch
-                                                     range:NSMakeRange(0, period.location)];
+    if (comDelimiter.location != NSNotFound && comDelimiter.location > 0) {
+        NSRange lettersOrNumbers = [rawIdentity rangeOfString:@"[\\p{L}\\p{N}]"
+                                                      options:NSRegularExpressionSearch
+                                                        range:NSMakeRange(0, comDelimiter.location)];
         hasMainPrefix = lettersOrNumbers.location != NSNotFound;
     }
-    name = [name stringByReplacingOccurrencesOfString:@"com." withString:@""];
-    name = [name stringByReplacingOccurrencesOfString:@"org." withString:@""];
+    // Include the starting period so namespace removal can match both sides of "com".
+    NSUInteger nameStart = hasMainPrefix ? comDelimiter.location : period.location;
+    NSString *name = [rawIdentity substringFromIndex:nameStart];
+    if ([name isEqualToString:@".com"]) {
+        return rawIdentity;
+    }
+    if (comDelimiter.location != NSNotFound) {
+        // Keep the trailing period so consecutive "com" components can each match.
+        name = [name stringByReplacingOccurrencesOfString:@"\\.com(?=\\.)"
+                                               withString:@""
+                                                  options:NSRegularExpressionSearch
+                                                    range:NSMakeRange(0, name.length)];
+    }
+    name = [[name substringFromIndex:1] stringByReplacingOccurrencesOfString:@"org." withString:@""];
     if (!name.length) {
         return @"Unidentified app";
     }
-    return hasMainPrefix && !suppressMainSuffix ? [name stringByAppendingString:@" (main)"] : name;
+    return hasMainPrefix ? [name stringByAppendingString:@" (main)"] : name;
 }
 
 // For presentation and copying only. Keep the raw identity for rule operations.
