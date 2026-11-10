@@ -10,11 +10,17 @@
 
 # 2.8.5
 
-- App selections in Add and Edit Custom Rule now request native checkmark revalidation on iOS 16-18, with menu rebuilding and App-row layout deferred until dismissal to address scroll resets.
+- Attempted fix2: App selections in Add and Edit Custom Rule now request native checkmark revalidation on iOS 16-18, with menu rebuilding and App-row layout deferred until dismissal to address scroll resets.
 
 # 2.8.4
 
-- Fixed App checkmarks in Add/Edit Custom Rule on iOS 16-18 so they update as you select or deselect processes while the dropdown stays open at its scroll position.
+- Attempted fix: App checkmarks in Add/Edit Custom Rule on iOS 16-18 so they update as you select or deselect processes while the dropdown stays open at its scroll position.
+
+# 2.8.3
+
+- Failed fix: Fixed the App dropdown in Add/Edit Custom Rule jumping to the top when selecting or deselecting processes on iOS 16-18.
+- Omit ` (main)` from sanitized process names whose raw identity starts with `.Apple.com` or `Apple.com`.
+- Updated screenshots / example images.
 
 # 2.8.1
 
