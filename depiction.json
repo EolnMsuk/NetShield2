@@ -13,24 +13,40 @@
           "itemCornerRadius": 8,
           "screenshots": [
             {
-              "url": "https://raw.githubusercontent.com/EolnMsuk/NetShield2/refs/heads/main/screenshots/1.PNG",
-              "accessibilityText": "NetShield2 screenshot 1 of 5"
+              "url": "https://raw.githubusercontent.com/EolnMsuk/NetShield2/refs/heads/main/screenshots/1SS.PNG",
+              "accessibilityText": "NetShield2 screenshot 1 of 9"
             },
             {
-              "url": "https://raw.githubusercontent.com/EolnMsuk/NetShield2/refs/heads/main/screenshots/2.PNG",
-              "accessibilityText": "NetShield2 screenshot 2 of 5"
+              "url": "https://raw.githubusercontent.com/EolnMsuk/NetShield2/refs/heads/main/screenshots/2SS.PNG",
+              "accessibilityText": "NetShield2 screenshot 2 of 9"
             },
             {
-              "url": "https://raw.githubusercontent.com/EolnMsuk/NetShield2/refs/heads/main/screenshots/3.PNG",
-              "accessibilityText": "NetShield2 screenshot 3 of 5"
+              "url": "https://raw.githubusercontent.com/EolnMsuk/NetShield2/refs/heads/main/screenshots/3SS.PNG",
+              "accessibilityText": "NetShield2 screenshot 3 of 9"
             },
             {
-              "url": "https://raw.githubusercontent.com/EolnMsuk/NetShield2/refs/heads/main/screenshots/4.PNG",
-              "accessibilityText": "NetShield2 screenshot 4 of 5"
+              "url": "https://raw.githubusercontent.com/EolnMsuk/NetShield2/refs/heads/main/screenshots/4SS.PNG",
+              "accessibilityText": "NetShield2 screenshot 4 of 9"
             },
             {
-              "url": "https://raw.githubusercontent.com/EolnMsuk/NetShield2/refs/heads/main/screenshots/5.PNG",
-              "accessibilityText": "NetShield2 screenshot 5 of 5"
+              "url": "https://raw.githubusercontent.com/EolnMsuk/NetShield2/refs/heads/main/screenshots/5SS.PNG",
+              "accessibilityText": "NetShield2 screenshot 5 of 9"
+            },
+            {
+              "url": "https://raw.githubusercontent.com/EolnMsuk/NetShield2/refs/heads/main/screenshots/6SS.PNG",
+              "accessibilityText": "NetShield2 screenshot 6 of 9"
+            },
+            {
+              "url": "https://raw.githubusercontent.com/EolnMsuk/NetShield2/refs/heads/main/screenshots/7SS.PNG",
+              "accessibilityText": "NetShield2 screenshot 7 of 9"
+            },
+            {
+              "url": "https://raw.githubusercontent.com/EolnMsuk/NetShield2/refs/heads/main/screenshots/8SS.PNG",
+              "accessibilityText": "NetShield2 screenshot 8 of 9"
+            },
+            {
+              "url": "https://raw.githubusercontent.com/EolnMsuk/NetShield2/refs/heads/main/screenshots/9SS.PNG",
+              "accessibilityText": "NetShield2 screenshot 9 of 9"
             }
           ]
         },

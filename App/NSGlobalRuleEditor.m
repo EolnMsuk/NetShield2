@@ -14,15 +14,90 @@ typedef NS_ENUM(NSInteger, NSGlobalEditorSection) {
     NSGlobalEditorProtocol,
 };
 
+@class NSGlobalRuleAppButton;
+
 @interface NSGlobalRuleEditor ()
 @property(nonatomic, strong) NSMutableSet<NSString *> *selectedIdentities;
-@property(nonatomic, weak) UIButton *appButton;
+@property(nonatomic, weak) NSGlobalRuleAppButton *appButton;
 @property(nonatomic, strong) UITextField *hostsField;
 @property(nonatomic, strong) UITextField *portsField;
 @property(nonatomic) BOOL localPort;
 @property(nonatomic, copy) NSString *protocol;
 @property(nonatomic, copy) NSString *ruleAction;
+- (void)appMenuWillDisplay:(NSGlobalRuleAppButton *)button;
+- (void)appMenuDidClose:(NSGlobalRuleAppButton *)button;
 @end
+
+@interface NSGlobalRuleAppButton : UIButton
+@property(nonatomic, weak) NSGlobalRuleEditor *editor;
+@property(nonatomic, getter=isMenuActive) BOOL menuActive;
+@property(nonatomic) BOOL refreshAfterDismissal;
+@property(nonatomic) BOOL enterIdentityAfterDismissal;
+@property(nonatomic, copy) NSDictionary<UIActionIdentifier, NSString *> *identitiesByActionIdentifier;
+@end
+
+@implementation NSGlobalRuleAppButton {
+    NSUInteger _menuPresentation;
+}
+- (void)contextMenuInteraction:(UIContextMenuInteraction *)interaction
+    willDisplayMenuForConfiguration:(UIContextMenuConfiguration *)configuration
+                           animator:(id<UIContextMenuInteractionAnimating>)animator {
+    [super contextMenuInteraction:interaction
+        willDisplayMenuForConfiguration:configuration
+                               animator:animator];
+    _menuPresentation++;
+    [self.editor appMenuWillDisplay:self];
+}
+- (void)contextMenuInteraction:(UIContextMenuInteraction *)interaction
+       willEndForConfiguration:(UIContextMenuConfiguration *)configuration
+                      animator:(id<UIContextMenuInteractionAnimating>)animator {
+    NSUInteger presentation = _menuPresentation;
+    [super contextMenuInteraction:interaction willEndForConfiguration:configuration animator:animator];
+    __weak typeof(self) weakSelf = self;
+    void (^finish)(void) = ^{
+        NSGlobalRuleAppButton *button = weakSelf;
+        if (button && button->_menuPresentation == presentation) {
+            [button.editor appMenuDidClose:button];
+        }
+    };
+    if (animator) {
+        [animator addCompletion:finish];
+    } else {
+        dispatch_async(dispatch_get_main_queue(), finish);
+    }
+}
+@end
+
+static UIActionIdentifier const NSAllAppsActionIdentifier = @"netshield.custom-rule.apps.all";
+
+static NSArray<NSString *> *NSSortedAppIdentities(NSSet<NSString *> *identities) {
+    return [identities.allObjects
+        sortedArrayUsingComparator:^NSComparisonResult(NSString *left, NSString *right) {
+            return NSCompareIdentityDisplayNames(left, right);
+        }];
+}
+
+static void
+NSApplyAppMenuSelection(UIMenu *menu,
+                        NSDictionary<UIActionIdentifier, NSString *> *identitiesByActionIdentifier,
+                        NSSet<NSString *> *selectedIdentities) {
+    for (UIMenuElement *element in menu.children) {
+        if ([element isKindOfClass:UIMenu.class]) {
+            NSApplyAppMenuSelection((UIMenu *)element, identitiesByActionIdentifier, selectedIdentities);
+        } else if ([element isKindOfClass:UIAction.class]) {
+            UIAction *action = (UIAction *)element;
+            if ([action.identifier isEqualToString:NSAllAppsActionIdentifier]) {
+                action.state = selectedIdentities.count ? UIMenuElementStateOff : UIMenuElementStateOn;
+            } else {
+                NSString *identity = identitiesByActionIdentifier[action.identifier];
+                if (identity) {
+                    action.state = [selectedIdentities containsObject:identity] ? UIMenuElementStateOn
+                                                                                : UIMenuElementStateOff;
+                }
+            }
+        }
+    }
+}
 
 @implementation NSGlobalRuleEditor
 - (UITextField *)fieldWithPlaceholder:(NSString *)placeholder label:(NSString *)label {
@@ -202,6 +277,9 @@ typedef NS_ENUM(NSInteger, NSGlobalEditorSection) {
     [self presentViewController:picker animated:YES completion:nil];
 }
 - (void)addAppIdentity {
+    if (!self.viewIfLoaded.window || self.isBeingDismissed || self.navigationController.isBeingDismissed) {
+        return;
+    }
     UIAlertController *alert =
         [UIAlertController alertControllerWithTitle:@"Add app by identity"
                                             message:@"Enter the exact iOS app identity. A shortened name "
@@ -230,81 +308,104 @@ typedef NS_ENUM(NSInteger, NSGlobalEditorSection) {
                                       });
                                       return;
                                   }
-                                  [weakSelf.selectedIdentities addObject:identity];
-                                  NSMutableSet *available =
-                                      [NSMutableSet setWithArray:weakSelf.identities ?: @[]];
+                                  NSGlobalRuleEditor *owner = weakSelf;
+                                  if (!owner) {
+                                      return;
+                                  }
+                                  [owner.selectedIdentities addObject:identity];
+                                  NSMutableSet<NSString *> *available =
+                                      [NSMutableSet setWithArray:owner.identities ?: @[]];
                                   [available addObject:identity];
-                                  weakSelf.identities = available.allObjects;
-                                  [weakSelf appSelectionChanged];
+                                  owner.identities = available.allObjects;
+                                  [owner appSelectionChanged];
                               }]];
     [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];
 }
-- (void)appSelectionChanged {
-    [self updateAppButton];
-    [self.tableView performBatchUpdates:nil completion:nil];
-}
-- (void)updateAppButton {
-    UIButton *button = self.appButton;
-    if (!button) {
+- (void)requestAppIdentityFromButton:(NSGlobalRuleAppButton *)button {
+    if (!button || button != self.appButton) {
         return;
     }
-    NSMutableSet *available = [NSMutableSet setWithArray:self.identities ?: @[]];
+    if (button.isMenuActive) {
+        button.enterIdentityAfterDismissal = YES;
+    } else {
+        [self addAppIdentity];
+    }
+}
+- (void)toggleAppIdentity:(NSString *)identity fromButton:(NSGlobalRuleAppButton *)button {
+    if (!button || button != self.appButton) {
+        return;
+    }
+    if (!identity) {
+        [self.selectedIdentities removeAllObjects];
+    } else if ([self.selectedIdentities containsObject:identity]) {
+        [self.selectedIdentities removeObject:identity];
+    } else {
+        [self.selectedIdentities addObject:identity];
+    }
+    [self appSelectionChanged];
+}
+- (UIMenu *)appMenuForButton:(NSGlobalRuleAppButton *)button {
+    NSMutableSet<NSString *> *available = [NSMutableSet setWithArray:self.identities ?: @[]];
     [available unionSet:self.selectedIdentities];
-    NSArray *identities = [available.allObjects
-        sortedArrayUsingComparator:^NSComparisonResult(NSString *left, NSString *right) {
-            return NSCompareIdentityDisplayNames(left, right);
-        }];
-    NSMutableArray *names = [NSMutableArray new];
-    NSMutableArray *apps = [NSMutableArray new];
+    NSMutableArray<UIAction *> *apps = [NSMutableArray new];
+    NSMutableDictionary<UIActionIdentifier, NSString *> *identitiesByActionIdentifier =
+        [NSMutableDictionary new];
+    UIMenuElementAttributes selectionAttributes = 0;
+    if (@available(iOS 16.0, *)) {
+        selectionAttributes = UIMenuElementAttributesKeepsMenuPresented;
+    }
     __weak typeof(self) weakSelf = self;
+    __weak NSGlobalRuleAppButton *weakButton = button;
     UIAction *all = [UIAction actionWithTitle:@"All apps"
                                         image:nil
-                                   identifier:nil
+                                   identifier:NSAllAppsActionIdentifier
                                       handler:^(UIAction *action) {
-                                          [weakSelf.selectedIdentities removeAllObjects];
-                                          [weakSelf appSelectionChanged];
+                                          NSGlobalRuleEditor *owner = weakSelf;
+                                          [owner toggleAppIdentity:nil fromButton:weakButton];
                                       }];
-    all.state = self.selectedIdentities.count ? UIMenuElementStateOff : UIMenuElementStateOn;
-    if (@available(iOS 16.0, *)) {
-        all.attributes = UIMenuElementAttributesKeepsMenuPresented;
-    }
+    all.attributes = selectionAttributes;
     [apps addObject:all];
-    for (NSString *identity in identities) {
-        NSString *name = NSIdentityDisplayName(identity);
-        BOOL selected = [self.selectedIdentities containsObject:identity];
-        if (selected) {
-            [names addObject:name];
-        }
-        UIAction *option = [UIAction actionWithTitle:name
+    for (NSString *identity in NSSortedAppIdentities(available)) {
+        UIActionIdentifier identifier =
+            [@"netshield.custom-rule.apps.identity:" stringByAppendingString:identity];
+        identitiesByActionIdentifier[identifier] = identity;
+        UIAction *option = [UIAction actionWithTitle:NSIdentityDisplayName(identity)
                                                image:nil
-                                          identifier:nil
+                                          identifier:identifier
                                              handler:^(UIAction *action) {
-                                                 if ([weakSelf.selectedIdentities containsObject:identity]) {
-                                                     [weakSelf.selectedIdentities removeObject:identity];
-                                                 } else {
-                                                     [weakSelf.selectedIdentities addObject:identity];
-                                                 }
-                                                 [weakSelf appSelectionChanged];
+                                                 NSGlobalRuleEditor *owner = weakSelf;
+                                                 [owner toggleAppIdentity:identity fromButton:weakButton];
                                              }];
-        option.state = selected ? UIMenuElementStateOn : UIMenuElementStateOff;
-        if (@available(iOS 16.0, *)) {
-            option.attributes = UIMenuElementAttributesKeepsMenuPresented;
-        }
+        option.attributes = selectionAttributes;
         [apps addObject:option];
     }
     UIAction *manual = [UIAction actionWithTitle:@"Add app by identity..."
                                            image:[UIImage systemImageNamed:@"plus"]
-                                      identifier:nil
+                                      identifier:@"netshield.custom-rule.apps.manual"
                                          handler:^(UIAction *action) {
-                                             [weakSelf addAppIdentity];
+                                             [weakSelf requestAppIdentityFromButton:weakButton];
                                          }];
     UIMenu *choices = [UIMenu menuWithTitle:@""
                                       image:nil
-                                 identifier:nil
+                                 identifier:@"netshield.custom-rule.apps.choices"
                                     options:UIMenuOptionsDisplayInline
                                    children:apps];
-    button.menu = [UIMenu menuWithChildren:@[ choices, manual ]];
+    UIMenu *menu = [UIMenu menuWithTitle:@""
+                                   image:nil
+                              identifier:@"netshield.custom-rule.apps.root"
+                                 options:0
+                                children:@[ choices, manual ]];
+    button.identitiesByActionIdentifier = identitiesByActionIdentifier;
+    NSApplyAppMenuSelection(menu, button.identitiesByActionIdentifier, self.selectedIdentities);
+    return menu;
+}
+- (void)updateClosedAppButton:(NSGlobalRuleAppButton *)button resizeRow:(BOOL)resizeRow {
+    button.menu = [self appMenuForButton:button];
+    NSMutableArray<NSString *> *names = [NSMutableArray new];
+    for (NSString *identity in NSSortedAppIdentities(self.selectedIdentities)) {
+        [names addObject:NSIdentityDisplayName(identity)];
+    }
     NSString *label = names.count ? [names componentsJoinedByString:@", "] : @"All apps";
     UIButtonConfiguration *configuration = button.configuration;
     configuration.title = label;
@@ -314,6 +415,49 @@ typedef NS_ENUM(NSInteger, NSGlobalEditorSection) {
     button.accessibilityLabel = @"Apps";
     button.accessibilityValue = label;
     button.accessibilityHint = @"Select one or more apps";
+    if (resizeRow) {
+        [self.tableView performBatchUpdates:nil completion:nil];
+    }
+}
+- (void)appSelectionChanged {
+    NSGlobalRuleAppButton *button = self.appButton;
+    if (!button) {
+        return;
+    }
+    if (!button.isMenuActive) {
+        [self updateClosedAppButton:button resizeRow:YES];
+        return;
+    }
+    // Keep the menu's anchor and row membership stable until dismissal completes.
+    button.refreshAfterDismissal = YES;
+    if (@available(iOS 16.0, *)) {
+        NSSet<NSString *> *selection = [self.selectedIdentities copy];
+        NSDictionary<UIActionIdentifier, NSString *> *identitiesByActionIdentifier =
+            button.identitiesByActionIdentifier;
+        [button.contextMenuInteraction updateVisibleMenuWithBlock:^UIMenu *(UIMenu *visibleMenu) {
+            NSApplyAppMenuSelection(visibleMenu, identitiesByActionIdentifier, selection);
+            return visibleMenu;
+        }];
+    }
+}
+- (void)appMenuWillDisplay:(NSGlobalRuleAppButton *)button {
+    if (button == self.appButton) {
+        button.menuActive = YES;
+    }
+}
+- (void)appMenuDidClose:(NSGlobalRuleAppButton *)button {
+    if (button != self.appButton || !button.isMenuActive) {
+        return;
+    }
+    button.menuActive = NO;
+    if (button.refreshAfterDismissal) {
+        button.refreshAfterDismissal = NO;
+        [self updateClosedAppButton:button resizeRow:YES];
+    }
+    if (button.enterIdentityAfterDismissal) {
+        button.enterIdentityAfterDismissal = NO;
+        [self addAppIdentity];
+    }
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)path {
     UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault
@@ -323,7 +467,10 @@ typedef NS_ENUM(NSInteger, NSGlobalEditorSection) {
     if (path.section == NSGlobalEditorHosts || (path.section == NSGlobalEditorPorts && path.row == 1)) {
         control = path.section == NSGlobalEditorHosts ? self.hostsField : self.portsField;
     } else {
-        UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
+        NSGlobalRuleAppButton *appButton = path.section == NSGlobalEditorApps
+                                               ? [NSGlobalRuleAppButton buttonWithType:UIButtonTypeSystem]
+                                               : nil;
+        UIButton *button = appButton ?: [UIButton buttonWithType:UIButtonTypeSystem];
         UIButtonConfiguration *configuration = [UIButtonConfiguration grayButtonConfiguration];
         configuration.baseForegroundColor = UIColor.labelColor;
         configuration.cornerStyle = UIButtonConfigurationCornerStyleMedium;
@@ -346,9 +493,10 @@ typedef NS_ENUM(NSInteger, NSGlobalEditorSection) {
         button.showsMenuAsPrimaryAction = YES;
         __weak typeof(self) weakSelf = self;
         NSString *title;
-        if (path.section == NSGlobalEditorApps) {
-            self.appButton = button;
-            [self updateAppButton];
+        if (appButton) {
+            self.appButton = appButton;
+            appButton.editor = self;
+            [self updateClosedAppButton:appButton resizeRow:NO];
         } else {
             if (path.section == NSGlobalEditorPorts) {
                 title = self.localPort ? @"Local port" : @"Remote port";

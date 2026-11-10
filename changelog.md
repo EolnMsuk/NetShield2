@@ -1,3 +1,9 @@
+# 2.8.3
+
+- Fixed the App dropdown in Add/Edit Custom Rule jumping to the top when selecting or deselecting processes on iOS 16–18.
+- Omit ` (main)` from sanitized process names whose raw identity starts with `.Apple.com` or `Apple.com`.
+- Updated screenshots / example images.
+
 # 2.8.1
 
 - Added ` (main)` to shortened process names when the prefix removed before `.com` contains a letter or number.

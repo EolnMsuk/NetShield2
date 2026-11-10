@@ -539,6 +539,10 @@ static void TestIdentityDisplay(void) {
     CHECK([NSIdentityDisplayName(@"53Q6R32WPB.com.hammerandchisel.discord")
         isEqual:@"hammerandchisel.discord (main)"]);
     CHECK([NSIdentityDisplayName(@"2TDUX39LX8.com.reddit.Reddit") isEqual:@"reddit.Reddit (main)"]);
+    CHECK([NSIdentityDisplayName(@"Apple.com.apple.mobilemail") isEqual:@"apple.mobilemail"]);
+    CHECK([NSIdentityDisplayName(@".Apple.com.apple.mobilemail") isEqual:@"Apple.apple.mobilemail"]);
+    CHECK([NSIdentityDisplayName(@"OtherApple.com.example.app") isEqual:@"example.app (main)"]);
+    CHECK([NSIdentityDisplayName(@"apple.com.example.app") isEqual:@"example.app (main)"]);
     CHECK([NSIdentityDisplayName(@".com.reddit.Reddit") isEqual:@"reddit.Reddit"]);
     CHECK([NSIdentityDisplayName(@"com.example.app") isEqual:@"example.app"]);
     CHECK([NSIdentityDisplayName(@".com.apple.test") isEqual:@"apple.test"]);
