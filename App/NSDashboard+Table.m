@@ -54,6 +54,26 @@ static UIImage *NSDashboardGitHubIcon(void) {
     return icon;
 }
 
+static UIImage *NSDashboardUpdateIcon(void) {
+    static UIImage *icon;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSAttributedString *emoji =
+            [[NSAttributedString alloc] initWithString:@"🔄"
+                                            attributes:@{NSFontAttributeName : [UIFont systemFontOfSize:20]}];
+        CGSize size = CGSizeMake(24, 24);
+        CGSize emojiSize = emoji.size;
+        CGPoint origin =
+            CGPointMake((size.width - emojiSize.width) / 2, (size.height - emojiSize.height) / 2);
+        UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithSize:size];
+        UIImage *rendered = [renderer imageWithActions:^(UIGraphicsImageRendererContext *context) {
+            [emoji drawAtPoint:origin];
+        }];
+        icon = [rendered imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
+    });
+    return icon;
+}
+
 // Align the visible field, rather than the UISearchBar's padded outer bounds.
 @interface NSActivitySearchBar : UISearchBar
 @end
@@ -920,7 +940,9 @@ static UIImage *NSDashboardGitHubIcon(void) {
         }
     } else if (path.section == NSDashboardSectionSupport) {
         cell.textLabel.text = @[ @"Check for Updates", @"GitHub Link", @"Donate" ][path.row];
-        if (path.row == 2) {
+        if (path.row == 0) {
+            cell.imageView.image = NSDashboardUpdateIcon();
+        } else if (path.row == 2) {
             UIImageSymbolConfiguration *configuration =
                 [UIImageSymbolConfiguration configurationWithPointSize:22];
             UIImage *coin = [UIImage systemImageNamed:@"dollarsign.circle.fill"
