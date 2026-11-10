@@ -26,6 +26,8 @@ typedef NS_ENUM(NSInteger, NSGlobalEditorSection) {
 @property(nonatomic, copy) NSString *ruleAction;
 - (void)appMenuWillDisplay:(NSGlobalRuleAppButton *)button;
 - (void)appMenuDidClose:(NSGlobalRuleAppButton *)button;
+- (void)ns_toggleAppCommand:(UICommand *)command;
+- (void)ns_selectAllAppsCommand:(UICommand *)command;
 @end
 
 @interface NSGlobalRuleAppButton : UIButton
@@ -33,7 +35,8 @@ typedef NS_ENUM(NSInteger, NSGlobalEditorSection) {
 @property(nonatomic, getter=isMenuActive) BOOL menuActive;
 @property(nonatomic) BOOL refreshAfterDismissal;
 @property(nonatomic) BOOL enterIdentityAfterDismissal;
-@property(nonatomic, copy) NSDictionary<UIActionIdentifier, NSString *> *identitiesByActionIdentifier;
+@property(nonatomic, copy) NSString *commandOwnerToken;
+@property(nonatomic, copy) NSSet<NSString *> *menuIdentities;
 @end
 
 @implementation NSGlobalRuleAppButton {
@@ -68,7 +71,8 @@ typedef NS_ENUM(NSInteger, NSGlobalEditorSection) {
 }
 @end
 
-static UIActionIdentifier const NSAllAppsActionIdentifier = @"netshield.custom-rule.apps.all";
+static NSString *const NSAppCommandOwnerKey = @"owner";
+static NSString *const NSAppCommandIdentityKey = @"identity";
 
 static NSArray<NSString *> *NSSortedAppIdentities(NSSet<NSString *> *identities) {
     return [identities.allObjects
@@ -77,41 +81,33 @@ static NSArray<NSString *> *NSSortedAppIdentities(NSSet<NSString *> *identities)
         }];
 }
 
-static UIMenu *
-NSAppMenuWithSelection(UIMenu *menu,
-                       NSDictionary<UIActionIdentifier, NSString *> *identitiesByActionIdentifier,
-                       NSSet<NSString *> *selectedIdentities) {
-    NSArray<UIMenuElement *> *children = menu.children;
-    NSMutableArray<UIMenuElement *> *updatedChildren = nil;
-    for (NSUInteger index = 0; index < children.count; index++) {
-        UIMenuElement *element = children[index];
-        UIMenuElement *updatedElement = element;
-        if ([element isKindOfClass:UIMenu.class]) {
-            updatedElement =
-                NSAppMenuWithSelection((UIMenu *)element, identitiesByActionIdentifier, selectedIdentities);
-        } else if ([element isKindOfClass:UIAction.class]) {
-            UIAction *action = (UIAction *)element;
-            NSString *identity = identitiesByActionIdentifier[action.identifier];
-            if (!identity && ![action.identifier isEqualToString:NSAllAppsActionIdentifier]) {
-                continue;
-            }
-            BOOL selected =
-                identity ? [selectedIdentities containsObject:identity] : selectedIdentities.count == 0;
-            UIMenuElementState state = selected ? UIMenuElementStateOn : UIMenuElementStateOff;
-            if (action.state != state) {
-                UIAction *updatedAction = [action copy];
-                updatedAction.state = state;
-                updatedElement = updatedAction;
-            }
-        }
-        if (updatedElement != element) {
-            if (!updatedChildren) {
-                updatedChildren = [children mutableCopy];
-            }
-            updatedChildren[index] = updatedElement;
-        }
+static UIMenuElementState NSAppCommandState(NSSet<NSString *> *selectedIdentities, NSString *identity) {
+    BOOL selected = identity ? [selectedIdentities containsObject:identity] : selectedIdentities.count == 0;
+    return selected ? UIMenuElementStateOn : UIMenuElementStateOff;
+}
+
+static BOOL NSIsAppSelectionAction(SEL action) {
+    return action == @selector(ns_toggleAppCommand:) || action == @selector(ns_selectAllAppsCommand:);
+}
+
+static NSDictionary<NSString *, NSString *> *NSAppCommandPayload(UICommand *command, SEL action,
+                                                                 NSGlobalRuleAppButton *button) {
+    if (![command isKindOfClass:UICommand.class] || command.action != action ||
+        ![command.propertyList isKindOfClass:NSDictionary.class]) {
+        return nil;
     }
-    return updatedChildren ? [menu menuByReplacingChildren:updatedChildren] : menu;
+    NSDictionary<NSString *, NSString *> *payload = command.propertyList;
+    NSString *owner = payload[NSAppCommandOwnerKey];
+    if (![owner isKindOfClass:NSString.class] || ![button.commandOwnerToken isEqualToString:owner]) {
+        return nil;
+    }
+    if (action == @selector(ns_selectAllAppsCommand:)) {
+        return payload.count == 1 ? payload : nil;
+    }
+    NSString *identity = payload[NSAppCommandIdentityKey];
+    BOOL valid = action == @selector(ns_toggleAppCommand:) && payload.count == 2 &&
+                 [identity isKindOfClass:NSString.class] && [button.menuIdentities containsObject:identity];
+    return valid ? payload : nil;
 }
 
 @implementation NSGlobalRuleEditor
@@ -360,41 +356,71 @@ NSAppMenuWithSelection(UIMenu *menu,
     }
     [self appSelectionChanged];
 }
+- (BOOL)canPerformAction:(SEL)action withSender:(id)sender {
+    if (!NSIsAppSelectionAction(action)) {
+        return [super canPerformAction:action withSender:sender];
+    }
+    NSGlobalRuleAppButton *button = self.appButton;
+    if ([sender isKindOfClass:UICommand.class]) {
+        return NSAppCommandPayload(sender, action, button) != nil;
+    }
+    // UIKit can ask about the selector before supplying the command.
+    return button != nil;
+}
+- (void)validateCommand:(UICommand *)command {
+    SEL action = command.action;
+    if (!NSIsAppSelectionAction(action)) {
+        [super validateCommand:command];
+        return;
+    }
+    NSDictionary<NSString *, NSString *> *payload = NSAppCommandPayload(command, action, self.appButton);
+    if (payload) {
+        command.state = NSAppCommandState(self.selectedIdentities, payload[NSAppCommandIdentityKey]);
+    }
+}
+- (void)ns_toggleAppCommand:(UICommand *)command {
+    NSGlobalRuleAppButton *button = self.appButton;
+    NSDictionary<NSString *, NSString *> *payload = NSAppCommandPayload(command, _cmd, button);
+    if (payload) {
+        [self toggleAppIdentity:payload[NSAppCommandIdentityKey] fromButton:button];
+    }
+}
+- (void)ns_selectAllAppsCommand:(UICommand *)command {
+    NSGlobalRuleAppButton *button = self.appButton;
+    if (NSAppCommandPayload(command, _cmd, button)) {
+        [self toggleAppIdentity:nil fromButton:button];
+    }
+}
 - (UIMenu *)appMenuForButton:(NSGlobalRuleAppButton *)button {
     NSMutableSet<NSString *> *available = [NSMutableSet setWithArray:self.identities ?: @[]];
     [available unionSet:self.selectedIdentities];
-    NSMutableArray<UIAction *> *apps = [NSMutableArray new];
-    NSMutableDictionary<UIActionIdentifier, NSString *> *identitiesByActionIdentifier =
-        [NSMutableDictionary new];
+    button.menuIdentities = available;
+    NSMutableArray<UICommand *> *apps = [NSMutableArray new];
     UIMenuElementAttributes selectionAttributes = 0;
     if (@available(iOS 16.0, *)) {
         selectionAttributes = UIMenuElementAttributesKeepsMenuPresented;
     }
-    __weak typeof(self) weakSelf = self;
-    __weak NSGlobalRuleAppButton *weakButton = button;
-    UIAction *all = [UIAction actionWithTitle:@"All apps"
-                                        image:nil
-                                   identifier:NSAllAppsActionIdentifier
-                                      handler:^(UIAction *action) {
-                                          NSGlobalRuleEditor *owner = weakSelf;
-                                          [owner toggleAppIdentity:nil fromButton:weakButton];
-                                      }];
+    UICommand *all = [UICommand commandWithTitle:@"All apps"
+                                           image:nil
+                                          action:@selector(ns_selectAllAppsCommand:)
+                                    propertyList:@{NSAppCommandOwnerKey : button.commandOwnerToken}];
     all.attributes = selectionAttributes;
+    all.state = NSAppCommandState(self.selectedIdentities, nil);
     [apps addObject:all];
-    for (NSString *identity in NSSortedAppIdentities(available)) {
-        UIActionIdentifier identifier =
-            [@"netshield.custom-rule.apps.identity:" stringByAppendingString:identity];
-        identitiesByActionIdentifier[identifier] = identity;
-        UIAction *option = [UIAction actionWithTitle:NSIdentityDisplayName(identity)
-                                               image:nil
-                                          identifier:identifier
-                                             handler:^(UIAction *action) {
-                                                 NSGlobalRuleEditor *owner = weakSelf;
-                                                 [owner toggleAppIdentity:identity fromButton:weakButton];
-                                             }];
+    for (NSString *identity in NSSortedAppIdentities(button.menuIdentities)) {
+        UICommand *option = [UICommand commandWithTitle:NSIdentityDisplayName(identity)
+                                                  image:nil
+                                                 action:@selector(ns_toggleAppCommand:)
+                                           propertyList:@{
+                                               NSAppCommandOwnerKey : button.commandOwnerToken,
+                                               NSAppCommandIdentityKey : identity,
+                                           }];
         option.attributes = selectionAttributes;
+        option.state = NSAppCommandState(self.selectedIdentities, identity);
         [apps addObject:option];
     }
+    __weak typeof(self) weakSelf = self;
+    __weak NSGlobalRuleAppButton *weakButton = button;
     UIAction *manual = [UIAction actionWithTitle:@"Add app by identity..."
                                            image:[UIImage systemImageNamed:@"plus"]
                                       identifier:@"netshield.custom-rule.apps.manual"
@@ -406,13 +432,11 @@ NSAppMenuWithSelection(UIMenu *menu,
                                  identifier:@"netshield.custom-rule.apps.choices"
                                     options:UIMenuOptionsDisplayInline
                                    children:apps];
-    UIMenu *menu = [UIMenu menuWithTitle:@""
-                                   image:nil
-                              identifier:@"netshield.custom-rule.apps.root"
-                                 options:0
-                                children:@[ choices, manual ]];
-    button.identitiesByActionIdentifier = identitiesByActionIdentifier;
-    return NSAppMenuWithSelection(menu, button.identitiesByActionIdentifier, self.selectedIdentities);
+    return [UIMenu menuWithTitle:@""
+                           image:nil
+                      identifier:@"netshield.custom-rule.apps.root"
+                         options:0
+                        children:@[ choices, manual ]];
 }
 - (void)updateClosedAppButton:(NSGlobalRuleAppButton *)button resizeRow:(BOOL)resizeRow {
     button.menu = [self appMenuForButton:button];
@@ -445,13 +469,7 @@ NSAppMenuWithSelection(UIMenu *menu,
     // Keep the menu's anchor and row membership stable until dismissal completes.
     button.refreshAfterDismissal = YES;
     if (@available(iOS 16.0, *)) {
-        NSSet<NSString *> *selection = [self.selectedIdentities copy];
-        NSDictionary<UIActionIdentifier, NSString *> *identitiesByActionIdentifier =
-            button.identitiesByActionIdentifier;
-        [button.contextMenuInteraction updateVisibleMenuWithBlock:^UIMenu *(UIMenu *visibleMenu) {
-            // Supply replacement children so UIKit redraws the changed checkmarks.
-            return NSAppMenuWithSelection(visibleMenu, identitiesByActionIdentifier, selection);
-        }];
+        [UIMenuSystem.contextSystem setNeedsRevalidate];
     }
 }
 - (void)appMenuWillDisplay:(NSGlobalRuleAppButton *)button {
@@ -508,6 +526,7 @@ NSAppMenuWithSelection(UIMenu *menu,
         __weak typeof(self) weakSelf = self;
         NSString *title;
         if (appButton) {
+            appButton.commandOwnerToken = NSUUID.UUID.UUIDString;
             self.appButton = appButton;
             appButton.editor = self;
             [self updateClosedAppButton:appButton resizeRow:NO];
