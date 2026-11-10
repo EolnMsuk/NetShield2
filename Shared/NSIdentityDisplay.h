@@ -6,6 +6,7 @@ static inline NSString *NSIdentityDisplayName(id identity) {
     if (![identity isKindOfClass:NSString.class] || ![identity length]) {
         return @"Unidentified app";
     }
+    BOOL suppressMainSuffix = [identity hasPrefix:@".Apple.com"] || [identity hasPrefix:@"Apple.com"];
     NSRange period = [identity rangeOfString:@"."];
     NSString *name =
         period.location == NSNotFound ? identity : [identity substringFromIndex:period.location + 1];
@@ -22,7 +23,7 @@ static inline NSString *NSIdentityDisplayName(id identity) {
     if (!name.length) {
         return @"Unidentified app";
     }
-    return hasMainPrefix ? [name stringByAppendingString:@" (main)"] : name;
+    return hasMainPrefix && !suppressMainSuffix ? [name stringByAppendingString:@" (main)"] : name;
 }
 
 // For presentation and copying only. Keep the raw identity for rule operations.
