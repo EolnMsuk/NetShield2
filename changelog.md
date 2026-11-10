@@ -1,3 +1,7 @@
+# 2.7.9
+
+- Added GitHub icons to Check for Updates and GitHub Link, and renamed Support the Developer to Donate with a coin icon.
+
 # 2.7.8
 
 - Locked NetShield2 to portrait on iPhone and iPad, with full-screen mode on iPad.

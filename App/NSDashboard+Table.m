@@ -32,6 +32,28 @@ static void NSConfigureDashboardBackground(UITableViewCell *cell, UIColor *tint)
     };
 }
 
+static UIImage *NSDashboardGitHubIcon(void) {
+    static UIImage *icon;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        UIImage *logo = [UIImage imageNamed:@"GitHubLogo"];
+        if (!logo) {
+            return;
+        }
+        CGRect bounds = CGRectMake(0, 0, 24, 24);
+        UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithBounds:bounds];
+        UIImage *rendered = [renderer imageWithActions:^(UIGraphicsImageRendererContext *context) {
+            UIBezierPath *circle = [UIBezierPath bezierPathWithOvalInRect:bounds];
+            [UIColor.whiteColor setFill];
+            [circle fill];
+            [circle addClip];
+            [logo drawInRect:CGRectInset(bounds, 1, 1)];
+        }];
+        icon = [rendered imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
+    });
+    return icon;
+}
+
 // Align the visible field, rather than the UISearchBar's padded outer bounds.
 @interface NSActivitySearchBar : UISearchBar
 @end
@@ -897,7 +919,17 @@ static void NSConfigureDashboardBackground(UITableViewCell *cell, UIColor *tint)
                     event[@"hostCount"] ?: @1, NSDestinationSummary(event[@"destination"])];
         }
     } else if (path.section == NSDashboardSectionSupport) {
-        cell.textLabel.text = @[ @"Check for Updates", @"GitHub Link", @"Support the Developer" ][path.row];
+        cell.textLabel.text = @[ @"Check for Updates", @"GitHub Link", @"Donate" ][path.row];
+        if (path.row == 2) {
+            UIImageSymbolConfiguration *configuration =
+                [UIImageSymbolConfiguration configurationWithPointSize:22];
+            UIImage *coin = [UIImage systemImageNamed:@"dollarsign.circle.fill"
+                                    withConfiguration:configuration];
+            cell.imageView.image = [coin imageWithTintColor:UIColor.systemOrangeColor
+                                              renderingMode:UIImageRenderingModeAlwaysOriginal];
+        } else {
+            cell.imageView.image = NSDashboardGitHubIcon();
+        }
         cell.detailTextLabel.text =
             @[ [self updateCheckSubtitle], @"Source code, releases and issues",
                @"Choose Venmo or Crypto" ][path.row];
