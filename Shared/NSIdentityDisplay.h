@@ -9,9 +9,28 @@ static inline NSString *NSIdentityDisplayName(id identity) {
     NSRange period = [identity rangeOfString:@"."];
     NSString *name =
         period.location == NSNotFound ? identity : [identity substringFromIndex:period.location + 1];
+    BOOL hasMainPrefix = NO;
+    if (period.location != NSNotFound && period.location > 0 &&
+        ([name hasPrefix:@"com."] || [name isEqualToString:@"com"])) {
+        NSRange lettersOrNumbers = [identity rangeOfString:@"[\\p{L}\\p{N}]"
+                                                   options:NSRegularExpressionSearch
+                                                     range:NSMakeRange(0, period.location)];
+        hasMainPrefix = lettersOrNumbers.location != NSNotFound;
+    }
     name = [name stringByReplacingOccurrencesOfString:@"com." withString:@""];
     name = [name stringByReplacingOccurrencesOfString:@"org." withString:@""];
-    return name.length ? name : @"Unidentified app";
+    if (!name.length) {
+        return @"Unidentified app";
+    }
+    return hasMainPrefix ? [name stringByAppendingString:@" (main)"] : name;
+}
+
+// For presentation and copying only. Keep the raw identity for rule operations.
+static inline NSString *NSIdentityFullDisplayName(id identity) {
+    if (![identity isKindOfClass:NSString.class] || ![identity length]) {
+        return @"";
+    }
+    return [identity characterAtIndex:0] == '.' ? [identity substringFromIndex:1] : identity;
 }
 
 static inline NSComparisonResult NSCompareIdentityDisplayNames(NSString *left, NSString *right) {
