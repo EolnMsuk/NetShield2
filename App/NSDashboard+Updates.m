@@ -5,12 +5,12 @@
 - (NSString *)updateCheckSubtitle {
     NSString *mode = NSUpdateCheckMode(NSUserDefaults.standardUserDefaults);
     if ([mode isEqual:NSUpdateCheckEveryLaunch]) {
-        return @"Checks GitHub stable releases on every launch";
+        return @"Checks GitHub releases every launch";
     }
     if ([mode isEqual:NSUpdateCheckOff]) {
-        return @"Automatic stable-release checks are off";
+        return @"Updates are off";
     }
-    return @"Checks GitHub stable releases daily on launch";
+    return @"Checks GitHub releases daily";
 }
 - (void)setUpdateCheckMode:(NSString *)mode {
     if ([mode isEqual:NSUpdateCheckOff]) {

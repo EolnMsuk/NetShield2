@@ -1,3 +1,7 @@
+# 2.8.0
+
+- Modified update labels and descriptions.
+
 # 2.7.9
 
 - Added icons to Check for Updates and GitHub Link, and renamed Support the Developer to Donate with a coin icon.
