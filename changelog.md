@@ -1,3 +1,9 @@
+# 2.8.1
+
+- Added ` (main)` to shortened process names when the prefix removed before `.com` contains a letter or number.
+- The App picker in Add and Edit Custom Rule now shows shortened app names.
+- Removed the initial period from full process names in sheets and copied details.
+
 # 2.8.0
 
 - Modified update labels and descriptions.

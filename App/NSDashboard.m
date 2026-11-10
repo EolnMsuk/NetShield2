@@ -585,7 +585,8 @@
     if (!self.policy) {
         return;
     }
-    NSString *title = identity.length ? identity : @"Unidentified app";
+    NSString *fullName = NSIdentityFullDisplayName(identity);
+    NSString *title = fullName.length ? fullName : @"Unidentified app";
     NSString *explanation = nil;
     NSArray *actions = [NSDirectionRuleValues() arrayByAddingObject:@"remove"];
     if ([key isEqual:@"default"]) {
@@ -610,8 +611,11 @@
     NSRuleActionController *alert = [NSRuleActionController controllerWithTitle:title message:explanation];
     if (connection) {
         alert.detailRows = NSActivityDetailRows(connection);
+        alert.processNameUnavailable = !fullName.length;
         alert.clipboardText = NSActivityClipboardLine(connection);
         alert.connectionLayout = YES;
+    } else if (!key && fullName.length) {
+        alert.titleCopyText = title;
     }
     alert.centersTitle = !key;
     alert.opensAtMediumDetent =
@@ -687,7 +691,9 @@
     if (parts) {
         NSMutableArray *names = [NSMutableArray new];
         for (NSString *identity in NSCustomGlobalRuleIdentities(parts)) {
-            [names addObject:fullAppNames ? identity : NSIdentityDisplayName(identity)];
+            NSString *name =
+                fullAppNames ? NSIdentityFullDisplayName(identity) : NSIdentityDisplayName(identity);
+            [names addObject:name.length ? name : @"Unidentified app"];
         }
         return [NSString
             stringWithFormat:@"%@\n%@\n%@ / %@",

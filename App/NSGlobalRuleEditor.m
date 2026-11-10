@@ -3,6 +3,7 @@
 #import "NSRuleActionController.h"
 #import "NSRuleAppearance.h"
 #import "../Shared/NSGlobalRule.h"
+#import "../Shared/NSIdentityDisplay.h"
 #import "../Shared/NSRuleChoices.h"
 
 typedef NS_ENUM(NSInteger, NSGlobalEditorSection) {
@@ -203,7 +204,7 @@ typedef NS_ENUM(NSInteger, NSGlobalEditorSection) {
 - (void)addAppIdentity {
     UIAlertController *alert =
         [UIAlertController alertControllerWithTitle:@"Add app by identity"
-                                            message:@"Enter the exact iOS app identity. Its full name "
+                                            message:@"Enter the exact iOS app identity. A shortened name "
                                                     @"will appear in the selection."
                                      preferredStyle:UIAlertControllerStyleAlert];
     [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
@@ -252,8 +253,7 @@ typedef NS_ENUM(NSInteger, NSGlobalEditorSection) {
     [available unionSet:self.selectedIdentities];
     NSArray *identities = [available.allObjects
         sortedArrayUsingComparator:^NSComparisonResult(NSString *left, NSString *right) {
-            NSComparisonResult order = [left localizedCaseInsensitiveCompare:right];
-            return order == NSOrderedSame ? [left compare:right] : order;
+            return NSCompareIdentityDisplayNames(left, right);
         }];
     NSMutableArray *names = [NSMutableArray new];
     NSMutableArray *apps = [NSMutableArray new];
@@ -271,7 +271,7 @@ typedef NS_ENUM(NSInteger, NSGlobalEditorSection) {
     }
     [apps addObject:all];
     for (NSString *identity in identities) {
-        NSString *name = identity;
+        NSString *name = NSIdentityDisplayName(identity);
         BOOL selected = [self.selectedIdentities containsObject:identity];
         if (selected) {
             [names addObject:name];

@@ -104,6 +104,9 @@
                ? UITableViewAutomaticDimension
                : 12;
 }
+- (BOOL)canCopyDetailAtRow:(NSInteger)row {
+    return self.connectionLayout && (row != 0 || !self.processNameUnavailable);
+}
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)path {
     path = [NSIndexPath indexPathForRow:path.row inSection:[self logicalSection:path.section]];
     UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle
@@ -123,6 +126,7 @@
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
         if (path.section == 0) {
             cell.textLabel.text = self.title;
+            cell.textLabel.lineBreakMode = NSLineBreakByCharWrapping;
             cell.textLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
             cell.detailTextLabel.text = self.detailRows.count ? nil : self.message;
             if (self.centersTitle) {
@@ -149,13 +153,18 @@
                 cell.accessibilityLabel = self.title;
             }
             cell.accessibilityTraits |= UIAccessibilityTraitHeader;
+            if (self.titleCopyText.length) {
+                cell.selectionStyle = UITableViewCellSelectionStyleDefault;
+                cell.accessibilityTraits |= UIAccessibilityTraitButton;
+                cell.accessibilityHint = @"Copies the process name";
+            }
         } else {
             NSArray *detail = self.detailRows[path.row];
             cell.textLabel.text = detail[0];
             cell.textLabel.textColor = UIColor.secondaryLabelColor;
             cell.detailTextLabel.text = detail[1];
             cell.detailTextLabel.textColor = UIColor.labelColor;
-            if (self.connectionLayout) {
+            if ([self canCopyDetailAtRow:path.row]) {
                 cell.selectionStyle = UITableViewCellSelectionStyleDefault;
                 cell.accessibilityTraits |= UIAccessibilityTraitButton;
                 cell.accessibilityHint = @"Copies only this value";
@@ -256,16 +265,29 @@
     [self.tableView reloadData];
     self.tableView.userInteractionEnabled = YES;
 }
+- (NSIndexPath *)tableView:(UITableView *)tableView willSelectRowAtIndexPath:(NSIndexPath *)path {
+    NSInteger section = [self logicalSection:path.section];
+    if ((section == 0 && !self.titleCopyText.length) ||
+        (section == 2 && ![self canCopyDetailAtRow:path.row])) {
+        return nil;
+    }
+    return path;
+}
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)path {
     [tableView deselectRowAtIndexPath:path animated:YES];
     NSIndexPath *visiblePath = path;
     path = [NSIndexPath indexPathForRow:path.row inSection:[self logicalSection:path.section]];
+    if (path.section == 0 && self.titleCopyText.length) {
+        UIPasteboard.generalPasteboard.string = self.titleCopyText;
+        [self showCopyFeedbackAtPath:visiblePath];
+        return;
+    }
     if (path.section == 3) {
         UIPasteboard.generalPasteboard.string = self.clipboardText;
         [self showCopyFeedbackAtPath:visiblePath];
         return;
     }
-    if (self.connectionLayout && path.section == 2) {
+    if (path.section == 2 && [self canCopyDetailAtRow:path.row]) {
         UIPasteboard.generalPasteboard.string = self.detailRows[path.row][1];
         [self showCopyFeedbackAtPath:visiblePath];
         return;

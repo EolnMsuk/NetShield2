@@ -4,9 +4,9 @@
 
 NetShield2 is a firewall and network monitor for jailbroken iOS 15–18 devices using rootless, RootHide, or rootful packages. Apple's Network Extension content filter evaluates the browser flows that iOS delivers and, with **Filter System Sockets** enabled, the socket flows it delivers.
 
-- The data provider uses the read-only policy reader, cache, evaluator, and bounded file access to evaluate delivered flows. It returns allow, drop, or a request for rules from the control provider, and requests reports for activity tracking.
+- The data provider uses the read-only policy reader, cache, evaluator, and bounded file access to evaluate delivered flows. It requests activity reports on allow and drop verdicts, asks the control provider for rules on permission decisions, and can defer evaluation to a data callback when endpoint information is needed.
 - The control provider handles pending decisions, permission notifications and delivery retries, flow reports, and the current activation's heartbeat. It refreshes DNS-derived blocking addresses with bounded concurrency, invalidates stale results on rule or network changes, and checks expiry using wall time, elapsed time, and boot evidence where available.
-- The app presents verified filter settings, rules, pending requests, and Recent Activity. Its serial storage queue handles policy edits, activity grouping, and export preparation. Activity groups distinguish transport and show mixed outcomes. Clearing activity records a generation boundary while preserving rules and pending requests. JSON export stages recorded events before grouping in the shared cache and protects files while sharing is active.
+- The app presents verified filter settings, rules, pending requests, and Recent Activity. Its serial storage queue handles policy edits, activity grouping, and export preparation. Activity groups distinguish transport and show mixed outcomes. Clearing activity records a generation boundary while preserving rules and pending requests. JSON export stages rules and ungrouped activity in the shared cache and protects the staged file while sharing is active.
 
 ## GitHub build and release
 
@@ -49,13 +49,13 @@ NetShield2/
 │   ├── NSFilterRestart.h                     # Defines the filter restart interface and result states.
 │   ├── NSFilterRestart.m                     # Stages, verifies, and rolls back filter restarts as needed.
 │   ├── NSGlobalRuleEditor.h                  # Declares the global rule editor and its save callback.
-│   ├── NSGlobalRuleEditor.m                  # Edits and validates global conditions with shared add/edit descriptions.
+│   ├── NSGlobalRuleEditor.m                  # Edits and validates custom rules with an App picker sorted by shortened app names.
 │   ├── NSReleaseFetch.h                      # Declares the bounded release fetcher and response buffer.
 │   ├── NSReleaseFetch.m                      # Streams GitHub release data with size and redirect checks.
 │   ├── NSRespring.h                          # Declares the respring launcher and its test hook.
 │   ├── NSRespring.m                          # Starts the jailbreak respring tool and reaps its child process.
 │   ├── NSRuleActionController.h              # Declares the reusable rule and connection action controller.
-│   ├── NSRuleActionController.m              # Displays rule actions, selections, and connection details.
+│   ├── NSRuleActionController.m              # Displays rule actions, selections, and connection details and handles copying displayed values.
 │   ├── NSRuleAppearance.h                    # Supplies shared colors and styles for rule actions.
 │   ├── NSSectionTypography.h                 # Supplies shared text styles for table section headers.
 │   ├── Resources/
@@ -95,7 +95,7 @@ NetShield2/
 │   ├── NSExport.m                            # Builds JSON exports and manages the lifetime of staged files.
 │   ├── NSFlowDestination.h                   # Extracts hosts, ports, and protocol from iOS filter flows.
 │   ├── NSGlobalRule.h                        # Parses and normalizes global rule conditions and keys.
-│   ├── NSIdentityDisplay.h                   # Formats app and process identities for display.
+│   ├── NSIdentityDisplay.h                   # Formats shortened app labels and full process names from raw identities.
 │   ├── NSMonitorSchema.h                     # Declares validation for shared monitor snapshots.
 │   ├── NSMonitorSchema.m                     # Validates monitor fields, activity records, and request entries.
 │   ├── NSNotificationPolicy.h                # Determines when to withdraw stale permission notifications.

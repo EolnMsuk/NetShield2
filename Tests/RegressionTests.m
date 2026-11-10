@@ -537,7 +537,9 @@ static void TestActivityGrouping(void) {
 }
 static void TestIdentityDisplay(void) {
     CHECK([NSIdentityDisplayName(@"53Q6R32WPB.com.hammerandchisel.discord")
-        isEqual:@"hammerandchisel.discord"]);
+        isEqual:@"hammerandchisel.discord (main)"]);
+    CHECK([NSIdentityDisplayName(@"2TDUX39LX8.com.reddit.Reddit") isEqual:@"reddit.Reddit (main)"]);
+    CHECK([NSIdentityDisplayName(@".com.reddit.Reddit") isEqual:@"reddit.Reddit"]);
     CHECK([NSIdentityDisplayName(@"com.example.app") isEqual:@"example.app"]);
     CHECK([NSIdentityDisplayName(@".com.apple.test") isEqual:@"apple.test"]);
     CHECK([NSIdentityDisplayName(@"networkd") isEqual:@"networkd"]);
@@ -553,6 +555,19 @@ static void TestIdentityDisplay(void) {
     CHECK(NSCompareIdentityDisplayNames(@"ZZZ.com.Alpha", @"AAA.com.beta") == NSOrderedAscending);
     CHECK(NSCompareIdentityDisplayNames(first, second) == NSOrderedAscending);
     CHECK(NSCompareIdentityDisplayNames(@"com.Alpha", @"com.alpha") == NSOrderedAscending);
+
+    NSString *rawIdentity = @".com.apple.mobilemail";
+    NSString *fullName = @"com.apple.mobilemail";
+    NSDictionary *connection = @{@"identity" : rawIdentity};
+    NSArray<NSString *> *processRow = NSActivityDetailRows(connection).firstObject;
+    CHECK([processRow[1] isEqual:fullName]);
+    CHECK([NSActivityClipboardLine(connection) hasPrefix:@"Process name: com.apple.mobilemail / "]);
+    CHECK(NSActivityMatchesQuery(connection, rawIdentity));
+    CHECK(NSActivityMatchesQuery(connection, fullName));
+    CHECK([connection[@"identity"] isEqual:rawIdentity]);
+    NSString *key = NSDirectionalGlobalRuleKey(connection[@"identity"], @"", @"", @"any", @"block");
+    CHECK([NSCustomGlobalRuleIdentities(NSCustomGlobalRuleComponents(key)).firstObject isEqual:rawIdentity]);
+    CHECK(![key isEqual:NSDirectionalGlobalRuleKey(fullName, @"", @"", @"any", @"block")]);
 }
 static void TestDirectionalGlobalAllows(void) {
     NSString *key = NSCustomGlobalRuleKey(@"test.app", @"domain:example.com", @"port:443", @"tcp");

@@ -105,10 +105,12 @@
     NSString *message =
         @"Unanswered connections are blocked after 30 seconds; retry the app if it has already timed out.";
     NSString *identity = request[@"identity"];
+    NSString *fullName = NSIdentityFullDisplayName(identity);
     NSRuleActionController *alert =
-        [NSRuleActionController controllerWithTitle:identity.length ? identity : @"Unidentified app"
+        [NSRuleActionController controllerWithTitle:fullName.length ? fullName : @"Unidentified app"
                                             message:message];
     alert.detailRows = NSActivityDetailRows(request);
+    alert.processNameUnavailable = !fullName.length;
     alert.clipboardText = NSActivityClipboardLine(request);
     alert.connectionLayout = YES;
     alert.opensExpanded = YES;
