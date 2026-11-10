@@ -77,26 +77,41 @@ static NSArray<NSString *> *NSSortedAppIdentities(NSSet<NSString *> *identities)
         }];
 }
 
-static void
-NSApplyAppMenuSelection(UIMenu *menu,
-                        NSDictionary<UIActionIdentifier, NSString *> *identitiesByActionIdentifier,
-                        NSSet<NSString *> *selectedIdentities) {
-    for (UIMenuElement *element in menu.children) {
+static UIMenu *
+NSAppMenuWithSelection(UIMenu *menu,
+                       NSDictionary<UIActionIdentifier, NSString *> *identitiesByActionIdentifier,
+                       NSSet<NSString *> *selectedIdentities) {
+    NSArray<UIMenuElement *> *children = menu.children;
+    NSMutableArray<UIMenuElement *> *updatedChildren = nil;
+    for (NSUInteger index = 0; index < children.count; index++) {
+        UIMenuElement *element = children[index];
+        UIMenuElement *updatedElement = element;
         if ([element isKindOfClass:UIMenu.class]) {
-            NSApplyAppMenuSelection((UIMenu *)element, identitiesByActionIdentifier, selectedIdentities);
+            updatedElement =
+                NSAppMenuWithSelection((UIMenu *)element, identitiesByActionIdentifier, selectedIdentities);
         } else if ([element isKindOfClass:UIAction.class]) {
             UIAction *action = (UIAction *)element;
-            if ([action.identifier isEqualToString:NSAllAppsActionIdentifier]) {
-                action.state = selectedIdentities.count ? UIMenuElementStateOff : UIMenuElementStateOn;
-            } else {
-                NSString *identity = identitiesByActionIdentifier[action.identifier];
-                if (identity) {
-                    action.state = [selectedIdentities containsObject:identity] ? UIMenuElementStateOn
-                                                                                : UIMenuElementStateOff;
-                }
+            NSString *identity = identitiesByActionIdentifier[action.identifier];
+            if (!identity && ![action.identifier isEqualToString:NSAllAppsActionIdentifier]) {
+                continue;
+            }
+            BOOL selected =
+                identity ? [selectedIdentities containsObject:identity] : selectedIdentities.count == 0;
+            UIMenuElementState state = selected ? UIMenuElementStateOn : UIMenuElementStateOff;
+            if (action.state != state) {
+                UIAction *updatedAction = [action copy];
+                updatedAction.state = state;
+                updatedElement = updatedAction;
             }
         }
+        if (updatedElement != element) {
+            if (!updatedChildren) {
+                updatedChildren = [children mutableCopy];
+            }
+            updatedChildren[index] = updatedElement;
+        }
     }
+    return updatedChildren ? [menu menuByReplacingChildren:updatedChildren] : menu;
 }
 
 @implementation NSGlobalRuleEditor
@@ -397,8 +412,7 @@ NSApplyAppMenuSelection(UIMenu *menu,
                                  options:0
                                 children:@[ choices, manual ]];
     button.identitiesByActionIdentifier = identitiesByActionIdentifier;
-    NSApplyAppMenuSelection(menu, button.identitiesByActionIdentifier, self.selectedIdentities);
-    return menu;
+    return NSAppMenuWithSelection(menu, button.identitiesByActionIdentifier, self.selectedIdentities);
 }
 - (void)updateClosedAppButton:(NSGlobalRuleAppButton *)button resizeRow:(BOOL)resizeRow {
     button.menu = [self appMenuForButton:button];
@@ -435,8 +449,8 @@ NSApplyAppMenuSelection(UIMenu *menu,
         NSDictionary<UIActionIdentifier, NSString *> *identitiesByActionIdentifier =
             button.identitiesByActionIdentifier;
         [button.contextMenuInteraction updateVisibleMenuWithBlock:^UIMenu *(UIMenu *visibleMenu) {
-            NSApplyAppMenuSelection(visibleMenu, identitiesByActionIdentifier, selection);
-            return visibleMenu;
+            // Supply replacement children so UIKit redraws the changed checkmarks.
+            return NSAppMenuWithSelection(visibleMenu, identitiesByActionIdentifier, selection);
         }];
     }
 }

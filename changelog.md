@@ -1,8 +1,9 @@
-# 2.8.3
+# 2.8.4
 
-- Fixed the App dropdown in Add/Edit Custom Rule jumping to the top when selecting or deselecting processes on iOS 16–18.
-- Omit ` (main)` from sanitized process names whose raw identity starts with `.Apple.com` or `Apple.com`.
-- Updated screenshots / example images.
+- Fixed App checkmarks in Add/Edit Custom Rule on iOS 16-18 so they update as you select or deselect processes while the dropdown stays open at its scroll position.
+- (2.8.3) Fixed the App dropdown in Add/Edit Custom Rule jumping to the top when selecting or deselecting processes on iOS 16-18.
+- (2.8.3) Omit ` (main)` from sanitized process names whose raw identity starts with `.Apple.com` or `Apple.com`.
+- (2.8.3) Updated screenshots / example images.
 
 # 2.8.1
 

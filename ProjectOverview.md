@@ -16,7 +16,7 @@ NetShield2 is a firewall and network monitor for jailbroken iOS 15–18 devices 
 | RootHide | `roothide` | `iphoneos-arm64e` | `Applications/NetShield2.app` |
 | rootful | empty string | `iphoneos-arm` | `Applications/NetShield2.app` |
 
-The packaging and source validators share helpers. `prepare_package.py` imports `sync_version.py`. `validate.py`, `test_packaging.py`, and `release_manifest.py` use both. The mocked draft test imports `prepare_draft.cjs`.
+`control` supplies the package version and the generated bundle marketing version. `NSEngineVersion` in `Shared/NSConstants.h` supplies the generated bundle build version. The packaging and source validators share helpers. `prepare_package.py` imports `sync_version.py`. `validate.py`, `test_packaging.py`, and `release_manifest.py` use both. The mocked draft test imports `prepare_draft.cjs`.
 
 ## Build and CI inputs
 
@@ -49,7 +49,7 @@ NetShield2/
 │   ├── NSFilterRestart.h                     # Defines the filter restart interface and result states.
 │   ├── NSFilterRestart.m                     # Stages, verifies, and rolls back filter restarts as needed.
 │   ├── NSGlobalRuleEditor.h                  # Declares the global rule editor and its save callback.
-│   ├── NSGlobalRuleEditor.m                  # Edits and validates custom rules with an App picker sorted by shortened app names.
+│   ├── NSGlobalRuleEditor.m                  # Edits and validates custom rules and updates the native App dropdown.
 │   ├── NSReleaseFetch.h                      # Declares the bounded release fetcher and response buffer.
 │   ├── NSReleaseFetch.m                      # Streams GitHub release data with size and redirect checks.
 │   ├── NSRespring.h                          # Declares the respring launcher and its test hook.
@@ -59,6 +59,7 @@ NetShield2/
 │   ├── NSRuleAppearance.h                    # Supplies shared colors and styles for rule actions.
 │   ├── NSSectionTypography.h                 # Supplies shared text styles for table section headers.
 │   ├── Resources/
+│   │   ├── GitHubLogo.png                    # Provides the icon for the GitHub link.
 │   │   ├── Icon.png                          # Provides the app icon and package icon asset.
 │   │   ├── Info.plist                        # Provides the app bundle metadata template.
 │   │   └── banner.png                        # Provides the banner used by the Sileo depiction.
@@ -123,7 +124,7 @@ NetShield2/
 │   ├── ConfigurationTests.m                  # Tests preference transaction timeouts and pending writes.
 │   ├── HardeningTests.m                      # Tests bounded I/O, DNS, reply queues, and activity safety.
 │   ├── RecoveryTests.m                       # Tests DNS recovery, notification retries, and activity clearing.
-│   ├── RegressionTests.m                     # Tests rule protocol/direction matching, requests, storage, and exports.
+│   ├── RegressionTests.m                     # Tests rule matching, process-name formatting, requests, storage, and exports.
 │   └── RespringTests.m                       # Tests respring launch and fallback with a mock launcher.
 ├── changelog.md                              # Supplies versioned notes for the GitHub draft release.
 ├── control                                   # Defines the Debian package ID, version, and dependencies.
@@ -158,6 +159,5 @@ NetShield2/
 | `README.md` | User guide and hosted web depiction destination. |
 | `ProjectOverview.md` | Project architecture and build inputs. |
 | `LICENSE` | Project license. |
-| `screenshots/1.PNG` through `screenshots/5.PNG`, `screenshots/ALL.PNG` | Presentation images. |
 | `scripts/check_objc.py` | Optional syntax-only iOS check using the local `.theos-toolchain` SDK and libclang. |
 | `scripts/test_uninstall.py` | Standalone uninstall and deferred-respring fixtures using mock tools. |
