@@ -1,3 +1,8 @@
+# 2.8.6
+
+- Restored the 2.8.4 App dropdown refresh for immediate checkmarks when selecting or deselecting processes in Add and Edit Custom Rule on iOS 16-18.
+- Selecting or deselecting a process below the initial viewport can again return the open dropdown to the top.
+
 # 2.8.5
 
 - App selections in Add and Edit Custom Rule now request native checkmark revalidation on iOS 16-18, with menu rebuilding and App-row layout deferred until dismissal to address scroll resets.
