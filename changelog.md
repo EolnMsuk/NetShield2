@@ -1,3 +1,8 @@
+# 2.8.7
+
+- Append ` (main)` when the prefix before the first literal `.com.` contains a letter or number. This includes the `Apple.com.` and `.Apple.com.` prefixes.
+- Require both periods for `com` namespace removal. A trailing `.com` alone stays part of the process name.
+
 # 2.8.6
 
 - Restored the 2.8.4 App dropdown refresh for immediate checkmarks when selecting or deselecting processes in Add and Edit Custom Rule on iOS 16-18.

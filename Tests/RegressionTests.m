@@ -539,10 +539,18 @@ static void TestIdentityDisplay(void) {
     CHECK([NSIdentityDisplayName(@"53Q6R32WPB.com.hammerandchisel.discord")
         isEqual:@"hammerandchisel.discord (main)"]);
     CHECK([NSIdentityDisplayName(@"2TDUX39LX8.com.reddit.Reddit") isEqual:@"reddit.Reddit (main)"]);
-    CHECK([NSIdentityDisplayName(@"Apple.com.apple.mobilemail") isEqual:@"apple.mobilemail"]);
-    CHECK([NSIdentityDisplayName(@".Apple.com.apple.mobilemail") isEqual:@"Apple.apple.mobilemail"]);
+    CHECK([NSIdentityDisplayName(@".2TDUX39LX8.com.reddit.Reddit") isEqual:@"reddit.Reddit (main)"]);
+    CHECK([NSIdentityDisplayName(@"Apple.com.apple.mobilemail") isEqual:@"apple.mobilemail (main)"]);
+    CHECK([NSIdentityDisplayName(@".Apple.com.apple.mobilemail") isEqual:@"apple.mobilemail (main)"]);
     CHECK([NSIdentityDisplayName(@"OtherApple.com.example.app") isEqual:@"example.app (main)"]);
     CHECK([NSIdentityDisplayName(@"apple.com.example.app") isEqual:@"example.app (main)"]);
+    CHECK([NSIdentityDisplayName(@"12.com.example.app") isEqual:@"example.app (main)"]);
+    CHECK([NSIdentityDisplayName(@"-.com.example.app") isEqual:@"example.app"]);
+    CHECK([NSIdentityDisplayName(@"Apple.com") isEqual:@"Apple.com"]);
+    CHECK([NSIdentityDisplayName(@".Apple.com") isEqual:@"Apple.com"]);
+    CHECK([NSIdentityDisplayName(@"TEAM.telecom.helper.com") isEqual:@"telecom.helper.com"]);
+    CHECK([NSIdentityDisplayName(@"TEAM.com.example.com") isEqual:@"example.com (main)"]);
+    CHECK([NSIdentityDisplayName(@"TEAM.com.com.example.app") isEqual:@"example.app (main)"]);
     CHECK([NSIdentityDisplayName(@".com.reddit.Reddit") isEqual:@"reddit.Reddit"]);
     CHECK([NSIdentityDisplayName(@"com.example.app") isEqual:@"example.app"]);
     CHECK([NSIdentityDisplayName(@".com.apple.test") isEqual:@"apple.test"]);
