@@ -1,7 +1,7 @@
 #import "NSMonitorSchema.h"
 #import "NSValidation.h"
 #import "NSConstants.h"
-#import "NSDestination.h"
+#import "NSPermissionRequest.h"
 #include <limits.h>
 
 static NSDictionary *NSBadMonitor(NSError **error) {
@@ -20,7 +20,8 @@ NSDictionary *NSValidateMonitor(id document, NSError **error) {
         return NSBadMonitor(error);
     }
     NSDictionary *d = document;
-    if (!NSUnsignedInteger(d[@"schema"], 2) || ![d[@"schema"] isEqual:@2] ||
+    BOOL typed = [d[@"schema"] isEqual:@(NSMonitorSchemaVersion)];
+    if (!NSUnsignedInteger(d[@"schema"], NSMonitorSchemaVersion) || (!typed && ![d[@"schema"] isEqual:@2]) ||
         ![d[@"updated"] isKindOfClass:NSDate.class] || ![d[@"lastReport"] isKindOfClass:NSDate.class] ||
         !NSBoolean(d[@"controlRunning"]) || !NSBoundedString(d[@"policyError"], 4096, NO) ||
         ![d[@"events"] isKindOfClass:NSArray.class] || [d[@"events"] count] > NSMaximumEvents) {
@@ -78,13 +79,16 @@ NSDictionary *NSValidateMonitor(id document, NSError **error) {
     }
     NSMutableSet *tokens = [NSMutableSet new];
     NSMutableArray *requests = [NSMutableArray new];
+    NSUInteger active = 0, historical = 0, waiters = 0;
     for (id value in rawRequests) {
         if (![value isKindOfClass:NSDictionary.class]) {
             return NSBadMonitor(error);
         }
         NSDictionary *r = value;
-        if (!NSBoundedString(r[@"token"], 128, YES) || [tokens containsObject:r[@"token"]] ||
-            !NSBoundedString(r[@"identity"], NSMaximumIdentityLength, YES) ||
+        BOOL unidentified = NSUnidentifiedRequest(r);
+        if ((unidentified && !typed) || (r[@"kind"] && !unidentified && ![r[@"kind"] isEqual:@"app"]) ||
+            !NSBoundedString(r[@"token"], 128, YES) || [tokens containsObject:r[@"token"]] ||
+            !NSBoundedString(r[@"identity"], NSMaximumIdentityLength, !unidentified) ||
             ![r[@"created"] isKindOfClass:NSDate.class] || ![r[@"expires"] isKindOfClass:NSDate.class] ||
             !NSUnsignedInteger(r[@"waiting"], NSMaximumWaiters) || !NSBoolean(r[@"expired"]) ||
             (r[@"destination"] && !NSValidDestination(r[@"destination"])) ||
@@ -96,11 +100,43 @@ NSDictionary *NSValidateMonitor(id document, NSError **error) {
                 return NSBadMonitor(error);
             }
         }
+        if (unidentified) {
+            NSDictionary *destination = r[@"destination"];
+            NSString *direction = r[@"direction"];
+            if ([r[@"identity"] length] || !direction || !destination ||
+                ![destination isEqual:NSCanonicalConnectionDestination(destination)] ||
+                ![r[@"fingerprint"] isEqual:NSConnectionFingerprint(destination, direction)] ||
+                !NSBoolean(r[@"deferred"]) || !NSBoundedString(r[@"askGeneration"], 128, NO) ||
+                !NSBoundedString(d[@"activation"], 128, YES) ||
+                ![r[@"activation"] isEqual:d[@"activation"]] || !NSBoundedString(d[@"session"], 128, YES) ||
+                ![r[@"session"] isEqual:d[@"session"]] ||
+                ![r[@"expires"] isEqual:[r[@"created"] dateByAddingTimeInterval:NSPermissionTimeout]]) {
+                return NSBadMonitor(error);
+            }
+            BOOL once = !NSConnectionHasConditions(destination, direction);
+            if (![r[@"mode"] isEqual:(once ? @"once" : @"rule")] ||
+                (once ? !NSBoundedString(r[@"flow"], 128, NO) : r[@"flow"] != nil) ||
+                [r[@"waiting"] unsignedIntegerValue] > (once ? 1 : NSMaximumWaitersPerIdentity)) {
+                return NSBadMonitor(error);
+            }
+        } else if (r[@"fingerprint"] || r[@"mode"] || r[@"flow"] || r[@"deferred"]) {
+            return NSBadMonitor(error);
+        }
+        if (typed) {
+            NSUInteger count = [r[@"waiting"] unsignedIntegerValue];
+            BOOL expired = [r[@"expired"] boolValue];
+            if ((expired ? (count != 0 || ++historical > NSMaximumRequestHistory)
+                         : (count == 0 || ++active > NSMaximumActiveRequests)) ||
+                (waiters += count) > NSMaximumWaiters) {
+                return NSBadMonitor(error);
+            }
+        }
         [tokens addObject:r[@"token"]];
         NSMutableDictionary *canonical = [NSMutableDictionary new];
         for (NSString *key in @[
                  @"token", @"identity", @"created", @"expires", @"waiting", @"expired", @"destination",
-                 @"direction", @"askGeneration", @"session", @"activation"
+                 @"direction", @"askGeneration", @"session", @"activation", @"kind", @"fingerprint", @"mode",
+                 @"flow", @"deferred"
              ]) {
             if (r[key]) {
                 canonical[key] = r[key];
@@ -110,12 +146,28 @@ NSDictionary *NSValidateMonitor(id document, NSError **error) {
         canonical[@"direction"] = r[@"direction"] ?: @"unknown";
         [requests addObject:[canonical copy]];
     }
+    id results = d[@"permissionResults"];
+    if (results) {
+        if (!typed || ![results isKindOfClass:NSArray.class] || [results count] > NSMaximumActiveRequests) {
+            return NSBadMonitor(error);
+        }
+        NSMutableSet *completed = [NSMutableSet new];
+        for (id result in results) {
+            if (![result isKindOfClass:NSDictionary.class] || [result count] != 2 ||
+                !NSBoundedString(result[@"token"], 128, YES) || [completed containsObject:result[@"token"]] ||
+                [tokens containsObject:result[@"token"]] ||
+                ![@[ @"allow", @"block" ] containsObject:result[@"action"]]) {
+                return NSBadMonitor(error);
+            }
+            [completed addObject:result[@"token"]];
+        }
+    }
     NSMutableDictionary *canonical = [NSMutableDictionary new];
     for (NSString *key in @[
              @"schema", @"engine", @"activityGenerations", @"controlRunning", @"updated", @"lastReport",
              @"policyError", @"notificationDeliveryIssue", @"dnsIssue", @"activation", @"session",
              @"revision", @"activityClearRevision", @"overflowCount", @"evictedRequestCount",
-             @"droppedWorkCount"
+             @"droppedWorkCount", @"permissionResults"
          ]) {
         if (d[key]) {
             canonical[key] = d[key];

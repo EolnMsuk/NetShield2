@@ -47,8 +47,12 @@ static BOOL NSPlainLeaf(NSString *leaf) {
 BOOL NSKnownDocumentLeaf(NSString *leaf) {
     return NSPlainLeaf(leaf) && [@[
                NSPolicyFile, NSMonitorFile, NSActivityClearFile, NSNotificationRetryFile,
-               NSPendingConfigurationFile, NSConfigurationRecoveryFile
+               NSPermissionResponsesFile, NSPendingConfigurationFile, NSConfigurationRecoveryFile
            ] containsObject:leaf];
+}
+static NSUInteger NSDocumentByteLimit(NSString *leaf) {
+    return [leaf isEqual:NSPermissionResponsesFile] ? NSMaximumPermissionResponseBytes
+                                                    : NSMaximumDocumentBytes;
 }
 BOOL NSKnownLockLeaf(NSString *leaf) {
     return NSPlainLeaf(leaf) &&
@@ -142,7 +146,7 @@ int NSOpenRegularFile(NSSharedDirectory *directory, NSString *leaf, struct stat 
         failure = EINVAL;
         stage = @"Validate document type";
     }
-    if (!failure && before.st_size > NSMaximumDocumentBytes) {
+    if (!failure && (uint64_t)before.st_size > NSDocumentByteLimit(leaf)) {
         failure = EFBIG;
         stage = @"Check document size";
     }
@@ -175,9 +179,10 @@ NSData *NSReadBoundedDescriptor(int fd, NSSharedDirectory *directory, NSString *
                                 NSError **error) {
     NSMutableData *data = [NSMutableData data];
     uint8_t buffer[8192];
+    NSUInteger maximum = NSDocumentByteLimit(leaf);
     for (;;) {
         // Read at most one byte beyond the cap, without appending that byte.
-        size_t limit = MIN(sizeof(buffer), NSMaximumDocumentBytes - data.length + 1);
+        size_t limit = MIN(sizeof(buffer), maximum - data.length + 1);
         ssize_t count = read(fd, buffer, limit);
         if (count < 0 && errno == EINTR) {
             continue;
@@ -189,7 +194,7 @@ NSData *NSReadBoundedDescriptor(int fd, NSSharedDirectory *directory, NSString *
         if (!count) {
             break;
         }
-        if ((NSUInteger)count > NSMaximumDocumentBytes - data.length) {
+        if ((NSUInteger)count > maximum - data.length) {
             NSFileFailure(@"Bound document read", leaf, EFBIG, error);
             return nil;
         }
@@ -229,7 +234,7 @@ BOOL NSWriteBoundedFile(NSData *data, NSSharedDirectory *directory, NSString *le
     if (!NSKnownDocumentLeaf(leaf)) {
         return NSFileFailure(@"Validate document name", @"unknown document", EINVAL, error);
     }
-    if (data.length > NSMaximumDocumentBytes) {
+    if (data.length > NSDocumentByteLimit(leaf)) {
         return NSFileFailure(@"Bound document write", leaf, EFBIG, error);
     }
     int parent = directory.descriptor;

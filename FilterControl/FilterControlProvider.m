@@ -1,6 +1,7 @@
 #import <NetworkExtension/NetworkExtension.h>
 #import "../Shared/NSStore.h"
 #import "../Shared/NSPermissionQueue.h"
+#import "../Shared/NSPermissionRequest.h"
 #import "NSPermissionNotifications.h"
 #import "../Shared/NSDestination.h"
 #import "../Shared/NSFlowDestination.h"
@@ -30,6 +31,7 @@ static char NSControlPathContext;
 @property(nonatomic) BOOL stopped;
 @property(nonatomic) BOOL refreshScheduled;
 @property(nonatomic, strong) NSPermissionQueue *permissions;
+@property(nonatomic, strong) NSMutableArray<NSDictionary *> *permissionResults;
 @property(nonatomic, strong) NSPermissionNotifications *notifications;
 @property(nonatomic, strong) NSStoreLock *providerLock;
 @property(nonatomic, strong) NSDomainResolver *resolver;
@@ -200,6 +202,7 @@ static char NSControlPathContext;
     NSMutableArray *requests = [NSMutableArray new];
     for (NSDictionary *request in self.permissions.requests) {
         NSMutableDictionary *current = [request mutableCopy];
+        current[@"kind"] = request[@"kind"] ?: @"app";
         current[@"session"] = self.session ?: @"";
         current[@"activation"] = self.filterConfiguration.vendorConfiguration[@"activation"] ?: @"";
         [requests addObject:[current copy]];
@@ -209,7 +212,7 @@ static char NSControlPathContext;
     droppedWork += MIN(NSUIntegerMax - droppedWork, droppedReplies);
     return @{
         @"engine" : @(NSEngineVersion),
-        @"schema" : @2,
+        @"schema" : @(NSMonitorSchemaVersion),
         @"activityGenerations": @YES,
         @"controlRunning" : @(running),
         @"session" : self.session ?: @"",
@@ -221,6 +224,7 @@ static char NSControlPathContext;
         @"dnsIssue" : self.dnsPublicationIssue.length ? self.dnsPublicationIssue : (self.dnsIssues.allValues.firstObject ?: self.resolver.coverageIssue ?: @""),
         @"events" : [self.events copy] ?: @[],
         @"requests" : [requests copy],
+        @"permissionResults" : [self.permissionResults copy] ?: @[],
         @"notificationDeliveryIssue" : self.notifications.deliveryIssue ?: @"",
         @"overflowCount" : @(self.permissions.overflowCount),
         @"droppedWorkCount": @(droppedWork),
@@ -237,6 +241,25 @@ static char NSControlPathContext;
         policy = NSReadPolicy(&error);
     }
     [self.permissions resolveWithPolicy:policy now:NSProcessInfo.processInfo.systemUptime];
+    NSDrainPermissionResponses(
+        self.session, self.filterConfiguration.vendorConfiguration[@"activation"] ?: @"",
+        ^dispatch_block_t(NSDictionary *response, NSPolicy *current) {
+            dispatch_block_t completion =
+                [self.permissions takeResponse:response
+                                        policy:current
+                                           now:NSProcessInfo.processInfo.systemUptime];
+            if (!completion) {
+                return nil;
+            }
+            return ^{
+                completion();
+                [self.permissionResults
+                    addObject:@{@"token" : response[@"token"], @"action" : response[@"action"]}];
+                if (self.permissionResults.count > NSMaximumActiveRequests) {
+                    [self.permissionResults removeObjectAtIndex:0];
+                }
+            };
+        });
     NSString *retry = NSReadNotificationRetryRevision();
     NSString *revision = policy.document[@"revision"];
     if ((self.revision || revision) && ![self.revision isEqual:revision]) {
@@ -359,7 +382,9 @@ static char NSControlPathContext;
         }
         self.lastReport = nil;
         self.revision = nil;
+        NSClearPermissionResponses(self.providerLock);
         self.permissions = [NSPermissionQueue new];
+        self.permissionResults = [NSMutableArray new];
         self.notifications = [NSPermissionNotifications new];
         self.session = NSUUID.UUID.UUIDString;
         self.refreshScheduled = NO;
@@ -480,42 +505,64 @@ static char NSControlPathContext;
             [reply complete:[NEFilterControlVerdict dropVerdictWithUpdateRules:NO]];
             return;
         }
-        if (![policy requiresPermissionForIdentity:identity direction:direction destination:destination]) {
-            [reply complete:[NEFilterControlVerdict updateRules]];
+        NSFlowEvaluation evaluation = [policy evaluateIdentity:identity
+                                                     direction:direction
+                                                   destination:destination
+                                                        socket:NO];
+        if (evaluation.disposition != NSFlowAsk) {
+            NEFilterControlVerdict *verdict = [NEFilterControlVerdict updateRules];
+            if (!identity.length && [policy.document[@"unattributed"] isEqual:@"ask"]) {
+                // The current global decision covers the held snapshot. Finish the flow even if the
+                // data provider receives a different amount of metadata on reevaluation.
+                verdict = evaluation.disposition == NSFlowAllow
+                              ? [NEFilterControlVerdict allowVerdictWithUpdateRules:YES]
+                              : [NEFilterControlVerdict dropVerdictWithUpdateRules:YES];
+                verdict.shouldReport = YES;
+            }
+            [reply complete:verdict];
             return;
         }
         [self.permissions resolveWithPolicy:policy now:NSProcessInfo.processInfo.systemUptime];
         self.lastReport = NSDate.date;
         NSString *session = self.session;
         __weak typeof(self) weakSelf = self;
-        [self.permissions
-            enqueueIdentity:identity
-                  direction:direction
-                destination:destination
-                        now:NSProcessInfo.processInfo.systemUptime
-                       date:NSDate.date
-                 completion:^(BOOL allow) {
-                     NSFilterControlProvider *owner = weakSelf;
-                     // PermissionQueue invokes on the state queue after detaching its waiters.
-                     if (owner && !owner.stopped && [owner.session isEqual:session]) {
-                         [owner appendEvent:@{
-                             @"time" : NSDate.date,
-                             @"identity" : identity,
-                             @"flow" : flowID,
-                             @"destination" : destination,
-                             @"action" : allow ? @"permission-allow" : @"permission-block",
-                             @"direction" : direction == NSFlowDirectionInbound
-                                 ? @"inbound"
-                                 : (direction == NSFlowDirectionOutbound ? @"outbound" : @"unknown"),
-                             @"event" : @0,
-                             @"bytesIn" : @0,
-                             @"bytesOut" : @0
-                         }];
-                     }
-                     // The delivery queue outlives this session until shutdown's barrier.
-                     [reply complete:allow ? [NEFilterControlVerdict updateRules]
-                                           : [NEFilterControlVerdict dropVerdictWithUpdateRules:NO]];
-                 }];
+        [self.permissions enqueueIdentity:identity
+                                direction:direction
+                              destination:destination
+                                     flow:flowID
+                                      now:NSProcessInfo.processInfo.systemUptime
+                                     date:NSDate.date
+                                   result:^(NSPermissionResult result) {
+                                       BOOL allow = result == NSPermissionAllowedByPolicy ||
+                                                    result == NSPermissionAllowedOnce;
+                                       NSFilterControlProvider *owner = weakSelf;
+                                       // PermissionQueue invokes on the state queue after detaching its
+                                       // waiters.
+                                       if (owner && !owner.stopped && [owner.session isEqual:session]) {
+                                           [owner appendEvent:@{
+                                               @"time" : NSDate.date,
+                                               @"identity" : identity,
+                                               @"flow" : flowID,
+                                               @"destination" : destination,
+                                               @"action" : allow ? @"permission-allow" : @"permission-block",
+                                               @"direction" : NSPermissionDirectionName(direction),
+                                               @"event" : @0,
+                                               @"bytesIn" : @0,
+                                               @"bytesOut" : @0
+                                           }];
+                                       }
+                                       // The delivery queue outlives this session until shutdown's barrier.
+                                       NEFilterControlVerdict *verdict =
+                                           [NEFilterControlVerdict dropVerdictWithUpdateRules:NO];
+                                       if (result == NSPermissionAllowedOnce) {
+                                           verdict = [NEFilterControlVerdict allowVerdictWithUpdateRules:NO];
+                                       } else if (result == NSPermissionAllowedByPolicy) {
+                                           verdict = identity.length ? [NEFilterControlVerdict updateRules]
+                                                                     : [NEFilterControlVerdict
+                                                                           allowVerdictWithUpdateRules:YES];
+                                       }
+                                       [reply complete:verdict];
+                                   }];
         [self scheduleRefresh];
     }];
     if (!admitted) {
@@ -540,6 +587,7 @@ static char NSControlPathContext;
     // DNS references and old state writers are quiescent. Detached OS
     // completions have no storage access, so a stalled external callback
     // cannot hold the provider lifetime lock or the shutdown acknowledgement.
+    NSClearPermissionResponses(self.providerLock);
     [self.providerLock unlock];
     self.providerLock = nil;
     self.lifecycle = 0;

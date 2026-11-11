@@ -22,7 +22,7 @@ static inline NSDictionary *NSDestinationForFlow(NEFilterFlow *flow) {
                    : (socket.socketProtocol == IPPROTO_UDP ||
                       (socket.socketProtocol == 0 && socket.socketType == SOCK_DGRAM))
                        ? @"udp"
-                       : @"other";
+                       : (socket.socketProtocol || socket.socketType ? @"other" : nil);
         if ([socket.localEndpoint isKindOfClass:NWHostEndpoint.class]) {
             NSString *key = NSGlobalPortKey(((NWHostEndpoint *)socket.localEndpoint).port);
             localPort = key ? @([[key substringFromIndex:5] integerValue]) : nil;

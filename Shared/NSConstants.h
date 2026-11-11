@@ -1,8 +1,10 @@
 #import <Foundation/Foundation.h>
 
 enum {
-    NSEngineVersion = 20049,
-    NSSchemaVersion = 3,
+    NSEngineVersion = 20050,
+    NSSchemaVersion = 4,
+    NSMonitorSchemaVersion = 3,
+    NSMaximumPermissionResponseBytes = 128 * 1024,
     NSMaximumRules = 4096,
     NSMaximumIdentityLength = 1024,
     NSMaximumEvents = 300,
@@ -18,6 +20,7 @@ static const NSTimeInterval NSMonitorFreshness = 8;
 static NSString *const NSPolicyFile = @"policy.plist";
 static NSString *const NSActivityClearFile = @"activity-clear.plist";
 static NSString *const NSMonitorFile = @"monitor.plist";
+static NSString *const NSPermissionResponsesFile = @"permission-responses.plist";
 static NSString *const NSNotificationRetryFile = @"notification-retry.plist";
 static NSString *const NSConfigurationLockFile = @"configuration.lock";
 static NSString *const NSPendingConfigurationFile = @"configuration-pending.plist";

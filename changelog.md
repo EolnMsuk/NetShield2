@@ -1,3 +1,10 @@
+# 2.8.8
+
+- Added Ask Me for unidentified connections. Allow remains the default.
+- Permission cards and notifications offer direction-aware decisions and Not Now. Deferred requests stay in Waiting for Your Decision, and unanswered connections are blocked after 30 seconds.
+- Decisions with usable connection details save a global rule that requires every available condition to match. The rule can apply across apps.
+- Decisions without usable details apply once to the held connection and save no rule.
+
 # 2.8.7
 
 - Append ` (main)` when the prefix before the first literal `.com.` contains a letter or number. This includes the `Apple.com.` and `.Apple.com.` prefixes.

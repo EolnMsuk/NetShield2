@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 #import "NSConstants.h"
+#import "NSDestination.h"
 #include <arpa/inet.h>
 #include <string.h>
 
@@ -113,6 +114,41 @@ static inline NSString *NSGlobalLocalPortKey(id value) {
     NSString *remoteKey = NSGlobalPortKey(value);
     return remoteKey ? [@"localPort:" stringByAppendingString:[remoteKey substringFromIndex:5]] : nil;
 }
+// Use the same canonical values for request grouping, display, and exact matching.
+static inline NSDictionary *NSCanonicalConnectionDestination(NSDictionary *destination) {
+    NSMutableDictionary *result = [NSMutableDictionary new];
+    NSString *domain = NSGlobalHostKey(destination[@"domain"]);
+    NSString *address = NSGlobalHostKey(destination[@"address"]);
+    if ([domain hasPrefix:@"domain:"]) {
+        result[@"domain"] = [domain substringFromIndex:7];
+    }
+    if ([address hasPrefix:@"ip:"]) {
+        result[@"address"] = [address substringFromIndex:3];
+    }
+    for (NSString *field in @[ @"port", @"localPort", @"protocol" ]) {
+        id value = destination[field];
+        if (value && NSValidDestination(@{field : value})) {
+            result[field] = [field isEqual:@"protocol"] ? value : @([value integerValue]);
+        }
+    }
+    return [result copy];
+}
+
+static inline NSString *NSExactGlobalRuleKey(NSArray<NSString *> *identities, NSDictionary *destination,
+                                             NSString *coverage) {
+    NSDictionary *canonical = NSCanonicalConnectionDestination(destination);
+    NSMutableDictionary *endpoints = [canonical mutableCopy];
+    [endpoints removeObjectForKey:@"protocol"];
+    NSArray *apps = [[NSSet setWithArray:identities].allObjects sortedArrayUsingSelector:@selector(compare:)];
+    NSData *data = [NSJSONSerialization
+        dataWithJSONObject:@[ apps, @"", @"", canonical[@"protocol"] ?: @"any", coverage, endpoints ]
+                   options:NSJSONWritingSortedKeys
+                     error:NULL];
+    return data ? [@"custom:" stringByAppendingString:[[NSString alloc] initWithData:data
+                                                                            encoding:NSUTF8StringEncoding]]
+                : nil;
+}
+
 static inline BOOL NSValidGlobalMemberKey(id key) {
     if (![key isKindOfClass:NSString.class]) {
         return NO;
@@ -137,7 +173,7 @@ static inline NSArray *NSCustomGlobalRuleComponents(NSString *key) {
         JSONObjectWithData:[[key substringFromIndex:7] dataUsingEncoding:NSUTF8StringEncoding]
                    options:0
                      error:NULL];
-    if (![parts isKindOfClass:NSArray.class] || ([parts count] != 4 && [parts count] != 5)) {
+    if (![parts isKindOfClass:NSArray.class] || ([parts count] < 4 || [parts count] > 6)) {
         return nil;
     }
     id apps = parts[0];
@@ -156,7 +192,10 @@ static inline NSArray *NSCustomGlobalRuleComponents(NSString *key) {
             return nil;
         }
     }
-    if ([parts count] == 5 && ![@[ @"incoming", @"outgoing", @"both" ] containsObject:parts[4]]) {
+    if ([parts count] >= 5 && ![@[ @"incoming", @"outgoing", @"both" ] containsObject:parts[4]]) {
+        return nil;
+    }
+    if ([parts count] == 6 && ![parts[5] isKindOfClass:NSDictionary.class]) {
         return nil;
     }
     return parts;
@@ -215,6 +254,21 @@ static inline NSArray<NSString *> *NSGlobalRuleMembers(NSString *key) {
                 [members addObjectsFromArray:NSGlobalRuleMembers(condition)];
             }
         }
+        if (parts.count == 6) {
+            NSDictionary *endpoints = parts[5];
+            for (NSString *field in @[ @"domain", @"address", @"port", @"localPort" ]) {
+                id value = endpoints[field];
+                if (!value) {
+                    continue;
+                }
+                NSString *member = [field isEqual:@"port"] || [field isEqual:@"localPort"]
+                                       ? [NSString stringWithFormat:@"%@:%@", field, value]
+                                       : NSGlobalHostKey(value);
+                if (member) {
+                    [members addObject:member];
+                }
+            }
+        }
         return members;
     }
     return [key hasPrefix:@"group:"] ? [[key substringFromIndex:6] componentsSeparatedByString:@","]
@@ -232,14 +286,25 @@ static inline BOOL NSValidGlobalRuleKey(id key) {
     if ([key hasPrefix:@"custom:"]) {
         NSArray *parts = NSCustomGlobalRuleComponents(key);
         NSArray *identities = NSCustomGlobalRuleIdentities(parts);
-        if (!parts || identities.count > NSMaximumRules ||
-            ![@[ @"any", @"tcp", @"udp" ] containsObject:parts[3]]) {
+        NSArray *protocols =
+            parts.count == 6 ? @[ @"any", @"tcp", @"udp", @"other" ] : @[ @"any", @"tcp", @"udp" ];
+        if (!parts || identities.count > NSMaximumRules || ![protocols containsObject:parts[3]]) {
             return NO;
         }
         for (NSString *identity in identities) {
             if (identity.length > NSMaximumIdentityLength) {
                 return NO;
             }
+        }
+        if (parts.count == 6) {
+            NSDictionary *endpoints = parts[5];
+            NSMutableDictionary *destination = [endpoints mutableCopy];
+            if (![parts[3] isEqual:@"any"]) {
+                destination[@"protocol"] = parts[3];
+            }
+            return !endpoints[@"protocol"] &&
+                   (destination.count || identities.count || ![parts[4] isEqual:@"both"]) &&
+                   [key isEqual:NSExactGlobalRuleKey(identities, destination, parts[4])];
         }
         for (NSUInteger index = 1; index <= 2; index++) {
             NSString *condition = parts[index];
@@ -306,7 +371,7 @@ static inline NSDictionary *NSExpandedGlobalRules(NSDictionary *rules) {
     }
     return expanded;
 }
-// Used only for DNS resolution and missing endpoint checks, never for rule decisions.
+// Only legacy host conditions use DNS address fallback.
 static inline NSDictionary *NSGlobalRuleConditions(NSDictionary *rules) {
     NSMutableDictionary *conditions = [NSExpandedGlobalRules(rules) mutableCopy];
     if (![rules isKindOfClass:NSDictionary.class]) {
@@ -314,7 +379,7 @@ static inline NSDictionary *NSGlobalRuleConditions(NSDictionary *rules) {
     }
     for (NSString *key in rules) {
         if (!NSValidGlobalRuleKey(key) || ![key hasPrefix:@"custom:"] ||
-            ![rules[key] isKindOfClass:NSString.class]) {
+            NSCustomGlobalRuleComponents(key).count == 6 || ![rules[key] isKindOfClass:NSString.class]) {
             continue;
         }
         for (NSString *member in NSGlobalRuleMembers(key)) {
@@ -394,6 +459,16 @@ static inline NSString *NSGlobalInputRuleKey(id value, BOOL port, BOOL local) {
 // Compare normalized non-direction conditions across custom and legacy representations.
 static inline NSString *NSGlobalConditionIdentity(NSString *key) {
     NSArray *parts = NSCustomGlobalRuleComponents(key);
+    if (parts.count == 6) {
+        NSDictionary *endpoints = parts[5];
+        // Host predicates differ from legacy groups even when only one host is present.
+        if (endpoints[@"domain"] || endpoints[@"address"] || endpoints.count > 1 ||
+            [parts[3] isEqual:@"other"]) {
+            NSMutableDictionary *destination = [endpoints mutableCopy];
+            destination[@"protocol"] = parts[3];
+            return NSExactGlobalRuleKey(NSCustomGlobalRuleIdentities(parts), destination, @"both");
+        }
+    }
     NSMutableArray *hosts = [NSMutableArray new], *ports = [NSMutableArray new];
     for (NSString *member in NSGlobalRuleMembers(key)) {
         if ([member hasPrefix:@"ip:"] || [member hasPrefix:@"domain:"]) {
@@ -409,7 +484,7 @@ static inline NSString *NSGlobalConditionIdentity(NSString *key) {
 }
 static inline BOOL NSGlobalCoverageAgrees(NSString *key, NSString *action) {
     NSArray *parts = NSCustomGlobalRuleComponents(key);
-    return parts.count != 5 || [parts[4] isEqual:NSGlobalCoverage(action)];
+    return parts.count < 5 || [parts[4] isEqual:NSGlobalCoverage(action)];
 }
 static inline BOOL NSValidateGlobalRuleChange(NSDictionary *rules, NSString *key, NSString *action,
                                               NSString *original, NSError **error) {

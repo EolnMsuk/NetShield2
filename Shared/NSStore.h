@@ -23,6 +23,11 @@ FOUNDATION_EXPORT NSArray<NSDictionary *> *NSActivityAfterClear(NSArray<NSDictio
 FOUNDATION_EXPORT BOOL NSWriteMonitorSnapshot(NSDictionary *snapshot, NSError **error);
 FOUNDATION_EXPORT BOOL NSEnsurePolicy(NSError **error);
 FOUNDATION_EXPORT BOOL NSEnsurePolicyIn(NSSharedDirectory *directory, NSError **error);
+FOUNDATION_EXPORT BOOL NSEnsureCompatiblePolicyIn(NSSharedDirectory *directory, BOOL legacyActive,
+                                                  NSError **error);
+FOUNDATION_EXPORT BOOL NSSetUnidentifiedMode(NSMutableDictionary *document, NSString *mode,
+                                             BOOL preferencesLoaded, BOOL enabled, NSInteger configuredEngine,
+                                             NSString *_Nullable activation, NSError **error);
 FOUNDATION_EXPORT BOOL NSUpdatePolicy(BOOL (^mutation)(NSMutableDictionary *document, NSError **error),
                                       NSError **error);
 // DNS cache refresh is atomic and does not flush transient answers.
@@ -44,6 +49,11 @@ FOUNDATION_EXPORT BOOL NSResetSharedStateIn(NSSharedDirectory *directory, BOOL l
 FOUNDATION_EXPORT BOOL NSResetSharedState(BOOL legacyProviderMayBeRunning, NSError **error);
 FOUNDATION_EXPORT BOOL NSResetSharedStateWithOptions(BOOL legacyProviderMayBeRunning, BOOL preserveSettings,
                                                      NSError **error);
+// Provider-only. Detach executes on the provider state queue with the policy locked.
+FOUNDATION_EXPORT void NSDrainPermissionResponses(NSString *session, NSString *activation,
+                                                  dispatch_block_t _Nullable (^detach)(NSDictionary *response,
+                                                                                       NSPolicy *policy));
+FOUNDATION_EXPORT void NSClearPermissionResponses(NSStoreLock *providerLock);
 FOUNDATION_EXPORT BOOL NSAnswerPermissionRequestWithRule(NSDictionary *request, NSString *rule,
                                                          NSError *_Nullable *_Nullable error);
 FOUNDATION_EXPORT BOOL NSAnswerPermissionRequest(NSDictionary *request, BOOL allow,

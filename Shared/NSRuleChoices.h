@@ -84,6 +84,14 @@ static inline NSArray<NSString *> *NSConnectionRuleValues(NSString *direction) {
     }
     return @[];
 }
+static inline NSArray<NSString *> *NSPermissionRuleValues(NSDictionary *request) {
+    NSArray *rules = NSConnectionRuleValues(request[@"direction"]);
+    if (!rules.count && [request[@"kind"] isEqual:@"unidentified"] &&
+        [request[@"direction"] isEqual:@"unknown"]) {
+        return @[ @"allow", @"block" ];
+    }
+    return rules;
+}
 // Persistent editors toggle explicit choices; connection decisions never toggle.
 static inline NSDictionary *NSAppRuleByTogglingSelection(id value, NSString *action) {
     NSDictionary *record = NSAppRuleRecord(value);

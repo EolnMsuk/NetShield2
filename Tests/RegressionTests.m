@@ -13,6 +13,7 @@
 #import "../App/NSFilterBootPolicy.h"
 #import "../Shared/NSDestination.h"
 #import "../Shared/NSPermissionQueue.h"
+#import "../Shared/NSMonitorSchema.h"
 #import "../FilterControl/NSPermissionNotifications.h"
 #include <errno.h>
 #include <unistd.h>
@@ -1269,7 +1270,7 @@ static void TestCompositeAppRules(void) {
         legacy[@"default"] = fallback;
         legacy[@"rules"] = @{@"app" : @"block-inbound"};
         policy = [NSPolicy policyWithDocument:legacy error:NULL];
-        CHECK([policy.document[@"schema"] isEqual:@(NSSchemaVersion)]);
+        CHECK([policy.document[@"schema"] isEqual:@2]);
         CHECK(![policy allowsIdentity:@"app" direction:NSFlowDirectionInbound]);
         CHECK([policy allowsIdentity:@"app"
                            direction:NSFlowDirectionOutbound] == [fallback isEqual:@"allow"]);
@@ -1504,6 +1505,238 @@ static void TestDirectionalPermissionAnswers(void) {
     }
 }
 
+static NSArray<NSDictionary *> *PublishUnidentifiedRequests(NSPermissionQueue *queue) {
+    NSMutableDictionary *monitor = [Monitor(@[], YES, NSEngineVersion, NSDate.date) mutableCopy];
+    monitor[@"schema"] = @(NSMonitorSchemaVersion);
+    monitor[@"session"] = @"session";
+    monitor[@"activation"] = @"activation";
+    NSMutableArray *requests = [NSMutableArray new];
+    for (NSDictionary *entry in queue.requests) {
+        NSMutableDictionary *request = [entry mutableCopy];
+        request[@"session"] = monitor[@"session"];
+        request[@"activation"] = monitor[@"activation"];
+        [requests addObject:request];
+    }
+    monitor[@"requests"] = requests;
+    CHECK(NSWriteMonitorSnapshot(monitor, NULL));
+    return NSReadMonitor()[@"requests"];
+}
+
+static void TestUnidentifiedExactRules(void) {
+    NSMutableDictionary *legacy = [[NSPolicy defaultDocument] mutableCopy];
+    CHECK([legacy[@"unattributed"] isEqual:@"allow"]);
+    legacy[@"schema"] = @3;
+    legacy[@"unattributed"] = @"block";
+    CHECK(NSWriteDocument(legacy, NSPolicyFile, NULL));
+    CHECK(NSEnsurePolicy(NULL));
+    CHECK([NSReadDocument(NSPolicyFile, NULL)[@"schema"] isEqual:@3]);
+    CHECK([NSReadPolicy(NULL).document[@"unattributed"] isEqual:@"block"]);
+    NSMutableDictionary *oldMonitor = [Monitor(@[], YES, NSEngineVersion - 1, NSDate.date) mutableCopy];
+    oldMonitor[@"activation"] = @"activation";
+    CHECK(NSWriteDocument(oldMonitor, NSMonitorFile, NULL));
+    CHECK(!NSSetUnidentifiedMode(legacy, @"ask", YES, YES, NSEngineVersion, @"activation", NULL));
+    CHECK([legacy[@"schema"] isEqual:@3]);
+    oldMonitor[@"engine"] = @(NSEngineVersion);
+    oldMonitor[@"schema"] = @(NSMonitorSchemaVersion);
+    CHECK(NSWriteDocument(oldMonitor, NSMonitorFile, NULL));
+    NSMutableDictionary *candidate = [legacy mutableCopy];
+    CHECK(!NSSetUnidentifiedMode(candidate, @"ask", YES, YES, NSEngineVersion, @"earlier-activation", NULL));
+    CHECK(NSSetUnidentifiedMode(candidate, @"ask", YES, YES, NSEngineVersion, @"activation", NULL));
+    CHECK([candidate[@"schema"] isEqual:@(NSSchemaVersion)]);
+    oldMonitor[@"controlRunning"] = @NO;
+    CHECK(NSWriteDocument(oldMonitor, NSMonitorFile, NULL));
+    CHECK(NSUpdatePolicy(
+        ^BOOL(NSMutableDictionary *document, NSError **error) {
+            document[@"default"] = @"block";
+            return NSSetUnidentifiedMode(document, @"ask", YES, NO, 0, nil, error);
+        },
+        NULL));
+    NSPolicy *ask = NSReadPolicy(NULL);
+    CHECK([ask.document[@"schema"] isEqual:@(NSSchemaVersion)]);
+    CHECK([ask.document[@"unidentifiedAskGeneration"] length]);
+    CHECK([ask requiresPermissionForIdentity:nil]);
+    CHECK(![ask requiresPermissionForIdentity:@"example.app"]);
+    CHECK(![ask allowsIdentity:nil direction:NSFlowDirectionUnknown]);
+
+    NSDictionary *destination = @{
+        @"domain" : @"Example.COM.",
+        @"address" : @"::ffff:192.0.2.10",
+        @"port" : @443,
+        @"localPort" : @51000,
+        @"protocol" : @"tcp"
+    };
+    NSDictionary *canonical = NSCanonicalConnectionDestination(destination);
+    NSPermissionQueue *queue = [NSPermissionQueue new];
+    [queue resolveWithPolicy:ask now:0];
+    __block NSUInteger allowed = 0;
+    void (^result)(NSPermissionResult) = ^(NSPermissionResult verdict) {
+        allowed += verdict == NSPermissionAllowedByPolicy;
+    };
+    for (NSDictionary *peer in
+         @[ destination, canonical, @{@"domain" : @"example.com", @"address" : @"192.0.2.11"} ]) {
+        [queue enqueueIdentity:@""
+                     direction:NSFlowDirectionOutbound
+                   destination:peer
+                          flow:@""
+                           now:1
+                          date:NSDate.date
+                        result:result];
+    }
+    CHECK(queue.requests.count == 2 && queue.waitingCount == 3);
+    NSDictionary *request = PublishUnidentifiedRequests(queue).firstObject;
+    CHECK([request[@"destination"] isEqual:canonical] && [request[@"waiting"] isEqual:@2]);
+    NSMutableDictionary *forged = [request mutableCopy];
+    for (NSString *key in
+         @[ @"session", @"activation", @"askGeneration", @"fingerprint", @"direction", @"kind" ]) {
+        forged[key] = @"forged";
+        CHECK(!NSAnswerPermissionRequestWithRule(forged, @"allow-outbound", NULL));
+        forged[key] = request[key];
+    }
+    CHECK(!NSAnswerPermissionRequestWithRule(request, @"allow", NULL));
+    forged[@"destination"] = @{@"domain" : @"forged.example"};
+    CHECK(NSAnswerPermissionRequestWithRule(forged, @"allow-outbound", NULL));
+    CHECK(!NSAnswerPermissionRequestWithRule(request, @"block-outbound", NULL));
+    NSPolicy *saved = NSReadPolicy(NULL);
+    NSString *key = [saved.document[@"globalRules"] allKeys].firstObject;
+    CHECK([key isEqual:NSExactGlobalRuleKey(@[], canonical, @"outgoing")]);
+    CHECK([saved.document[@"rules"] count] == 0);
+    CHECK([saved allowsIdentity:@"example.app" direction:NSFlowDirectionOutbound destination:destination]);
+    CHECK(![saved allowsIdentity:nil direction:NSFlowDirectionInbound destination:canonical]);
+    for (NSString *field in canonical) {
+        NSMutableDictionary *missing = [canonical mutableCopy];
+        [missing removeObjectForKey:field];
+        CHECK(![saved allowsIdentity:nil direction:NSFlowDirectionOutbound destination:missing]);
+        CHECK([saved needsSocketDestination:missing identity:nil direction:NSFlowDirectionOutbound]);
+        CHECK([saved evaluateIdentity:nil direction:NSFlowDirectionOutbound destination:missing socket:NO]
+                  .disposition == NSFlowAsk);
+        missing[field] = @{
+            @"domain" : @"other.example",
+            @"address" : @"192.0.2.11",
+            @"protocol" : @"udp",
+            @"port" : @8443,
+            @"localPort" : @51001
+        }[field];
+        CHECK(![saved allowsIdentity:nil direction:NSFlowDirectionOutbound destination:missing]);
+        CHECK(![saved needsSocketDestination:missing identity:nil direction:NSFlowDirectionOutbound]);
+    }
+    NSMutableDictionary *broad = [ask.document mutableCopy];
+    broad[@"globalRules"] = @{
+        NSExactGlobalRuleKey(@[], @{@"protocol" : @"other"}, @"both") : @"allow",
+        NSExactGlobalRuleKey(@[], @{}, @"incoming") : @"allow-inbound"
+    };
+    NSPolicy *partial = [NSPolicy policyWithDocument:broad error:NULL];
+    CHECK(partial);
+    CHECK([partial allowsIdentity:nil
+                        direction:NSFlowDirectionUnknown
+                      destination:@{@"protocol" : @"other"}]);
+    CHECK(![partial allowsIdentity:nil direction:NSFlowDirectionUnknown destination:@{@"protocol" : @"tcp"}]);
+    CHECK(![partial allowsIdentity:nil direction:NSFlowDirectionUnknown]);
+    CHECK([partial allowsIdentity:nil direction:NSFlowDirectionInbound]);
+    CHECK(!NSValidGlobalRuleKey(NSExactGlobalRuleKey(@[], @{}, @"both")));
+    [queue resolveWithPolicy:saved now:2];
+    CHECK(allowed == 2 && queue.waitingCount == 1);
+    [queue cancelAll];
+    NSMutableDictionary *incompatible = [saved.document mutableCopy];
+    incompatible[@"unattributed"] = @"allow";
+    incompatible[@"schema"] = @3;
+    [incompatible removeObjectForKey:@"unidentifiedAskGeneration"];
+    CHECK(![NSPolicy policyWithDocument:incompatible error:NULL]);
+    NSData *exportData = NSRulesAndActivityJSON(saved, @[], @"2.8.8", NULL);
+    NSDictionary *export = [NSJSONSerialization JSONObjectWithData:exportData options:0 error:NULL];
+    CHECK([export[@"schemaVersion"] isEqual:@2] &&
+          [export[@"globalRules"] isEqual:saved.document[@"globalRules"]]);
+    CHECK(!export[@"responses"]);
+}
+
+static void TestUnidentifiedOneTimeResponses(void) {
+    NSMutableDictionary *document = [[NSPolicy defaultDocument] mutableCopy];
+    document[@"unattributed"] = @"ask";
+    document[@"unidentifiedAskGeneration"] = @"generation";
+    CHECK(NSWriteDocument(document, NSPolicyFile, NULL));
+    NSPolicy *policy = NSReadPolicy(NULL);
+    NSPermissionQueue *queue = [NSPermissionQueue new];
+    [queue resolveWithPolicy:policy now:0];
+    __block NSMutableArray *results = [NSMutableArray new];
+    void (^result)(NSPermissionResult) = ^(NSPermissionResult verdict) {
+        [results addObject:@(verdict)];
+    };
+    for (NSString *flow in @[ @"first", @"second", @"third" ]) {
+        [queue enqueueIdentity:@""
+                     direction:NSFlowDirectionUnknown
+                   destination:@{}
+                          flow:flow
+                           now:1
+                          date:NSDate.date
+                        result:result];
+    }
+    NSArray *requests = PublishUnidentifiedRequests(queue);
+    CHECK(requests.count == 3);
+    CHECK(![requests[0][@"token"] isEqual:requests[1][@"token"]]);
+    CHECK([requests[0][@"fingerprint"] isEqual:requests[1][@"fingerprint"]]);
+    NSMutableDictionary *oldMonitor = [NSReadMonitor() mutableCopy];
+    oldMonitor[@"schema"] = @2;
+    CHECK(!NSValidateMonitor(oldMonitor, NULL));
+
+    __block NSTimeInterval elapsed = 2;
+    dispatch_block_t drain = ^{
+        NSDrainPermissionResponses(@"session", @"activation",
+                                   ^dispatch_block_t(NSDictionary *record, NSPolicy *current) {
+                                       return [queue takeResponse:record policy:current now:elapsed];
+                                   });
+    };
+    CHECK(NSAnswerPermissionRequestWithRule(requests[0], @"defer", NULL));
+    drain();
+    CHECK(queue.waitingCount == 3 && [queue.requests.firstObject[@"deferred"] boolValue]);
+    CHECK(results.count == 0);
+    CHECK(NSAnswerPermissionRequestWithRule(requests[0], @"allow", NULL));
+    CHECK(!NSAnswerPermissionRequestWithRule(requests[0], @"block", NULL));
+    NSDictionary *mailbox = NSReadDocument(NSPermissionResponsesFile, NULL);
+    NSMutableDictionary *wrong = [mailbox[@"responses"][0] mutableCopy];
+    wrong[@"session"] = @"old-session";
+    CHECK(NSWriteDocument(@{@"responses" : @[ wrong ]}, NSPermissionResponsesFile, NULL));
+    drain();
+    CHECK(results.count == 0 && queue.waitingCount == 3);
+    CHECK(NSWriteDocument(mailbox, NSPermissionResponsesFile, NULL));
+    drain();
+    CHECK([results isEqual:@[ @(NSPermissionAllowedOnce) ]] && queue.waitingCount == 2);
+    CHECK(NSWriteDocument(mailbox, NSPermissionResponsesFile, NULL));
+    drain();
+    CHECK(results.count == 1 && queue.waitingCount == 2);
+    CHECK(NSAnswerPermissionRequestWithRule(requests[1], @"block", NULL));
+    drain();
+    CHECK([results.lastObject isEqual:@(NSPermissionBlockedOnce)] && queue.waitingCount == 1);
+    CHECK(NSAnswerPermissionRequestWithRule(requests[2], @"allow", NULL));
+    elapsed = NSPermissionTimeout + 1;
+    drain();
+    CHECK(results.count == 2 && queue.waitingCount == 1);
+    [queue resolveWithPolicy:policy now:elapsed];
+    CHECK([results.lastObject isEqual:@(NSPermissionBlocked)] && queue.waitingCount == 0);
+    CHECK(!NSAnswerPermissionRequestWithRule(PublishUnidentifiedRequests(queue).firstObject, @"allow", NULL));
+    CHECK([NSReadPolicy(NULL).document isEqual:policy.document]);
+    CHECK([queue enqueueIdentity:@""
+                       direction:NSFlowDirectionUnknown
+                     destination:@{}
+                            flow:@"retry"
+                             now:elapsed
+                            date:NSDate.date
+                          result:result]);
+    NSDictionary *retry = PublishUnidentifiedRequests(queue).firstObject;
+    CHECK(NSAnswerPermissionRequestWithRule(retry, @"allow", NULL));
+    for (NSString *mode in @[ @"allow", @"ask" ]) {
+        CHECK(NSUpdatePolicy(
+            ^BOOL(NSMutableDictionary *current, NSError **error) {
+                return NSSetUnidentifiedMode(current, mode, YES, YES, NSEngineVersion, @"activation", error);
+            },
+            NULL));
+    }
+    CHECK(![NSReadPolicy(NULL).document[@"unidentifiedAskGeneration"] isEqual:retry[@"askGeneration"]]);
+    drain();
+    CHECK(results.count == 3 && queue.waitingCount == 1);
+    [queue resolveWithPolicy:NSReadPolicy(NULL) now:elapsed];
+    CHECK(queue.waitingCount == 0 && [results.lastObject isEqual:@(NSPermissionBlocked)]);
+    [queue cancelAll];
+}
+
 static void TestAnswersAndReset(void) {
     CHECK(NSWriteDocument([NSPolicy defaultDocument], NSPolicyFile, NULL));
     NSPermissionQueue *queue = [NSPermissionQueue new];
@@ -1643,6 +1876,7 @@ static void TestSocketSettingsAndDestinations(void) {
         NULL));
     CHECK(NSWriteDocument(Monitor(@[], NO, NSEngineVersion, NSDate.date), NSMonitorFile, NULL));
     CHECK(NSWriteDocument(@{@"revision" : @"retry"}, NSNotificationRetryFile, NULL));
+    CHECK(NSWriteDocument(@{@"responses" : @[]}, NSPermissionResponsesFile, NULL));
     CHECK(NSClearActivity(NULL));
     CHECK(NSResetSharedState(NO, NULL));
     NSDictionary *reset = NSReadPolicy(NULL).document;
@@ -1654,7 +1888,8 @@ static void TestSocketSettingsAndDestinations(void) {
     CHECK([reset[@"ruleDestinations"] count] == 0 && [reset[@"globalDomainAddresses"] count] == 0 &&
           [reset[@"globalDomainExpirations"] count] == 0 && [reset[@"askGenerations"] count] == 0);
     CHECK(NSReadMonitor().count == 0);
-    for (NSString *name in @[ NSMonitorFile, NSNotificationRetryFile, NSActivityClearFile ]) {
+    for (NSString *name in
+         @[ NSMonitorFile, NSNotificationRetryFile, NSActivityClearFile, NSPermissionResponsesFile ]) {
         CHECK(![NSFileManager.defaultManager fileExistsAtPath:NSSharedURL(name).path]);
     }
 }
@@ -1798,6 +2033,41 @@ static void TestLateNotifications(void) {
     CHECK([center.removed containsObject:((UNNotificationRequest *)center.requests[3]).identifier]);
     [old stop];
 }
+static void TestUnidentifiedNotificationActions(void) {
+    NSMutableDictionary *document = [[NSPolicy defaultDocument] mutableCopy];
+    document[@"unattributed"] = @"ask";
+    NSPolicy *policy = [NSPolicy policyWithDocument:document error:NULL];
+    FakeNotificationCenter *center = [FakeNotificationCenter new];
+    NSPermissionNotifications *notifications = [[NSPermissionNotifications alloc] initWithCenter:center];
+    NSDictionary *request = @{
+        @"token" : @"once",
+        @"kind" : @"unidentified",
+        @"identity" : @"",
+        @"direction" : @"unknown",
+        @"mode" : @"once",
+        @"fingerprint" : @"tuple"
+    };
+    [notifications updateRequests:@[ request ] policy:policy retryRevision:nil];
+    UNNotificationRequest *banner = center.requests.firstObject;
+    NSString *category = banner.content.categoryIdentifier;
+    CHECK(NSIsPermissionCategory(category));
+    CHECK([banner.content.body containsString:@"No rule will be saved"]);
+    CHECK(NSIsPermissionNotificationAction(category, banner.content.userInfo, @"allow"));
+    CHECK(NSIsPermissionNotificationAction(category, banner.content.userInfo, @"block"));
+    CHECK(NSIsPermissionNotificationAction(category, banner.content.userInfo, NSDeferPermissionAction));
+    CHECK(!NSIsPermissionNotificationAction(category, banner.content.userInfo, @"allow-outbound"));
+    CHECK(!NSIsPermissionNotificationAction(NSPermissionCategoryForDirection(@"unknown"),
+                                            banner.content.userInfo, @"allow"));
+    CHECK(!NSIsPermissionNotificationAction(NSPermissionCategoryForDirection(@"unknown"),
+                                            @{@"identity" : @"example.app", @"direction" : @"unknown"},
+                                            @"block"));
+    NSMutableDictionary *deferred = [request mutableCopy];
+    deferred[@"deferred"] = @YES;
+    [notifications updateRequests:@[ deferred ] policy:policy retryRevision:@"retry"];
+    CHECK(center.requests.count == 1 && [center.removed containsObject:banner.identifier]);
+    [notifications stop];
+}
+
 static void TestDirectionalNotifications(void) {
     CHECK(NSWriteDocument([NSPolicy defaultDocument], NSPolicyFile, NULL));
     FakeNotificationCenter *center = [FakeNotificationCenter new];
@@ -2051,8 +2321,9 @@ static NSError *WaitForSharedStateCleanup(NSTimeInterval timeout) {
 }
 
 static void TestSharedStateCleanupRetries(void) {
-    NSArray<NSString *> *files =
-        @[ NSPolicyFile, NSMonitorFile, NSNotificationRetryFile, NSActivityClearFile ];
+    NSArray<NSString *> *files = @[
+        NSPolicyFile, NSMonitorFile, NSNotificationRetryFile, NSActivityClearFile, NSPermissionResponsesFile
+    ];
     NSArray<NSString *> *locks = @[ @"provider.lock", @"policy.lock", @"activity.lock" ];
     for (NSString *lockName in locks) {
         for (NSNumber *releaseAfterDelay in @[ @YES, @NO ]) {
@@ -2185,6 +2456,8 @@ int main(void) {
         TestReleaseVersions();
         TestIdentityDisplay();
         TestDirectionalPermissionAnswers();
+        TestUnidentifiedExactRules();
+        TestUnidentifiedOneTimeResponses();
         TestCompositeAppRules();
         TestAppRuleEditorTransitions();
         TestDirectionalAppAllows();
@@ -2193,6 +2466,7 @@ int main(void) {
         TestAppPreferences();
         TestLateNotifications();
         TestDirectionalNotifications();
+        TestUnidentifiedNotificationActions();
         TestNotificationGenerations();
         TestFilterRemoval();
         TestSharedStateCleanupRetries();

@@ -154,7 +154,7 @@ static void TestMonitorCorpus(void) {
     d = [base mutableCopy];
     d[@"overflowCount"] = @(ULLONG_MAX);
     EXPECT(NSValidateMonitor(d, NULL));
-    d[@"schema"] = @3;
+    d[@"schema"] = @(NSMonitorSchemaVersion + 1);
     EXPECT(!NSValidateMonitor(d, NULL));
     NSError *error = nil;
     EXPECT(NSWriteDocument(d, NSMonitorFile, NULL));

@@ -1,4 +1,4 @@
-#import "NSPolicy.h"
+#import "NSPermissionRequest.h"
 
 static inline BOOL NSShouldWithdrawPermissionNotification(NSPolicy *policy, NSString *identity,
                                                           BOOL current) {
@@ -7,5 +7,8 @@ static inline BOOL NSShouldWithdrawPermissionNotification(NSPolicy *policy, NSSt
 
 static inline BOOL NSShouldWithdrawPermissionRequestNotification(NSPolicy *policy, NSDictionary *request,
                                                                  BOOL current) {
-    return !current || !policy || ![policy requiresPermissionForRequest:request];
+    return !current || !policy || [request[@"deferred"] boolValue] ||
+           (NSUnidentifiedRequest(request) && [request[@"mode"] isEqual:@"once"] &&
+            [request[@"expired"] boolValue]) ||
+           !NSPermissionGenerationMatches(policy, request) || ![policy requiresPermissionForRequest:request];
 }

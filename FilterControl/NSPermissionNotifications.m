@@ -8,6 +8,13 @@
 static NSString *NSPermissionNotificationBody(NSDictionary *request) {
     NSDictionary *destination =
         [request[@"destination"] isKindOfClass:NSDictionary.class] ? request[@"destination"] : @{};
+    if (NSUnidentifiedRequest(request)) {
+        NSString *direction = [request[@"direction"] isEqual:@"inbound"]    ? @"Incoming"
+                              : [request[@"direction"] isEqual:@"outbound"] ? @"Outgoing"
+                                                                            : @"Direction unavailable";
+        return [NSString stringWithFormat:@"%@\n%@ / %@", NSUnidentifiedPermissionScope(request), direction,
+                                          NSDestinationSummary(destination)];
+    }
     NSString *domain = NSCleanDestinationHost(destination[@"domain"]);
     NSString *address = NSCleanDestinationHost(destination[@"address"]);
     NSString *domainKey = NSGlobalHostKey(domain);
@@ -147,7 +154,7 @@ static void NSWithdrawNotifications(id<NSPermissionNotificationCenter> center, N
             NSString *token = request[@"token"];
             if ([token isKindOfClass:NSString.class] && token.length &&
                 next.count < NSMaximumActiveRequests + NSMaximumRequestHistory &&
-                [policy requiresPermissionForRequest:request]) {
+                !NSShouldWithdrawPermissionRequestNotification(policy, request, YES)) {
                 next[token] = request;
             }
         }
@@ -158,13 +165,7 @@ static void NSWithdrawNotifications(id<NSPermissionNotificationCenter> center, N
         for (NSString *token in self.submissions.allKeys) {
             NSDictionary *previous = self.requestsByToken[token];
             NSDictionary *current = next[token];
-            if (retry || !current ||
-                ![[previous dictionaryWithValuesForKeys:@[
-                    @"identity", @"direction", @"askGeneration", @"session", @"activation"
-                ]]
-                    isEqual:[current dictionaryWithValuesForKeys:@[
-                        @"identity", @"direction", @"askGeneration", @"session", @"activation"
-                    ]]] ||
+            if (retry || !NSPermissionPresentationMatches(previous, current) ||
                 ![NSPermissionNotificationBody(previous) isEqual:NSPermissionNotificationBody(current)]) {
                 [self retire:token];
             }
@@ -198,14 +199,16 @@ static void NSWithdrawNotifications(id<NSPermissionNotificationCenter> center, N
     record.identifier = submission;
     self.submissions[token] = record;
     UNMutableNotificationContent *content = [UNMutableNotificationContent new];
-    content.title = NSIdentityDisplayName(identity);
+    content.title =
+        NSUnidentifiedRequest(request) ? @"Unidentified connection" : NSIdentityDisplayName(identity);
     content.body = NSPermissionNotificationBody(request);
-    content.categoryIdentifier = NSPermissionCategoryForDirection(request[@"direction"]);
+    content.categoryIdentifier = NSPermissionCategoryForRequest(request);
     content.sound = UNNotificationSound.defaultSound;
     content.userInfo =
         @{@"token" : token, @"identity" : identity, @"direction" : request[@"direction"] ?: @"unknown"};
     NSMutableDictionary *payload = [content.userInfo mutableCopy];
-    for (NSString *key in @[ @"session", @"activation", @"askGeneration" ]) {
+    for (NSString *key in
+         @[ @"session", @"activation", @"askGeneration", @"kind", @"fingerprint", @"mode", @"flow" ]) {
         if (request[key]) {
             payload[key] = request[key];
         }

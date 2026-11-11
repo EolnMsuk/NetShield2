@@ -43,7 +43,7 @@ static inline NSString *NSDestinationSummary(NSDictionary *destination) {
     NSString *domain = NSCleanDestinationHost(destination[@"domain"]);
     NSString *address = NSCleanDestinationHost(destination[@"address"]);
     NSMutableArray *parts = [NSMutableArray new];
-    if ([@[ @"tcp", @"udp" ] containsObject:destination[@"protocol"]]) {
+    if ([@[ @"tcp", @"udp", @"other" ] containsObject:destination[@"protocol"]]) {
         [parts addObject:[destination[@"protocol"] uppercaseString]];
     }
     if (domain.length) {

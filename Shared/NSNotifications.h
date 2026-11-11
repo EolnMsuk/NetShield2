@@ -1,11 +1,13 @@
 #import <UserNotifications/UserNotifications.h>
 #import "NSStore.h"
 #import "NSRuleChoices.h"
+#import "NSPermissionRequest.h"
 
 #define NSPermissionCategory @"NETSHIELD_PERMISSION"
 #define NSAllowAction @"NETSHIELD_ALLOW"
 #define NSBlockIncomingAction @"NETSHIELD_BLOCK_INCOMING"
 #define NSBlockAction @"NETSHIELD_BLOCK"
+#define NSDeferPermissionAction @"defer"
 
 static inline NSString *NSPermissionCategoryForDirection(NSString *direction) {
     if ([direction isEqual:@"inbound"]) {
@@ -16,11 +18,36 @@ static inline NSString *NSPermissionCategoryForDirection(NSString *direction) {
     }
     return @"NETSHIELD_PERMISSION_REVIEW";
 }
+static inline NSString *NSPermissionCategoryForRequest(NSDictionary *request) {
+    if (!NSUnidentifiedRequest(request)) {
+        return NSPermissionCategoryForDirection(request[@"direction"]);
+    }
+    NSFlowDirection direction = NSPermissionDirection(request[@"direction"]);
+    return direction == NSFlowDirectionInbound    ? @"NETSHIELD_UNIDENTIFIED_INCOMING"
+           : direction == NSFlowDirectionOutbound ? @"NETSHIELD_UNIDENTIFIED_OUTGOING"
+                                                  : @"NETSHIELD_UNIDENTIFIED";
+}
 static inline BOOL NSIsPermissionCategory(NSString *category) {
     return [@[
         @"NETSHIELD_PERMISSION", @"NETSHIELD_PERMISSION_INCOMING", @"NETSHIELD_PERMISSION_OUTGOING",
-        @"NETSHIELD_PERMISSION_REVIEW"
+        @"NETSHIELD_PERMISSION_REVIEW", @"NETSHIELD_UNIDENTIFIED_INCOMING",
+        @"NETSHIELD_UNIDENTIFIED_OUTGOING", @"NETSHIELD_UNIDENTIFIED"
     ] containsObject:category];
+}
+
+static inline BOOL NSIsPermissionNotificationAction(NSString *category, NSDictionary *request,
+                                                    NSString *action) {
+    if (NSUnidentifiedRequest(request)) {
+        return [category isEqual:NSPermissionCategoryForRequest(request)] &&
+               ([action isEqual:NSDeferPermissionAction] ||
+                [NSPermissionRuleValues(request) containsObject:action]);
+    }
+    if ([category isEqual:NSPermissionCategory]) {
+        return [@[ NSAllowAction, NSBlockAction, NSBlockIncomingAction ] containsObject:action] ||
+               [NSPermissionRuleValues(request) containsObject:action];
+    }
+    return [category isEqual:NSPermissionCategoryForRequest(request)] &&
+           [NSPermissionRuleValues(request) containsObject:action];
 }
 
 static inline void NSRemoveAutomaticallyAllowedNotifications(void) {
@@ -57,19 +84,29 @@ static inline void NSRemoveAutomaticallyAllowedNotifications(void) {
 
 static inline void NSRegisterPermissionActions(void) {
     NSMutableSet *categories = [NSMutableSet new];
-    for (NSString *direction in @[ @"inbound", @"outbound", @"unknown" ]) {
-        NSMutableArray *actions = [NSMutableArray new];
-        for (NSString *rule in NSConnectionRuleValues(direction)) {
-            [actions addObject:[UNNotificationAction
-                                   actionWithIdentifier:rule
-                                                  title:NSDirectionRuleTitle(rule)
-                                                options:UNNotificationActionOptionAuthenticationRequired]];
+    for (NSString *kind in @[ @"app", @"unidentified" ]) {
+        for (NSString *direction in @[ @"inbound", @"outbound", @"unknown" ]) {
+            NSDictionary *request = @{@"kind" : kind, @"direction" : direction};
+            NSMutableArray *actions = [NSMutableArray new];
+            for (NSString *rule in NSPermissionRuleValues(request)) {
+                [actions
+                    addObject:[UNNotificationAction
+                                  actionWithIdentifier:rule
+                                                 title:NSDirectionRuleTitle(rule)
+                                               options:UNNotificationActionOptionAuthenticationRequired]];
+            }
+            if (NSUnidentifiedRequest(request)) {
+                [actions
+                    addObject:[UNNotificationAction actionWithIdentifier:NSDeferPermissionAction
+                                                                   title:@"Not Now"
+                                                                 options:UNNotificationActionOptionNone]];
+            }
+            [categories addObject:[UNNotificationCategory
+                                      categoryWithIdentifier:NSPermissionCategoryForRequest(request)
+                                                     actions:actions
+                                           intentIdentifiers:@[]
+                                                     options:UNNotificationCategoryOptionNone]];
         }
-        [categories addObject:[UNNotificationCategory
-                                  categoryWithIdentifier:NSPermissionCategoryForDirection(direction)
-                                                 actions:actions
-                                       intentIdentifiers:@[]
-                                                 options:UNNotificationCategoryOptionNone]];
     }
     [UNUserNotificationCenter.currentNotificationCenter setNotificationCategories:categories];
 }

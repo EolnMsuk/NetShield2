@@ -1,5 +1,6 @@
 #import "NSExport.h"
 #import "NSConstants.h"
+#import "NSGlobalRule.h"
 #import "NSStoreLock.h"
 #import <TargetConditionals.h>
 
@@ -227,8 +228,12 @@ NSData *NSRulesAndActivityJSON(NSPolicy *policy, NSArray<NSDictionary *> *events
         entry[@"time"] = [formatter stringFromDate:event[@"time"]];
         [activity addObject:entry];
     }
+    BOOL extended = [document[@"unattributed"] isEqual:@"ask"];
+    for (NSString *key in document[@"globalRules"]) {
+        extended |= NSCustomGlobalRuleComponents(key).count == 6;
+    }
     NSDictionary *export = @{
-        @"schemaVersion" : @1,
+        @"schemaVersion" : extended ? @2 : @1,
         @"appVersion" : version,
         @"exportedAt" : [formatter stringFromDate:NSDate.date],
         @"defaultRule" : document[@"default"],

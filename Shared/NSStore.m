@@ -7,6 +7,8 @@
 #import "NSMonitorSchema.h"
 #import "NSValidation.h"
 #import "NSRuleChoices.h"
+#import "NSPermissionRequest.h"
+#import "NSProviderHealth.h"
 #import "NSExport.h"
 #include <errno.h>
 
@@ -166,7 +168,7 @@ BOOL NSRemoveSharedStateIn(NSSharedDirectory *directory, NSError **error) {
                     NSMutableArray *cleared = [NSMutableArray new];
                     for (NSString *name in @[
                              NSPolicyFile, NSMonitorFile, NSNotificationRetryFile, NSActivityClearFile,
-                             NSExportCacheDirectory
+                             NSPermissionResponsesFile, NSExportCacheDirectory
                          ]) {
                         NSError *removeError = nil;
                         if (!NSRemoveSavedEntry(directory, name, &removeError)) {
@@ -322,6 +324,9 @@ BOOL NSEnsurePolicy(NSError **error) {
     return directory && NSEnsurePolicyIn(directory, error);
 }
 BOOL NSEnsurePolicyIn(NSSharedDirectory *directory, NSError **error) {
+    return NSEnsureCompatiblePolicyIn(directory, NO, error);
+}
+BOOL NSEnsureCompatiblePolicyIn(NSSharedDirectory *directory, BOOL legacyActive, NSError **error) {
     __attribute__((objc_precise_lifetime)) NSStoreLock *lock = [NSStoreLock tryLockInDirectory:directory
                                                                                           leaf:@"policy.lock"
                                                                                          error:error];
@@ -342,11 +347,39 @@ BOOL NSEnsurePolicyIn(NSSharedDirectory *directory, NSError **error) {
             }
             return NO;
         }
-        return NSWriteDocumentIn(directory, [NSPolicy defaultDocument], NSPolicyFile, error);
+        NSMutableDictionary *defaults = [[NSPolicy defaultDocument] mutableCopy];
+        if (legacyActive) {
+            defaults[@"schema"] = @3;
+        }
+        return NSWriteDocumentIn(directory, defaults, NSPolicyFile, error);
     } @finally {
         [lock unlock];
     }
 }
+BOOL NSSetUnidentifiedMode(NSMutableDictionary *document, NSString *mode, BOOL preferencesLoaded,
+                           BOOL enabled, NSInteger configuredEngine, NSString *activation, NSError **error) {
+    if ([mode isEqual:@"ask"]) {
+        NSDictionary *monitor = NSReadMonitor();
+        NSDate *now = NSDate.date;
+        NSTimeInterval age = [now timeIntervalSinceDate:monitor[@"updated"] ?: NSDate.distantPast];
+        BOOL running =
+            enabled || ([monitor[@"controlRunning"] boolValue] && age >= 0 && age < NSMonitorFreshness);
+        if (!preferencesLoaded || (running && (configuredEngine != NSEngineVersion ||
+                                               ![monitor[@"engine"] isEqual:@(NSEngineVersion)] ||
+                                               ![monitor[@"schema"] isEqual:@(NSMonitorSchemaVersion)] ||
+                                               !NSHasCurrentControlHeartbeat(monitor, activation, now)))) {
+            if (error) {
+                *error = NSStorageError(@"Unidentified Ask Me needs the current filter activation. "
+                                        @"Restart Firewall or turn it off, then try again.");
+            }
+            return NO;
+        }
+        document[@"schema"] = @(NSSchemaVersion);
+    }
+    document[@"unattributed"] = mode;
+    return YES;
+}
+
 static BOOL NSUpdatePolicyWithDurability(BOOL (^mutation)(NSMutableDictionary *, NSError **), BOOL durable,
                                          NSError **error) {
     __attribute__((objc_precise_lifetime)) NSStoreLock *lock = NSAcquireLock(@"policy.lock", error);
@@ -362,6 +395,10 @@ static BOOL NSUpdatePolicyWithDurability(BOOL (^mutation)(NSMutableDictionary *,
         document[@"rules"] = [document[@"rules"] mutableCopy];
         if (!mutation(document, error)) {
             return NO;
+        }
+        if ([document[@"schema"] isEqual:@(NSSchemaVersion)] &&
+            ![document[@"unattributed"] isEqual:current.document[@"unattributed"]]) {
+            document[@"unidentifiedAskGeneration"] = NSUUID.UUID.UUIDString;
         }
         // Existing legacy overlaps remain readable; every added/changed rule is checked atomically.
         NSDictionary *before = current.document[@"globalRules"] ?: @{};
@@ -573,6 +610,9 @@ BOOL NSResetSharedStateIn(NSSharedDirectory *directory, BOOL legacyProviderMayBe
                         [replacement removeObjectForKey:@"globalDomainLifetimes"];
                         [replacement removeObjectForKey:@"ruleDestinations"];
                         [replacement removeObjectForKey:@"askGenerations"];
+                        if (replacement[@"unidentifiedAskGeneration"]) {
+                            replacement[@"unidentifiedAskGeneration"] = NSUUID.UUID.UUIDString;
+                        }
                         replacement[@"revision"] = NSUUID.UUID.UUIDString;
                     }
                     if (!NSWriteDocumentIn(directory, replacement, NSPolicyFile, error)) {
@@ -580,7 +620,7 @@ BOOL NSResetSharedStateIn(NSSharedDirectory *directory, BOOL legacyProviderMayBe
                     }
                     for (NSString *name in @[
                              NSMonitorFile, NSNotificationRetryFile, NSActivityClearFile,
-                             NSExportCacheDirectory
+                             NSPermissionResponsesFile, NSExportCacheDirectory
                          ]) {
                         NSError *removeError = nil;
                         if (!NSRemoveSavedEntry(directory, name, &removeError)) {
@@ -637,17 +677,305 @@ NSDictionary *NSReadMonitorWithError(NSError **error) {
     return filtered;
 }
 
-BOOL NSAnswerPermissionRequest(NSDictionary *request, BOOL allow, NSError **error) {
-    return NSAnswerPermissionRequestWithRule(request,
-                                             [NSString stringWithFormat:@"%@-%@", allow ? @"allow" : @"block",
-                                                                        request[@"direction"] ?: @"unknown"],
-                                             error);
+static NSDictionary *NSPermissionError(NSError **error, NSString *message) {
+    if (error) {
+        *error = NSStorageError(message);
+    }
+    return nil;
 }
-BOOL NSAnswerPermissionRequestWithRule(NSDictionary *request, NSString *rule, NSError **error) {
-    if (![NSDirectionRuleValues() containsObject:rule ?: @""]) {
-        if (error) {
-            *error = NSStorageError(@"Unsupported permission rule.");
+
+static NSDictionary *NSCurrentPermissionRequest(NSDictionary *request, NSDictionary *monitor,
+                                                NSPolicy *policy, NSDate *now, NSError **error) {
+    if (![request isKindOfClass:NSDictionary.class] || !NSBoundedString(request[@"token"], 128, YES) ||
+        !NSBoundedString(request[@"identity"], NSMaximumIdentityLength, !NSUnidentifiedRequest(request))) {
+        return NSPermissionError(error, @"Invalid permission response payload.");
+    }
+    NSDate *updated = monitor[@"updated"];
+    NSTimeInterval age = [now timeIntervalSinceDate:updated ?: NSDate.distantPast];
+    if ([monitor[@"controlRunning"] boolValue] && age >= 0 && age < NSMonitorFreshness) {
+        for (NSDictionary *current in monitor[@"requests"]) {
+            if (![current[@"token"] isEqual:request[@"token"]]) {
+                continue;
+            }
+            if (!NSPermissionPresentationMatches(request, current) ||
+                ![(monitor[@"session"] ?: @"") isEqual:(current[@"session"] ?: @"")] ||
+                ![(monitor[@"activation"] ?: @"") isEqual:(current[@"activation"] ?: @"")] ||
+                (NSUnidentifiedRequest(current) && ![monitor[@"engine"] isEqual:@(NSEngineVersion)])) {
+                break;
+            }
+            if (!NSPermissionGenerationMatches(policy, current)) {
+                return NSPermissionError(error, @"This request was replaced. Retry the connection.");
+            }
+            if (![policy requiresPermissionForRequest:current]) {
+                return NSPermissionError(error, @"A policy change already handles this connection.");
+            }
+            return current;
         }
+    }
+    return NSPermissionError(error, @"This request is no longer current or the filter is unavailable. "
+                                    @"Open NetShield2 to review it.");
+}
+
+static NSDictionary *NSPermissionPolicyWithDecision(NSDictionary *current, NSPolicy *policy, NSString *rule,
+                                                    NSError **error) {
+    if (![NSPermissionRuleValues(current) containsObject:rule]) {
+        return NSPermissionError(error, @"That decision does not apply to this request's direction.");
+    }
+    NSMutableDictionary *document = [policy.document mutableCopy];
+    NSString *identity = current[@"identity"];
+    NSDictionary *destination = current[@"destination"] ?: @{};
+    if (NSUnidentifiedRequest(current)) {
+        if (![current[@"mode"] isEqual:@"rule"]) {
+            return NSPermissionError(error, @"This connection only supports a one-time decision.");
+        }
+        NSString *key = NSExactGlobalRuleKey(@[], destination, NSGlobalCoverage(rule));
+        NSMutableDictionary *global = [document[@"globalRules"] mutableCopy];
+        if (!key) {
+            return NSPermissionError(error, @"The requested rule could not be encoded.");
+        }
+        if (!NSValidateGlobalRuleChange(global, key, rule, nil, error)) {
+            return nil;
+        }
+        global[key] = rule;
+        document[@"globalRules"] = global;
+        NSPolicy *validated = [NSPolicy policyWithDocument:document error:error];
+        if (!validated) {
+            return nil;
+        }
+        NSFlowEvaluation verdict = [validated evaluateIdentity:nil
+                                                     direction:NSPermissionDirection(current[@"direction"])
+                                                   destination:destination
+                                                        socket:NO];
+        NSFlowDisposition expected = NSGlobalActionIsAllow(rule) ? NSFlowAllow : NSFlowDrop;
+        return verdict.reason == NSFlowReasonGlobal && verdict.disposition == expected
+                   ? validated.document
+                   : NSPermissionError(error, @"The new rule would not decide this connection as requested.");
+    }
+
+    NSMutableDictionary *rules = [document[@"rules"] mutableCopy];
+    rules[identity] = NSAppRuleBySelecting(rules[identity], rule);
+    document[@"rules"] = rules;
+    if (current[@"destination"]) {
+        NSMutableDictionary *destinations =
+            [document[@"ruleDestinations"] mutableCopy] ?: [NSMutableDictionary new];
+        if (!destinations[identity]) {
+            destinations[identity] = destination;
+        }
+        document[@"ruleDestinations"] = destinations;
+    }
+    document[@"revision"] = NSUUID.UUID.UUIDString;
+    return [NSPolicy policyWithDocument:document error:error].document;
+}
+
+static NSArray<NSDictionary *> *NSReadPermissionResponses(NSSharedDirectory *directory, NSError **error) {
+    NSError *readError = nil;
+    NSDictionary *document = NSReadDocumentIn(directory, NSPermissionResponsesFile, &readError);
+    if (NSFileIsAbsent(readError)) {
+        return @[];
+    }
+    if (!document) {
+        if (error) {
+            *error = readError;
+        }
+        return nil;
+    }
+    id records = document[@"responses"];
+    NSMutableSet *tokens = [NSMutableSet new];
+    if (document.count == 1 && [records isKindOfClass:NSArray.class] &&
+        [records count] <= NSMaximumActiveRequests) {
+        for (id value in records) {
+            if (![value isKindOfClass:NSDictionary.class]) {
+                break;
+            }
+            NSDictionary *record = value;
+            BOOL once = [record[@"mode"] isEqual:@"once"];
+            NSString *action = record[@"action"];
+            if (record.count != (once ? 12 : 11) || !NSUnidentifiedRequest(record) ||
+                !(once || [record[@"mode"] isEqual:@"rule"]) ||
+                !([action isEqual:@"defer"] || (once && [@[ @"allow", @"block" ] containsObject:action])) ||
+                !NSBoundedString(record[@"token"], 128, YES) || [tokens containsObject:record[@"token"]] ||
+                !NSBoundedString(record[@"session"], 128, YES) ||
+                !NSBoundedString(record[@"activation"], 128, YES) ||
+                !NSBoundedString(record[@"fingerprint"], 512, YES) ||
+                !NSBoundedString(record[@"askGeneration"], 128, NO) ||
+                ![@[ @"inbound", @"outbound", @"unknown" ] containsObject:record[@"direction"]] ||
+                (once ? !NSBoundedString(record[@"flow"], 128, NO) : record[@"flow"] != nil) ||
+                ![record[@"expires"] isKindOfClass:NSDate.class] ||
+                ![record[@"validUntil"] isKindOfClass:NSDate.class] ||
+                (![action isEqual:@"defer"] && ![record[@"expires"] isEqual:record[@"validUntil"]])) {
+                break;
+            }
+            [tokens addObject:record[@"token"]];
+        }
+        if (tokens.count == [records count]) {
+            return records;
+        }
+    }
+    if (error) {
+        *error = NSStorageError(@"Invalid transient permission responses.");
+    }
+    return nil;
+}
+
+static BOOL NSPermissionResponseIsCurrent(NSDictionary *record, NSString *session, NSString *activation,
+                                          NSDate *now) {
+    NSTimeInterval remaining = [record[@"validUntil"] timeIntervalSinceDate:now];
+    return remaining > 0 && remaining <= NSPermissionTimeout && [record[@"session"] isEqual:session] &&
+           [record[@"activation"] isEqual:activation];
+}
+
+static BOOL NSSubmitPermissionResponse(NSDictionary *request, NSString *rule, NSError **error) {
+    return NSUnownedConfigurationMutation(
+        ^BOOL(NSSharedDirectory *directory, NSError **localError) {
+            NSStoreLock *lock = [NSStoreLock tryLockInDirectory:directory
+                                                           leaf:@"policy.lock"
+                                                          error:localError];
+            if (!lock) {
+                return NO;
+            }
+            @try {
+                NSDate *now = NSDate.date;
+                NSPolicy *policy = NSReadPolicyIn(directory, localError);
+                NSDictionary *current =
+                    policy ? NSCurrentPermissionRequest(request, NSReadMonitor(), policy, now, localError)
+                           : nil;
+                if (!current) {
+                    return NO;
+                }
+                BOOL defer = [rule isEqual:@"defer"];
+                if (!NSUnidentifiedRequest(current) ||
+                    (!defer && (![current[@"mode"] isEqual:@"once"] ||
+                                ![NSPermissionRuleValues(current) containsObject:rule]))) {
+                    NSPermissionError(localError, @"That action does not apply to this permission request.");
+                    return NO;
+                }
+                if (defer && [current[@"deferred"] boolValue]) {
+                    return YES;
+                }
+                if (!defer && ([current[@"expired"] boolValue] ||
+                               [current[@"expires"] timeIntervalSinceDate:now] <= 0)) {
+                    NSPermissionError(localError,
+                                      @"This connection timed out. Retry to create a new request.");
+                    return NO;
+                }
+                NSMutableDictionary *response = [NSMutableDictionary dictionaryWithObject:rule
+                                                                                   forKey:@"action"];
+                for (NSString *key in @[
+                         @"token", @"kind", @"direction", @"mode", @"fingerprint", @"flow", @"session",
+                         @"activation", @"askGeneration", @"expires"
+                     ]) {
+                    response[key] = current[key];
+                }
+                response[@"validUntil"] =
+                    defer ? [now dateByAddingTimeInterval:NSMonitorFreshness] : current[@"expires"];
+                NSArray *existing = NSReadPermissionResponses(directory, localError);
+                if (!existing) {
+                    return NO;
+                }
+                NSMutableArray *pending = [NSMutableArray new];
+                for (NSDictionary *record in existing) {
+                    if (!NSPermissionResponseIsCurrent(record, current[@"session"], current[@"activation"],
+                                                       now)) {
+                        continue;
+                    }
+                    if ([record[@"token"] isEqual:current[@"token"]]) {
+                        if ([record isEqual:response] || (defer && [record[@"action"] isEqual:@"defer"])) {
+                            return YES;
+                        }
+                        // An explicit decision can follow a queued deferral. It cannot replace another
+                        // decision.
+                        if (!defer && [record[@"action"] isEqual:@"defer"]) {
+                            continue;
+                        }
+                        NSPermissionError(localError,
+                                          @"A decision has already been submitted for this request.");
+                        return NO;
+                    }
+                    [pending addObject:record];
+                }
+                if (pending.count >= NSMaximumActiveRequests) {
+                    NSPermissionError(localError,
+                                      @"The permission response queue is full. Try again shortly.");
+                    return NO;
+                }
+                [pending addObject:response];
+                return NSWriteDocumentIn(directory, @{@"responses" : pending}, NSPermissionResponsesFile,
+                                         localError);
+            } @finally {
+                [lock unlock];
+            }
+        },
+        error);
+}
+
+void NSDrainPermissionResponses(NSString *session, NSString *activation,
+                                dispatch_block_t (^detach)(NSDictionary *, NSPolicy *)) {
+    NSError *probe = nil;
+    NSReadDocument(NSPermissionResponsesFile, &probe);
+    if (NSFileIsAbsent(probe)) {
+        return;
+    }
+    NSMutableArray<dispatch_block_t> *completions = [NSMutableArray new];
+    NSUnownedConfigurationMutation(
+        ^BOOL(NSSharedDirectory *directory, NSError **error) {
+            NSStoreLock *lock = [NSStoreLock tryLockInDirectory:directory leaf:@"policy.lock" error:error];
+            if (!lock) {
+                return NO;
+            }
+            @try {
+                NSArray *records = NSReadPermissionResponses(directory, error);
+                if (records && !records.count) {
+                    return YES;
+                }
+                NSPolicy *policy = records ? NSReadPolicyIn(directory, error) : nil;
+                // Consume before detach. A failed cleanup leaves the response eligible for a bounded retry.
+                if (!NSUnlinkBoundedFile(directory, NSPermissionResponsesFile, NULL) || !policy) {
+                    return NO;
+                }
+                for (NSDictionary *record in records) {
+                    if (NSPermissionResponseIsCurrent(record, session, activation, NSDate.date)) {
+                        dispatch_block_t completion = detach(record, policy);
+                        if (completion) {
+                            [completions addObject:completion];
+                        }
+                    }
+                }
+                return YES;
+            } @finally {
+                [lock unlock];
+            }
+        },
+        NULL);
+    for (dispatch_block_t completion in completions) {
+        completion();
+    }
+}
+
+void NSClearPermissionResponses(NSStoreLock *providerLock) {
+    NSSharedDirectory *directory = providerLock.directory;
+    NSStoreLock *lock = [NSStoreLock tryLockInDirectory:directory leaf:@"policy.lock" error:NULL];
+    if (lock) {
+        NSUnlinkBoundedFile(directory, NSPermissionResponsesFile, NULL);
+        [lock unlock];
+    }
+}
+
+BOOL NSAnswerPermissionRequest(NSDictionary *request, BOOL allow, NSError **error) {
+    NSArray *rules = [request isKindOfClass:NSDictionary.class] ? NSPermissionRuleValues(request) : @[];
+    NSString *rule = allow ? rules.firstObject : rules.lastObject;
+    return NSAnswerPermissionRequestWithRule(request, rule ?: @"", error);
+}
+
+BOOL NSAnswerPermissionRequestWithRule(NSDictionary *request, NSString *rule, NSError **error) {
+    if (![request isKindOfClass:NSDictionary.class] || ![rule isKindOfClass:NSString.class]) {
+        NSPermissionError(error, @"Invalid permission response payload.");
+        return NO;
+    }
+    if ([rule isEqual:@"defer"] || (NSUnidentifiedRequest(request) && [request[@"mode"] isEqual:@"once"])) {
+        return NSSubmitPermissionResponse(request, rule, error);
+    }
+    if (![NSDirectionRuleValues() containsObject:rule ?: @""]) {
+        NSPermissionError(error, @"Unsupported permission rule.");
         return NO;
     }
     return NSUnownedConfigurationMutation(
@@ -655,27 +983,13 @@ BOOL NSAnswerPermissionRequestWithRule(NSDictionary *request, NSString *rule, NS
             return NSUpdatePolicy(
                 ^BOOL(NSMutableDictionary *document, NSError **mutationError) {
                     NSPolicy *policy = [NSPolicy policyWithDocument:document error:mutationError];
-                    if (!policy) {
-                        return NO;
-                    }
-                    NSDictionary *monitor = NSReadMonitor();
-                    NSDictionary *response = NSPermissionResponseDocument(
-                        request, monitor, policy, NSDate.date, [rule hasPrefix:@"allow"], mutationError);
+                    NSDictionary *current = policy
+                                                ? NSCurrentPermissionRequest(request, NSReadMonitor(), policy,
+                                                                             NSDate.date, mutationError)
+                                                : nil;
+                    NSDictionary *response =
+                        current ? NSPermissionPolicyWithDecision(current, policy, rule, mutationError) : nil;
                     if (!response) {
-                        return NO;
-                    }
-                    NSString *direction = nil;
-                    for (NSDictionary *candidate in monitor[@"requests"]) {
-                        if ([candidate[@"token"] isEqual:request[@"token"]]) {
-                            direction = candidate[@"direction"];
-                        }
-                    }
-                    if (![NSConnectionRuleValues(direction) containsObject:rule] ||
-                        (request[@"direction"] && ![request[@"direction"] isEqual:direction])) {
-                        if (mutationError) {
-                            *mutationError = NSStorageError(
-                                @"This connection changed direction. Review its current request.");
-                        }
                         return NO;
                     }
                     [document setDictionary:response];
@@ -688,93 +1002,13 @@ BOOL NSAnswerPermissionRequestWithRule(NSDictionary *request, NSString *rule, NS
 
 NSDictionary *NSPermissionResponseDocument(NSDictionary *request, NSDictionary *monitor, NSPolicy *policy,
                                            NSDate *now, BOOL allow, NSError **error) {
-    if (![request isKindOfClass:NSDictionary.class] || ![monitor isKindOfClass:NSDictionary.class] ||
-        !NSBoundedString(request[@"token"], 128, YES) ||
-        !NSBoundedString(request[@"identity"], NSMaximumIdentityLength, YES)) {
-        if (error) {
-            *error = NSStorageError(@"Invalid permission response payload.");
-        }
-        return nil;
-    }
-    NSDate *updated = monitor[@"updated"];
-    BOOL current = NO;
-    NSDictionary *destination = nil;
-    NSDictionary *currentRequest = nil;
-    if ([request[@"token"] isKindOfClass:NSString.class] &&
-        [request[@"identity"] isKindOfClass:NSString.class] && [monitor[@"controlRunning"] boolValue] &&
-        updated && [updated timeIntervalSinceDate:now] <= 0 &&
-        [updated timeIntervalSinceDate:now] > -NSMonitorFreshness) {
-        for (NSDictionary *candidate in monitor[@"requests"]) {
-            if ([candidate[@"token"] isEqual:request[@"token"]] &&
-                [candidate[@"identity"] isEqual:request[@"identity"]]) {
-                current = YES;
-                currentRequest = candidate;
-                destination = candidate[@"destination"];
-                break;
-            }
-        }
-    }
+    NSDictionary *validated = NSValidateMonitor(monitor, error);
+    NSDictionary *current =
+        validated ? NSCurrentPermissionRequest(request, validated, policy, now, error) : nil;
     if (!current) {
-        if (error) {
-            *error = NSStorageError(@"This request is no longer current or the filter is unavailable. Open "
-                                    @"NetShield2 to review it.");
-        }
         return nil;
     }
-    for (NSDictionary *candidate in monitor[@"requests"]) {
-        if ([candidate[@"token"] isEqual:request[@"token"]] &&
-            ![(candidate[@"askGeneration"]
-                   ?: @"") isEqual:(policy.document[@"askGenerations"][request[@"identity"]] ?: @"")]) {
-            if (error) {
-                *error = NSStorageError(@"This request was replaced by Ask Again. Retry the app.");
-            }
-            return nil;
-        }
-    }
-    for (NSString *key in @[ @"session", @"activation" ]) {
-        if ([monitor[key] length] && ![request[key] isEqual:monitor[key]]) {
-            if (error) {
-                *error = NSStorageError(
-                    @"This request belongs to an earlier provider activation. Review its current request.");
-            }
-            return nil;
-        }
-    }
-    if (request[@"askGeneration"] &&
-        ![request[@"askGeneration"] isEqual:currentRequest[@"askGeneration"] ?: @""]) {
-        if (error) {
-            *error = NSStorageError(@"This permission request generation is no longer current.");
-        }
-        return nil;
-    }
-    if (![policy requiresPermissionForRequest:currentRequest]) {
-        if (error) {
-            *error =
-                NSStorageError(@"A rule already handles this app. Review its current rule in NetShield2.");
-        }
-        return nil;
-    }
-    NSMutableDictionary *document = [policy.document mutableCopy];
-    NSMutableDictionary *rules = [document[@"rules"] mutableCopy];
-    NSString *direction = currentRequest[@"direction"];
-    NSString *action = [NSString stringWithFormat:@"%@-%@", allow ? @"allow" : @"block", direction];
-    if (![NSConnectionRuleValues(direction) containsObject:action]) {
-        if (error) {
-            *error = NSStorageError(@"Connection direction is unavailable. Review the app rule.");
-        }
-        return nil;
-    }
-    rules[request[@"identity"]] = NSAppRuleBySelecting(rules[request[@"identity"]], action);
-    document[@"rules"] = rules;
-    if (NSValidDestination(destination)) {
-        NSMutableDictionary *destinations =
-            [document[@"ruleDestinations"] mutableCopy] ?: [NSMutableDictionary new];
-        if (!destinations[request[@"identity"]]) {
-            destinations[request[@"identity"]] = destination;
-        }
-        document[@"ruleDestinations"] = destinations;
-    }
-    document[@"revision"] = NSUUID.UUID.UUIDString;
-    NSPolicy *validated = [NSPolicy policyWithDocument:document error:error];
-    return validated.document;
+    NSArray *actions = NSPermissionRuleValues(current);
+    return NSPermissionPolicyWithDecision(current, policy, allow ? actions.firstObject : actions.lastObject,
+                                          error);
 }

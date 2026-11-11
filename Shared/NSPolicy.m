@@ -4,6 +4,7 @@
 #import "NSGlobalRule.h"
 #import "NSDNSCache.h"
 #import "NSRuleChoices.h"
+#import "NSPermissionRequest.h"
 #import "NSValidation.h"
 #import <CoreFoundation/CoreFoundation.h>
 
@@ -42,8 +43,21 @@ static BOOL NSCustomRuleApplies(NSDictionary *rule, NSString *identity, NSDictio
     }
     NSString *protocol = rule[@"protocol"];
     // Combined rules cover every delivered protocol, including other and missing metadata.
-    return [protocol isEqual:@"any"] || [protocol isEqual:destination[@"protocol"]];
+    return rule[@"exact"] || [protocol isEqual:@"any"] || [protocol isEqual:destination[@"protocol"]];
 }
+// A known mismatch rules out the entire tuple, even when other fields are missing.
+static BOOL NSExactEndpointsCompatible(NSDictionary *required, NSDictionary *available, BOOL *missing) {
+    *missing = NO;
+    for (NSString *field in required) {
+        id actual = available[field];
+        if (actual && ![required[field] isEqual:actual]) {
+            return NO;
+        }
+        *missing |= actual == nil;
+    }
+    return YES;
+}
+
 static BOOL NSMissingGlobalEndpoint(NSString *key, NSString *action, NSDictionary *destination) {
     BOOL needsAddress =
         [key hasPrefix:@"ip:"] ||
@@ -104,16 +118,19 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
     NSSet *actions = [NSSet setWithArray:NSDirectionRuleValues()];
     NSSet *globalActions = actions;
     NSSet *defaults = [NSSet setWithArray:@[ @"allow", @"block", @"ask" ]];
-    NSSet *unknownActions = [NSSet setWithArray:@[ @"allow", @"block" ]];
+    BOOL extended = [d[@"schema"] isEqual:@(NSSchemaVersion)];
+    NSSet *unknownActions = extended ? defaults : [NSSet setWithArray:@[ @"allow", @"block" ]];
     valid = valid && [d[@"schema"] isKindOfClass:NSNumber.class] &&
             CFGetTypeID((__bridge CFTypeRef)d[@"schema"]) != CFBooleanGetTypeID() &&
-            ([d[@"schema"] isEqual:@2] || [d[@"schema"] isEqual:@(NSSchemaVersion)]) &&
+            ([d[@"schema"] isEqual:@2] || [d[@"schema"] isEqual:@3] || extended) &&
             [d[@"revision"] isKindOfClass:NSString.class] && [d[@"revision"] length] > 0 &&
             [d[@"revision"] length] <= 128 && [d[@"default"] isKindOfClass:NSString.class] &&
             [defaults containsObject:d[@"default"]] && [d[@"unattributed"] isKindOfClass:NSString.class] &&
             [unknownActions containsObject:d[@"unattributed"]] &&
             [d[@"rules"] isKindOfClass:NSDictionary.class];
     valid = valid && (!d[@"globalRuleGeneration"] || NSBoundedString(d[@"globalRuleGeneration"], 128, YES));
+    valid = valid && (!d[@"unidentifiedAskGeneration"] ||
+                      (extended && NSBoundedString(d[@"unidentifiedAskGeneration"], 128, YES)));
     valid = valid && (!d[@"exactDomainResolution"] || NSBoolean(d[@"exactDomainResolution"]));
     id appleAllowance = d[@"allowAppleSystemProcesses"];
     valid = valid &&
@@ -140,6 +157,7 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
             NSUInteger memberCount = 0;
             for (id key in globalRules) {
                 if (!NSValidGlobalRuleKey(key) ||
+                    (!extended && NSCustomGlobalRuleComponents(key).count == 6) ||
                     (memberCount += MAX((NSUInteger)1, NSGlobalRuleMembers(key).count)) > NSMaximumRules ||
                     ![globalRules[key] isKindOfClass:NSString.class] ||
                     ![globalActions containsObject:globalRules[key]] ||
@@ -241,13 +259,12 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
              @"schema", @"revision", @"default", @"unattributed", @"rules", @"globalRules",
              @"globalDomainAddresses", @"globalDomainExpirations", @"globalDomainLifetimes",
              @"globalRuleGeneration", @"ruleDestinations", @"askGenerations", @"exactDomainResolution",
-             @"allowAppleSystemProcesses", @"filterSockets"
+             @"allowAppleSystemProcesses", @"filterSockets", @"unidentifiedAskGeneration"
          ]) {
         if (d[key]) {
             canonicalDocument[key] = d[key];
         }
     }
-    canonicalDocument[@"schema"] = @(NSSchemaVersion);
     NSMutableDictionary *appRules = [NSMutableDictionary new];
     for (NSString *identity in d[@"rules"]) {
         appRules[identity] = NSAppRuleRecord(d[@"rules"][identity]);
@@ -303,13 +320,21 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
     for (NSString *key in policy->_document[@"globalRules"]) {
         NSArray *parts = NSCustomGlobalRuleComponents(key);
         if (parts) {
-            [customRules addObject:@{
+            NSMutableDictionary *rule = [@{
                 @"identities" : NSCustomGlobalRuleIdentities(parts),
                 @"hosts" : [parts[1] length] ? NSGlobalRuleMembers(parts[1]) : @[],
                 @"ports" : [parts[2] length] ? NSGlobalRuleMembers(parts[2]) : @[],
                 @"protocol" : parts[3],
                 @"action" : policy->_document[@"globalRules"][key]
-            }];
+            } mutableCopy];
+            if (parts.count == 6) {
+                NSMutableDictionary *conditions = [parts[5] mutableCopy];
+                if (![parts[3] isEqual:@"any"]) {
+                    conditions[@"protocol"] = parts[3];
+                }
+                rule[@"exact"] = [conditions copy];
+            }
+            [customRules addObject:[rule copy]];
         }
     }
     policy.customGlobalRules = customRules;
@@ -374,10 +399,9 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
 - (BOOL)requiresPermissionForIdentity:(NSString *)identity
                             direction:(NSFlowDirection)direction
                           destination:(NSDictionary *)destination {
-    NSString *action = NSAppActionForDirection(self.document[@"rules"][identity ?: @""], direction);
-    return ![self globalActionForIdentity:identity direction:direction destination:destination] &&
-           ![self automaticallyAllowsIdentity:identity] && identity.length > 0 && !action &&
-           [self.document[@"default"] isEqual:@"ask"];
+    return
+        [self evaluateIdentity:identity direction:direction destination:destination socket:NO].disposition ==
+        NSFlowAsk;
 }
 - (NSString *)globalActionForIdentity:(NSString *)identity
                             direction:(NSFlowDirection)direction
@@ -385,9 +409,19 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
     NSString *result = [self globalActionForDestination:destination direction:direction];
     NSString *remotePort = NSGlobalPortKey([destination[@"port"] stringValue]);
     NSString *localPort = NSGlobalLocalPortKey([destination[@"localPort"] stringValue]);
+    NSDictionary *canonical = nil;
     for (NSDictionary *rule in self.customGlobalRules) {
         if (!NSGlobalActionForDirection(rule[@"action"], direction) ||
             !NSCustomRuleApplies(rule, identity, destination)) {
+            continue;
+        }
+        NSDictionary *exact = rule[@"exact"];
+        if (exact) {
+            canonical = canonical ?: NSCanonicalConnectionDestination(destination);
+            BOOL missing = NO;
+            if (NSExactEndpointsCompatible(exact, canonical, &missing) && !missing) {
+                result = NSMergeGlobalActions(result, NSGlobalActionForDirection(rule[@"action"], direction));
+            }
             continue;
         }
         NSArray *ports = rule[@"ports"];
@@ -421,9 +455,19 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
             return YES;
         }
     }
+    NSDictionary *canonical = nil;
     for (NSDictionary *rule in self.customGlobalRules) {
         if (!NSGlobalActionForDirection(rule[@"action"], direction) ||
             !NSCustomRuleApplies(rule, identity, destination)) {
+            continue;
+        }
+        NSDictionary *exact = rule[@"exact"];
+        if (exact) {
+            canonical = canonical ?: NSCanonicalConnectionDestination(destination);
+            BOOL missing = NO;
+            if (NSExactEndpointsCompatible(exact, canonical, &missing) && missing) {
+                return YES;
+            }
             continue;
         }
         NSArray *ports = rule[@"ports"];
@@ -455,14 +499,12 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
 }
 - (BOOL)requiresPermissionForIdentity:(NSString *)identity {
     // Without a direction, report whether any direction can still require permission.
-    return [self requiresPermissionForIdentity:identity direction:NSFlowDirectionInbound destination:@{}] ||
+    return (!identity.length && [self requiresPermissionForIdentity:identity destination:@{}]) ||
+           [self requiresPermissionForIdentity:identity direction:NSFlowDirectionInbound destination:@{}] ||
            [self requiresPermissionForIdentity:identity direction:NSFlowDirectionOutbound destination:@{}];
 }
 - (BOOL)requiresPermissionForRequest:(NSDictionary *)request {
-    NSString *value = request[@"direction"];
-    NSFlowDirection direction = [value isEqual:@"inbound"]    ? NSFlowDirectionInbound
-                                : [value isEqual:@"outbound"] ? NSFlowDirectionOutbound
-                                                              : NSFlowDirectionUnknown;
+    NSFlowDirection direction = NSPermissionDirection(request[@"direction"]);
     return [self requiresPermissionForIdentity:request[@"identity"]
                                      direction:direction
                                    destination:request[@"destination"] ?: @{}];
@@ -512,8 +554,7 @@ static BOOL NSCustomHostsMatch(NSDictionary *rule, NSDictionary *destination, NS
         reason = NSFlowReasonDefault;
     }
     NSFlowDisposition disposition =
-        [action isEqual:@"allow"] ? NSFlowAllow
-                                  : ([action isEqual:@"ask"] && identity.length ? NSFlowAsk : NSFlowDrop);
+        [action isEqual:@"allow"] ? NSFlowAllow : ([action isEqual:@"ask"] ? NSFlowAsk : NSFlowDrop);
     return (NSFlowEvaluation){disposition, reason};
 }
 @end
