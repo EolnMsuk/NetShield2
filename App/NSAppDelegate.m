@@ -3,6 +3,10 @@
 #import "NSAppStorage.h"
 #import "../Shared/NSNotifications.h"
 
+@interface NSAppDelegate ()
+@property(nonatomic, strong) NSMutableDictionary<NSString *, NSDictionary *> *submittedOnce;
+@end
+
 @implementation NSAppDelegate
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)options {
     NSRegisterConfigurationExecution();
@@ -26,6 +30,10 @@
 - (void)applicationDidBecomeActive:(UIApplication *)application {
     NSResumeConfigurationExecution();
     [self createInterface];
+    for (NSDictionary *request in self.submittedOnce.allValues) {
+        [self.dashboard trackOneTimePermissionRequest:request action:request[@"submittedAction"]];
+    }
+    [self.submittedOnce removeAllObjects];
 }
 - (UIInterfaceOrientationMask)application:(UIApplication *)application
     supportedInterfaceOrientationsForWindow:(UIWindow *)window {
@@ -44,11 +52,10 @@
              withCompletionHandler:(void (^)(void))completionHandler {
     NSDictionary *request = response.notification.request.content.userInfo;
     NSString *rule = response.actionIdentifier;
-    BOOL decision = NSIsPermissionCategory(response.notification.request.content.categoryIdentifier) &&
-                    [request[@"token"] isKindOfClass:NSString.class] &&
+    BOOL decision = [request[@"token"] isKindOfClass:NSString.class] &&
                     [request[@"identity"] isKindOfClass:NSString.class] &&
-                    ([NSDirectionRuleValues() containsObject:rule] ||
-                     [@[ NSAllowAction, NSBlockAction, NSBlockIncomingAction ] containsObject:rule]);
+                    NSIsPermissionNotificationAction(response.notification.request.content.categoryIdentifier,
+                                                     request, rule);
     if (!decision) {
         dispatch_async(dispatch_get_main_queue(), ^{
             [self.dashboard reloadMonitor];
@@ -81,13 +88,26 @@
             dispatch_block_cancel(expiry);
             if (!saved && !automatic) {
                 UNMutableNotificationContent *failure = [UNMutableNotificationContent new];
-                failure.title = @"NetShield2 decision not saved";
+                failure.title = @"NetShield2 request could not be answered";
                 failure.body = error.localizedDescription ?: @"Open NetShield2 to review the request.";
                 [center addNotificationRequest:[UNNotificationRequest
                                                    requestWithIdentifier:@"netshield-action-error"
                                                                  content:failure
                                                                  trigger:nil]
                          withCompletionHandler:nil];
+            }
+            if (saved && [request[@"mode"] isEqual:@"once"] && ![rule isEqual:NSDeferPermissionAction]) {
+                if (UIApplication.sharedApplication.applicationState == UIApplicationStateActive &&
+                    self.dashboard) {
+                    [self.dashboard trackOneTimePermissionRequest:request action:rule];
+                } else {
+                    self.submittedOnce = self.submittedOnce ?: [NSMutableDictionary new];
+                    if (self.submittedOnce.count < NSMaximumActiveRequests) {
+                        NSMutableDictionary *submission = [request mutableCopy];
+                        submission[@"submittedAction"] = rule;
+                        self.submittedOnce[request[@"token"]] = submission;
+                    }
+                }
             }
             if (UIApplication.sharedApplication.applicationState == UIApplicationStateActive) {
                 [self.dashboard reloadMonitor];

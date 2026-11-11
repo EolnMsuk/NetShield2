@@ -1,3 +1,4 @@
+#import "../Shared/NSPermissionRequest.h"
 #import "../Shared/NSRuleChoices.h"
 #import "NSSectionTypography.h"
 #import "NSDashboard+Internal.h"
@@ -866,12 +867,30 @@ static UIImage *NSDashboardUpdateIcon(void) {
         }
     } else if (path.section == NSDashboardSectionRequests) {
         NSDictionary *request = self.monitor[@"requests"][path.row];
-        cell.textLabel.text = NSIdentityDisplayName(request[@"identity"]);
-        cell.detailTextLabel.text = [request[@"expired"] boolValue] ? @"Blocked while waiting. Tap to decide."
-                                                                    : @"Tap to allow or keep blocking";
-        cell.detailTextLabel.text =
-            [cell.detailTextLabel.text stringByAppendingFormat:@"\nFirst requested peer: %@",
-                                                               NSDestinationSummary(request[@"destination"])];
+        BOOL unidentified = NSUnidentifiedRequest(request);
+        BOOL expired = [request[@"expired"] boolValue];
+        cell.textLabel.text =
+            unidentified ? @"Unidentified connection" : NSIdentityDisplayName(request[@"identity"]);
+        if (unidentified) {
+            NSString *direction = [request[@"direction"] isEqual:@"inbound"]    ? @"Incoming"
+                                  : [request[@"direction"] isEqual:@"outbound"] ? @"Outgoing"
+                                                                                : @"Direction unavailable";
+            NSString *status = expired
+                                   ? ([request[@"mode"] isEqual:@"once"]
+                                          ? @"Timed out and blocked. Retry to connect."
+                                          : @"Timed out and blocked. Tap to decide for future connections.")
+                               : [request[@"deferred"] boolValue] ? @"Deferred. Tap to decide."
+                                                                  : @"Tap to decide";
+            cell.detailTextLabel.text =
+                [NSString stringWithFormat:@"%@\n%@ / %@", status, direction,
+                                           NSDestinationSummary(request[@"destination"])];
+        } else {
+            cell.detailTextLabel.text =
+                [NSString stringWithFormat:@"%@\nFirst requested peer: %@",
+                                           expired ? @"Blocked while waiting. Tap to decide."
+                                                   : @"Tap to allow or keep blocking",
+                                           NSDestinationSummary(request[@"destination"])];
+        }
     } else if (path.section == NSDashboardSectionAddGlobalRule) {
         cell.textLabel.text = @"Add a Custom Rule";
         cell.textLabel.textColor = UIColor.systemGreenColor;

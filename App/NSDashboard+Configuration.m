@@ -118,6 +118,7 @@ static NSDictionary *NSSavedFilterFingerprint(NEFilterManager *manager) {
             if (!error) {
                 self.hasSavedPreferences = YES;
                 self.savedEnabled = manager.enabled;
+                self.savedEngine = NSConfiguredEngine(configuration);
                 self.savedSocketFiltering = configuration.filterSockets;
                 self.savedBrowserFiltering = configuration.filterBrowsers;
                 self.savedActivation = configuration.vendorConfiguration[@"activation"];
@@ -134,6 +135,7 @@ static NSDictionary *NSSavedFilterFingerprint(NEFilterManager *manager) {
             NSSharedDirectory *directory = owner.directory;
             NSConfigurationAccess *access = owner.localAccess;
             BOOL safeBootstrap = !error && access != nil;
+            BOOL legacyActive = self.savedEnabled && self.savedEngine != NSEngineVersion;
             // An automatic refresh of an already initialized app must not
             // recreate rules after the uninstall helper removes the profile.
             BOOL mayBootstrap = self.policyBootstrapPending || (configuration && !self.savedEnabled);
@@ -147,7 +149,8 @@ static NSDictionary *NSSavedFilterFingerprint(NEFilterManager *manager) {
                     mayBootstrap && directory && safeBootstrap && !policy && NSFileIsAbsent(policyError);
                 if (bootstrap && [access
                                      perform:^BOOL(NSSharedDirectory *ownedDirectory, NSError **localError) {
-                                         return NSEnsurePolicyIn(ownedDirectory, localError);
+                                         return NSEnsureCompatiblePolicyIn(ownedDirectory, legacyActive,
+                                                                           localError);
                                      }
                                        error:&policyError]) {
                     policy = NSReadPolicyIn(directory, &policyError);
@@ -329,6 +332,7 @@ static NSDictionary *NSSavedFilterFingerprint(NEFilterManager *manager) {
             if ([stage isEqual:@"enabled-reloaded-verified"]) {
                 self.savedEnabled = YES;
                 self.savedActivation = [configuration vendorConfiguration][@"activation"];
+                self.savedEngine = NSEngineVersion;
                 self.configurationProgress = @"Waiting for the current control provider…";
                 [self refreshTableKeepingPosition];
             }
@@ -351,7 +355,7 @@ static NSDictionary *NSSavedFilterFingerprint(NEFilterManager *manager) {
             NSDictionary *monitor = NSReadMonitor();
             return NSHasCurrentControlHeartbeat(monitor, configuration.vendorConfiguration[@"activation"],
                                                 NSDate.date) &&
-                   ![monitor[@"policyError"] length];
+                   [monitor[@"engine"] isEqual:@(NSEngineVersion)] && ![monitor[@"policyError"] length];
         };
         [restart start:^(NSError *error) {
             NSString *verifiedActivation = self.savedActivation;

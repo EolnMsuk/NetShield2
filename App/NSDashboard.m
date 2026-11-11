@@ -5,6 +5,7 @@
 #import "../Shared/NSExport.h"
 #import "../Shared/NSProviderHealth.h"
 #import "../Shared/NSRuleChoices.h"
+#import "../Shared/NSPermissionRequest.h"
 #include <errno.h>
 
 @interface NSCryptoWalletsController : UITableViewController
@@ -100,6 +101,7 @@
     self.title = @"NetShield2";
     self.navigationController.navigationBar.prefersLargeTitles = YES;
     self.deferredRequests = [NSMutableSet new];
+    self.submittedOnce = [NSMutableDictionary new];
     self.navigationItem.rightBarButtonItem =
         [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemRefresh
                                                       target:self
@@ -235,11 +237,21 @@
         });
     });
 }
+- (void)trackOneTimePermissionRequest:(NSDictionary *)request action:(NSString *)action {
+    if (self.submittedOnce.count < NSMaximumActiveRequests) {
+        NSMutableDictionary *submission = [request mutableCopy];
+        submission[@"submittedAction"] = action;
+        self.submittedOnce[request[@"token"]] = submission;
+    }
+    self.message = @"One-time decision submitted. Waiting for the filter to confirm.";
+    [self reloadMonitor];
+}
 - (void)applyMonitor:(NSDictionary *)report {
     NSMutableDictionary *monitor = [report mutableCopy];
     NSMutableArray *requests = [NSMutableArray new];
     for (NSDictionary *request in monitor[@"requests"]) {
-        if ([self.policy requiresPermissionForRequest:request]) {
+        if (NSPermissionGenerationMatches(self.policy, request) &&
+            [self.policy requiresPermissionForRequest:request]) {
             [requests addObject:request];
         }
     }
@@ -252,11 +264,8 @@
         }
     }
     if (self.permissionAlert &&
-        (!represented ||
-         ![(represented[@"direction"] ?: @"unknown") isEqual:(self.presentedRequest[@"direction"]
-                                                                  ?: @"unknown")] ||
-         ![(represented[@"askGeneration"] ?: @"") isEqual:(self.presentedRequest[@"askGeneration"] ?: @"")] ||
-         ![(represented[@"session"] ?: @"") isEqual:(self.presentedRequest[@"session"] ?: @"")])) {
+        (!NSPermissionPresentationMatches(self.presentedRequest, represented) ||
+         ![represented[@"expired"] isEqual:self.presentedRequest[@"expired"]] || ![self hasFreshMonitor])) {
         [self.permissionAlert dismissViewControllerAnimated:NO completion:nil];
         self.permissionAlert = nil;
         self.presentedRequest = nil;
@@ -298,12 +307,15 @@
         [[self.policy.document[@"globalRules"] allKeys] sortedArrayUsingSelector:@selector(compare:)];
     NSSet *tokens = [NSSet setWithArray:[self.monitor[@"requests"] valueForKey:@"token"] ?: @[]];
     [self.deferredRequests intersectSet:tokens];
+    [self checkSubmittedPermissionDecisions];
     [self refreshTableKeepingPosition];
     if (UIApplication.sharedApplication.applicationState == UIApplicationStateActive && !self.busy &&
         !self.presentedViewController && self.preferencesLoaded && self.savedEnabled &&
         [self hasFreshMonitor]) {
         for (NSDictionary *request in self.monitor[@"requests"]) {
-            if (![self.deferredRequests containsObject:request[@"token"]]) {
+            if (![self.deferredRequests containsObject:request[@"token"]] &&
+                ![request[@"deferred"] boolValue] &&
+                !([request[@"mode"] isEqual:@"once"] && [request[@"expired"] boolValue])) {
                 [self presentRequest:request];
                 break;
             }
@@ -596,9 +608,9 @@
         actions = @[ @"ask", @"allow", @"block" ];
     } else if ([key isEqual:@"unattributed"]) {
         title = @"Unidentified";
-        explanation = @"These connections have no app identity from iOS. Allow is recommended to avoid "
-                      @"interrupting system services.";
-        actions = @[ @"allow", @"block" ];
+        explanation = @"These connections have no app identity from iOS. Ask Me prompts for each unresolved "
+                      @"connection, and unanswered connections are blocked after 30 seconds.";
+        actions = @[ @"allow", @"block", @"ask" ];
     }
     if (connection) {
         actions = NSConnectionRuleValues(connection[@"direction"]);
@@ -638,9 +650,17 @@
                                   [self removeAppRuleForIdentity:identity completion:nil];
                                   return;
                               }
+                              BOOL ready = self.preferencesLoaded && self.configurationReady;
+                              BOOL enabled = self.savedEnabled;
+                              NSInteger engine = self.savedEngine;
+                              NSString *activation = self.savedActivation;
                               __block NSArray<NSString *> *committedRules = nil;
                               [self
                                   updatePolicy:^BOOL(NSMutableDictionary *document, NSError **error) {
+                                      if ([key isEqual:@"unattributed"]) {
+                                          return NSSetUnidentifiedMode(document, action, ready, enabled,
+                                                                       engine, activation, error);
+                                      }
                                       if (key) {
                                           document[key] = action;
                                       } else {
@@ -694,6 +714,15 @@
             NSString *name =
                 fullAppNames ? NSIdentityFullDisplayName(identity) : NSIdentityDisplayName(identity);
             [names addObject:name.length ? name : @"Unidentified app"];
+        }
+        if (parts.count == 6) {
+            NSMutableArray *labels = [NSMutableArray
+                arrayWithObject:names.count ? [names componentsJoinedByString:@", "] : @"All apps"];
+            for (NSString *member in NSGlobalRuleMembers(key)) {
+                [labels addObject:[self globalRuleTitle:member]];
+            }
+            [labels addObject:[parts[3] isEqual:@"any"] ? @"Any protocol" : [parts[3] uppercaseString]];
+            return [labels componentsJoinedByString:@"\n"];
         }
         return [NSString
             stringWithFormat:@"%@\n%@\n%@ / %@",
@@ -818,11 +847,15 @@
         return;
     }
     if (!self.policy) {
+        BOOL legacyActive = self.savedEnabled && self.savedEngine != NSEngineVersion;
         // This explicit On can recover an idle reservation left before policy
         // bootstrap. Passive refreshes cannot take another operation's token.
         [self
             performStorageCommand:^BOOL(NSError **error) {
-                return NSEnsurePolicy(error);
+                NSSharedDirectory *directory = [NSSharedDirectory openRoot:NSSharedURL(@"")
+                                                                      leaf:NSPolicyFile
+                                                                     error:error];
+                return directory && NSEnsureCompatiblePolicyIn(directory, legacyActive, error);
             }
             completion:^(BOOL saved, NSError *error) {
                 if (saved) {

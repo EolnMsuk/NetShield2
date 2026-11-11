@@ -78,6 +78,7 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 @property(nonatomic) BOOL preferencesLoaded;
 @property(nonatomic) BOOL hasSavedPreferences;
 @property(nonatomic) BOOL savedEnabled;
+@property(nonatomic) NSInteger savedEngine;
 @property(nonatomic) BOOL savedSocketFiltering;
 @property(nonatomic) BOOL savedBrowserFiltering;
 @property(nonatomic, copy) NSString *savedActivation;
@@ -97,6 +98,7 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 @property(nonatomic) BOOL removeFilterAfterReset;
 @property(nonatomic) BOOL respringPromptPending;
 @property(nonatomic, strong) NSMutableSet<NSString *> *deferredRequests;
+@property(nonatomic, strong) NSMutableDictionary<NSString *, NSDictionary *> *submittedOnce;
 @property(nonatomic, copy) NSString *notificationStatus;
 - (void)performStorageCommand:(BOOL (^)(NSError **))work completion:(void (^)(BOOL, NSError *))completion;
 - (void)updatePolicy:(BOOL (^)(NSMutableDictionary *, NSError **))mutation
@@ -144,6 +146,7 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 - (void)requestNotifications;
 - (void)answerRequest:(NSDictionary *)request rule:(NSString *)rule;
 - (void)presentRequest:(NSDictionary *)request;
+- (void)checkSubmittedPermissionDecisions;
 @end
 
 @interface NSDashboard (Table)

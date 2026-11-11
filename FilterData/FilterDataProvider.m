@@ -49,16 +49,18 @@
 - (NEFilterDataVerdict *)verdictForDeferredFlow:(NEFilterFlow *)flow {
     NSPolicy *policy = NSReadPolicy(NULL);
     NSDictionary *destination = NSDestinationForFlow(flow);
+    BOOL unidentifiedAsk =
+        !flow.sourceAppIdentifier.length && [policy.document[@"unattributed"] isEqual:@"ask"];
     NSFlowEvaluation evaluation = policy ? [policy evaluateIdentity:flow.sourceAppIdentifier
                                                           direction:[self directionForFlow:flow]
                                                         destination:destination
-                                                             socket:YES]
+                                                             socket:!unidentifiedAsk]
                                          : (NSFlowEvaluation){NSFlowDrop, NSFlowReasonPolicy};
     if (evaluation.disposition == NSFlowAsk) {
         return [NEFilterDataVerdict needRulesVerdict];
     }
-    // A deferred callback with still-missing endpoints terminates by dropping;
-    // it cannot start an unbounded peek/need-rules loop.
+    // Unidentified Ask uses the available tuple after one peek. Other policies
+    // continue to drop if a required endpoint is still unavailable.
     BOOL allow = evaluation.disposition == NSFlowAllow;
     NEFilterDataVerdict *verdict =
         allow ? [NEFilterDataVerdict allowVerdict] : [NEFilterDataVerdict dropVerdict];
