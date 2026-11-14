@@ -32,7 +32,7 @@ static NSDictionary *NSSavedFilterFingerprint(NEFilterManager *manager) {
 
 @implementation NSDashboard (Configuration)
 - (void)socketFilteringChanged:(UISwitch *)sender {
-    if (self.busy || !self.preferencesLoaded || !self.configurationReady) {
+    if (self.busy || self.importPending || !self.preferencesLoaded || !self.configurationReady) {
         return;
     }
     BOOL enabled = sender.on;
@@ -71,7 +71,7 @@ static NSDictionary *NSSavedFilterFingerprint(NEFilterManager *manager) {
     [self loadConfigurationWithRetry:YES completion:completion];
 }
 - (void)loadConfigurationWithRetry:(BOOL)allowRetry completion:(void (^)(void))completion {
-    if (self.busy) {
+    if (self.busy || self.importPending) {
         self.configurationRefreshPending = YES;
         if (completion) {
             completion(); // a refresh request is acknowledged, never discarded
@@ -135,7 +135,6 @@ static NSDictionary *NSSavedFilterFingerprint(NEFilterManager *manager) {
             NSSharedDirectory *directory = owner.directory;
             NSConfigurationAccess *access = owner.localAccess;
             BOOL safeBootstrap = !error && access != nil;
-            BOOL legacyActive = self.savedEnabled && self.savedEngine != NSEngineVersion;
             // An automatic refresh of an already initialized app must not
             // recreate rules after the uninstall helper removes the profile.
             BOOL mayBootstrap = self.policyBootstrapPending || (configuration && !self.savedEnabled);
@@ -149,8 +148,7 @@ static NSDictionary *NSSavedFilterFingerprint(NEFilterManager *manager) {
                     mayBootstrap && directory && safeBootstrap && !policy && NSFileIsAbsent(policyError);
                 if (bootstrap && [access
                                      perform:^BOOL(NSSharedDirectory *ownedDirectory, NSError **localError) {
-                                         return NSEnsureCompatiblePolicyIn(ownedDirectory, legacyActive,
-                                                                           localError);
+                                         return NSEnsurePolicyIn(ownedDirectory, localError);
                                      }
                                        error:&policyError]) {
                     policy = NSReadPolicyIn(directory, &policyError);
@@ -208,7 +206,7 @@ static NSDictionary *NSSavedFilterFingerprint(NEFilterManager *manager) {
     [self changeConfiguration:operation completion:nil];
 }
 - (void)changeConfiguration:(NSConfigurationOperation)operation completion:(void (^)(void))completion {
-    if (self.busy) {
+    if (self.busy || self.importPending) {
         self.message = @"A configuration operation is already in progress.";
         if (completion) {
             completion();
@@ -455,14 +453,14 @@ static NSDictionary *NSSavedFilterFingerprint(NEFilterManager *manager) {
         }];
 }
 - (void)refreshThenOfferRespring:(UIBarButtonItem *)sender {
-    if (self.busy || self.respringPromptPending) {
+    if (self.busy || self.importPending || self.respringPromptPending) {
         return;
     }
     self.respringPromptPending = YES;
     [self loadConfigurationWithCompletion:^{
         UIAlertController *alert = [UIAlertController
             alertControllerWithTitle:@"Respring SpringBoard?"
-                             message:@"Respringing reloads SpringBoard and can interrupt other apps."
+                             message:@"Respringing reloads SpringBoard and can interrupt other apps"
                       preferredStyle:UIAlertControllerStyleAlert];
         __weak UIAlertController *weakAlert = alert;
         [alert addAction:[UIAlertAction actionWithTitle:@"Cancel"
@@ -573,12 +571,12 @@ static NSDictionary *NSSavedFilterFingerprint(NEFilterManager *manager) {
         }];
 }
 - (void)resetNetShield2 {
-    if (self.exportPending) {
-        self.message = @"Wait for export to finish, then retry reset.";
+    if (self.exportPending || self.importPending) {
+        self.message = @"Wait for the current rule transfer to finish, then retry reset.";
         [self refreshTableKeepingPosition];
         return;
     }
-    if (self.busy) {
+    if (self.busy || self.importPending) {
         return;
     }
     self.enableIntentGeneration++;

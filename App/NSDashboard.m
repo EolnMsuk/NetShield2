@@ -6,6 +6,7 @@
 #import "../Shared/NSProviderHealth.h"
 #import "../Shared/NSRuleChoices.h"
 #import "../Shared/NSPermissionRequest.h"
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #include <errno.h>
 
 @interface NSCryptoWalletsController : UITableViewController
@@ -141,6 +142,16 @@
     [self refreshNotificationSettings];
     [self loadConfiguration];
 }
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+    CGFloat width = self.tableView.bounds.size.width;
+    NSString *category = self.traitCollection.preferredContentSizeCategory;
+    if (width != self.measuredTableWidth || ![category isEqual:self.measuredContentSizeCategory]) {
+        self.measuredTableWidth = width;
+        self.measuredContentSizeCategory = category;
+        [self refreshTableKeepingPosition];
+    }
+}
 - (void)configurationChanged:(NSNotification *)notification {
     BOOL returning = [notification.name isEqual:UIApplicationDidBecomeActiveNotification];
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -231,6 +242,10 @@
                 owner.activityGroups = groups;
                 [owner applyMonitor:report];
             }
+            if (generation == owner.storageGeneration &&
+                (owner.tableView.editing || owner.tableView.dragging || owner.tableView.decelerating)) {
+                owner.monitorRefreshDeferred = YES;
+            }
             if (again || generation != owner.storageGeneration) {
                 [owner reloadMonitor];
             }
@@ -310,7 +325,7 @@
     [self checkSubmittedPermissionDecisions];
     [self refreshTableKeepingPosition];
     if (UIApplication.sharedApplication.applicationState == UIApplicationStateActive && !self.busy &&
-        !self.presentedViewController && self.preferencesLoaded && self.savedEnabled &&
+        !self.importPending && !self.presentedViewController && self.preferencesLoaded && self.savedEnabled &&
         [self hasFreshMonitor]) {
         for (NSDictionary *request in self.monitor[@"requests"]) {
             if (![self.deferredRequests containsObject:request[@"token"]] &&
@@ -330,8 +345,131 @@
 - (void)showError:(NSError *)error {
     [self showError:error operation:@"Policy/storage"];
 }
+- (void)finishImportPresentation {
+    self.importPending = NO;
+    [self refreshTableKeepingPosition];
+    [self reloadMonitor];
+    if (self.configurationRefreshPending && !self.busy) {
+        [self loadConfiguration];
+    }
+}
+- (void)showImportResult:(NSString *)message success:(BOOL)success {
+    // Keep request cards and automatic configuration refresh behind the result.
+    self.importPending = YES;
+    UIAlertController *alert =
+        [UIAlertController alertControllerWithTitle:success ? @"Rules Imported" : @"Import Rules Failed"
+                                            message:message
+                                     preferredStyle:UIAlertControllerStyleAlert];
+    __weak typeof(self) weakSelf = self;
+    [alert addAction:[UIAlertAction actionWithTitle:@"OK"
+                                              style:UIAlertActionStyleDefault
+                                            handler:^(UIAlertAction *action) {
+                                                [weakSelf finishImportPresentation];
+                                            }]];
+    [self refreshTableKeepingPosition];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+- (void)importRules {
+    if (self.busy || self.importPending || self.exportPending || self.presentedViewController) {
+        return;
+    }
+    self.importPending = YES;
+    UIDocumentPickerViewController *picker =
+        [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[ UTTypeJSON ] asCopy:NO];
+    picker.allowsMultipleSelection = NO;
+    picker.delegate = self;
+    picker.title = @"Replace All Saved Rules";
+    picker.navigationItem.prompt = @"Replaces Global, App and System rules; keeps settings and activity";
+    [self refreshTableKeepingPosition];
+    [self presentViewController:picker animated:YES completion:nil];
+}
+- (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller {
+    [self finishImportPresentation];
+}
+- (void)documentPicker:(UIDocumentPickerViewController *)controller
+    didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
+    if (!self.importPending) {
+        return;
+    }
+    NSUInteger generation = self.storageGeneration;
+    NSURL *url = urls.count == 1 ? urls.firstObject : nil;
+    [controller
+        dismissViewControllerAnimated:YES
+                           completion:^{
+                               dispatch_async(NSAppStorageQueue(), ^{
+                                   __block NSError *readError = nil;
+                                   __block NSRuleImportResult *result = nil;
+                                   BOOL scoped = [url startAccessingSecurityScopedResource];
+                                   @try {
+                                       if (url.isFileURL) {
+                                           NSFileCoordinator *coordinator =
+                                               [[NSFileCoordinator alloc] initWithFilePresenter:nil];
+                                           NSError *coordinationError = nil;
+                                           [coordinator
+                                               coordinateReadingItemAtURL:url
+                                                                  options:
+                                                                      NSFileCoordinatorReadingWithoutChanges
+                                                                    error:&coordinationError
+                                                               byAccessor:^(NSURL *coordinatedURL) {
+                                                                   NSData *data = NSReadBoundedExternalURL(
+                                                                       coordinatedURL, &readError);
+                                                                   if (data) {
+                                                                       result =
+                                                                           NSParseRulesJSON(data, &readError);
+                                                                   }
+                                                               }];
+                                           if (coordinationError) {
+                                               readError = coordinationError;
+                                               result = nil;
+                                           }
+                                       }
+                                   } @finally {
+                                       if (scoped) {
+                                           [url stopAccessingSecurityScopedResource];
+                                       }
+                                   }
+                                   dispatch_async(dispatch_get_main_queue(), ^{
+                                       if (generation != self.storageGeneration || self.busy) {
+                                           [self showImportResult:
+                                                     @"Saved state changed while reading the file. Select "
+                                                     @"the file again to replace the current rules."
+                                                          success:NO];
+                                           return;
+                                       }
+                                       if (!result) {
+                                           [self
+                                               showImportResult:readError.localizedDescription
+                                                                    ?: @"The selected JSON file could not be "
+                                                                       @"read. No replacement was published."
+                                                        success:NO];
+                                           return;
+                                       }
+                                       // Admission is synchronous on main; busy takes ownership before
+                                       // any other command can enter. Reading never held a file lock.
+                                       self.importPending = NO;
+                                       [self
+                                           performStorageCommand:^BOOL(NSError **error) {
+                                               return NSReplaceRulesFromImport(result, error);
+                                           }
+                                           completion:^(BOOL saved, NSError *error) {
+                                               self.importPending = YES;
+                                               if (saved ||
+                                                   [error.userInfo[@"replacementPublished"] boolValue]) {
+                                                   [self.submittedOnce removeAllObjects];
+                                                   [self.deferredRequests removeAllObjects];
+                                                   NSRemoveAutomaticallyAllowedNotifications();
+                                                   [self applyMonitor:self.monitor ?: @{}];
+                                               }
+                                               [self showImportResult:saved ? result.summary
+                                                                            : error.localizedDescription
+                                                              success:saved];
+                                           }];
+                                   });
+                               });
+                           }];
+}
 - (void)exportRulesAndRecentActivityFromRow:(NSIndexPath *)path {
-    if (self.exportPending || self.busy) {
+    if (self.exportPending || self.importPending || self.busy) {
         return;
     }
     self.exportPending = YES;
@@ -415,7 +553,7 @@
     [self refreshTableKeepingPosition];
 }
 - (void)performStorageCommand:(BOOL (^)(NSError **))work completion:(void (^)(BOOL, NSError *))completion {
-    if (self.busy) {
+    if (self.busy || self.importPending) {
         completion(NO, [NSError errorWithDomain:@"NetShield2.Storage"
                                            code:EBUSY
                                        userInfo:@{
@@ -454,7 +592,7 @@
                                             @"Saved state is unavailable or the operation did not persist."
                                     }];
         }
-        NSPolicy *persisted = saved ? NSReadPolicy(NULL) : nil;
+        NSPolicy *persisted = NSReadPolicy(NULL);
         dispatch_async(dispatch_get_main_queue(), ^{
             [owner finish];
             self.busy = NO;
@@ -464,7 +602,7 @@
             }
             completion(saved, error);
             [self reloadMonitor];
-            if (self.configurationRefreshPending && !self.busy) {
+            if (self.configurationRefreshPending && !self.busy && !self.importPending) {
                 [self loadConfiguration];
             }
         });
@@ -508,7 +646,7 @@
         }];
 }
 - (void)clearSectionTapped:(UIButton *)sender {
-    if (self.busy || self.clearingSection) {
+    if (self.busy || self.importPending || self.clearingSection) {
         return;
     }
     NSInteger section = sender.tag;
@@ -523,8 +661,8 @@
     UIAlertController *alert = [UIAlertController
         alertControllerWithTitle:[NSString stringWithFormat:@"Clear %@?", name]
                          message:[NSString stringWithFormat:
-                                               @"All saved items in %@ will be removed.%@", name,
-                                               activity ? @" The search does not limit what is cleared. New "
+                                               @"All saved items in %@ will be removed%@", name,
+                                               activity ? @". The search does not limit what is cleared. New "
                                                           @"activity can appear as connections continue."
                                                         : @""]
                   preferredStyle:UIAlertControllerStyleAlert];
@@ -707,75 +845,44 @@
     return [self globalRuleTitle:key fullAppNames:NO];
 }
 - (NSString *)globalRuleTitle:(NSString *)key fullAppNames:(BOOL)fullAppNames {
-    NSArray *parts = NSCustomGlobalRuleComponents(key);
-    if (parts) {
-        NSMutableArray *names = [NSMutableArray new];
-        for (NSString *identity in NSCustomGlobalRuleIdentities(parts)) {
-            NSString *name =
-                fullAppNames ? NSIdentityFullDisplayName(identity) : NSIdentityDisplayName(identity);
-            [names addObject:name.length ? name : @"Unidentified app"];
-        }
-        if (parts.count == 6) {
-            NSMutableArray *labels = [NSMutableArray
-                arrayWithObject:names.count ? [names componentsJoinedByString:@", "] : @"All apps"];
-            for (NSString *member in NSGlobalRuleMembers(key)) {
-                [labels addObject:[self globalRuleTitle:member]];
-            }
-            [labels addObject:[parts[3] isEqual:@"any"] ? @"Any protocol" : [parts[3] uppercaseString]];
-            return [labels componentsJoinedByString:@"\n"];
-        }
-        return [NSString
-            stringWithFormat:@"%@\n%@\n%@ / %@",
-                             names.count ? [names componentsJoinedByString:@", "] : @"All apps",
-                             [parts[1] length] ? [self globalRuleTitle:parts[1]] : @"All domains / IPs",
-                             [parts[2] length] ? [self globalRuleTitle:parts[2]] : @"All ports",
-                             [parts[3] isEqual:@"any"] ? @"UDP & TCP" : [parts[3] uppercaseString]];
+    NSDictionary *condition = NSGlobalRuleCondition(key);
+    NSMutableArray *names = [NSMutableArray new];
+    for (NSString *identity in condition[@"identities"]) {
+        [names
+            addObject:fullAppNames ? NSIdentityFullDisplayName(identity) : NSIdentityDisplayName(identity)];
     }
-    if ([key hasPrefix:@"group:"]) {
-        NSString *first = NSGlobalRuleMembers(key).firstObject;
-        NSString *kind = [first hasPrefix:@"localPort:"] ? @"Local ports"
-                         : [first hasPrefix:@"port:"]    ? @"Remote ports"
-                                                         : @"IPs / Domains";
-        NSArray *members = NSGlobalRuleMembers(key);
-        NSArray *preview = [members subarrayWithRange:NSMakeRange(0, MIN((NSUInteger)5, members.count))];
-        NSString *text = NSGlobalRuleInputText(NSGlobalKeyFromMembers(preview));
-        return [NSString stringWithFormat:@"%@: %@%@", kind, text, members.count > 5 ? @", ..." : @""];
+    NSMutableArray *labels =
+        [NSMutableArray arrayWithObjects:names.count ? [names componentsJoinedByString:@", "] : @"All apps",
+                                         [condition[@"destinations"] count]
+                                             ? NSGlobalDestinationsText(condition[@"destinations"])
+                                             : @"All domains / IPs",
+                                         nil];
+    if ([condition[@"remotePorts"] count]) {
+        [labels addObject:[@"Remote: " stringByAppendingString:NSGlobalPortsText(condition[@"remotePorts"])]];
     }
-    NSRange colon = [key rangeOfString:@":"];
-    NSString *kind = [key hasPrefix:@"localPort:"] ? @"Local port"
-                     : [key hasPrefix:@"port:"]    ? @"Remote port"
-                     : [key hasPrefix:@"ip:"]      ? @"IP"
-                                                   : @"Domain";
-    return [NSString stringWithFormat:@"%@: %@", kind, [key substringFromIndex:colon.location + 1]];
+    if ([condition[@"localPorts"] count]) {
+        [labels addObject:[@"Local: " stringByAppendingString:NSGlobalPortsText(condition[@"localPorts"])]];
+    }
+    NSArray *protocols = condition[@"protocols"];
+    [labels addObject:protocols.count ? [[protocols componentsJoinedByString:@" & "] uppercaseString]
+                                      : @"Any protocol"];
+    return [labels componentsJoinedByString:@"\n"];
 }
 - (void)addCustomRuleForIdentity:(NSString *)identity connection:(NSDictionary *)connection {
-    NSString *hosts = @"", *ports = @"", *protocol = @"any";
     NSString *action =
         NSAppRuleSelections(self.policy.document[@"rules"][identity ?: @""]).firstObject ?: @"allow";
+    NSDictionary *destination = @{};
     if (connection && [connection[@"connections"] unsignedIntegerValue] <= 1) {
-        NSDictionary *destination = connection[@"destination"];
-        NSMutableArray *members = [NSMutableArray new];
-        for (NSString *field in @[ @"domain", @"address" ]) {
-            NSString *host = NSGlobalHostKey(destination[field]);
-            if (host) {
-                [members addObject:host];
-            }
-        }
-        hosts = members.count ? NSGlobalKeyFromMembers(members) : @"";
+        destination = NSCanonicalConnectionDestination(connection[@"destination"] ?: @{});
         BOOL incoming = [connection[@"direction"] isEqual:@"inbound"];
         BOOL outgoing = [connection[@"direction"] isEqual:@"outbound"];
-        if (incoming || outgoing) {
-            NSString *port = [destination[incoming ? @"localPort" : @"port"] stringValue];
-            ports = (incoming ? NSGlobalLocalPortKey(port) : NSGlobalPortKey(port)) ?: @"";
-            BOOL blocked = [@[ @"block", @"permission-block" ] containsObject:connection[@"action"] ?: @""];
-            action = incoming ? (blocked ? @"block-inbound" : @"allow-inbound")
-                              : (blocked ? @"block-outbound" : @"allow-outbound");
-        }
-        if ([@[ @"tcp", @"udp" ] containsObject:destination[@"protocol"] ?: @""]) {
-            protocol = destination[@"protocol"];
-        }
+        BOOL blocked = [@[ @"block", @"permission-block" ] containsObject:connection[@"action"] ?: @""];
+        action = incoming   ? (blocked ? @"block-inbound" : @"allow-inbound")
+                 : outgoing ? (blocked ? @"block-outbound" : @"allow-outbound")
+                            : (blocked ? @"block" : @"allow");
     }
-    NSString *initialKey = NSCustomGlobalRuleKey(identity, hosts, ports, protocol);
+    NSString *initialKey =
+        NSExactGlobalRuleKey(identity.length ? @[ identity ] : @[], destination, NSGlobalCoverage(action));
     [self editGlobalRule:nil initialKey:initialKey action:action];
 }
 - (void)editGlobalRule:(NSString *)original {
@@ -784,14 +891,14 @@
 - (void)editGlobalRule:(NSString *)original
             initialKey:(NSString *)initialKey
                 action:(NSString *)initialAction {
-    if (!self.policy || self.busy) {
+    if (!self.policy || self.busy || self.importPending) {
         return;
     }
     NSGlobalRuleEditor *editor = [[NSGlobalRuleEditor alloc] initWithStyle:UITableViewStyleInsetGrouped];
     NSMutableSet *identities = [NSMutableSet setWithArray:self.identities ?: @[]];
     [identities addObjectsFromArray:self.systemIdentities ?: @[]];
     for (NSString *key in self.globalRuleKeys) {
-        [identities addObjectsFromArray:NSCustomGlobalRuleIdentities(NSCustomGlobalRuleComponents(key))];
+        [identities addObjectsFromArray:NSGlobalRuleCondition(key)[@"identities"] ?: @[]];
     }
     editor.identities =
         [identities.allObjects sortedArrayUsingSelector:@selector(localizedCaseInsensitiveCompare:)];
@@ -826,7 +933,7 @@
             completion:^(BOOL saved, NSError *error) {
                 if (saved) {
                     NSRemoveAutomaticallyAllowedNotifications();
-                    owner.message = @"Global rule saved for new connections.";
+                    owner.message = @"Global rule saved for new connections";
                 }
                 finished(error);
             }];
@@ -839,7 +946,7 @@
     return NSDirectionRuleTitle(rule ?: @"") ?: @{@"ask" : @"Ask Me", @"remove" : @"Remove Rule"}[rule ?: @""] ?: @"Default Rule";
 }
 - (void)firewallChanged:(UISwitch *)sender {
-    if (self.busy || !self.preferencesLoaded || !self.configurationReady) {
+    if (self.busy || self.importPending || !self.preferencesLoaded || !self.configurationReady) {
         return;
     }
     if (!sender.on) {
@@ -847,7 +954,6 @@
         return;
     }
     if (!self.policy) {
-        BOOL legacyActive = self.savedEnabled && self.savedEngine != NSEngineVersion;
         // This explicit On can recover an idle reservation left before policy
         // bootstrap. Passive refreshes cannot take another operation's token.
         [self
@@ -855,7 +961,7 @@
                 NSSharedDirectory *directory = [NSSharedDirectory openRoot:NSSharedURL(@"")
                                                                       leaf:NSPolicyFile
                                                                      error:error];
-                return directory && NSEnsureCompatiblePolicyIn(directory, legacyActive, error);
+                return directory && NSEnsurePolicyIn(directory, error);
             }
             completion:^(BOOL saved, NSError *error) {
                 if (saved) {
@@ -908,7 +1014,7 @@
     }];
 }
 - (void)appleSystemProcessesChanged:(UISwitch *)sender {
-    if (!self.policy || self.busy) {
+    if (!self.policy || self.busy || self.importPending) {
         return;
     }
     BOOL allow = sender.on;

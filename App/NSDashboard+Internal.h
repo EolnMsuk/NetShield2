@@ -30,8 +30,15 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
     NSDashboardSectionActivity,
     NSDashboardSectionCount,
 };
+typedef NS_ENUM(NSInteger, NSConfigurationRow) {
+    NSConfigurationRowExport,
+    NSConfigurationRowImport,
+    NSConfigurationRowReset,
+    NSConfigurationRowRemove,
+    NSConfigurationRowCount,
+};
 
-@interface NSDashboard () <UISearchBarDelegate, UIGestureRecognizerDelegate>
+@interface NSDashboard () <UISearchBarDelegate, UIGestureRecognizerDelegate, UIDocumentPickerDelegate>
 @property(nonatomic, strong) NSPolicy *policy;
 @property(nonatomic, copy) NSString *policyReadError;
 @property(nonatomic) BOOL policyMissing;
@@ -62,6 +69,13 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
 @property(nonatomic) BOOL snapshotPending;
 @property(nonatomic) BOOL snapshotAgain;
 @property(nonatomic) BOOL exportPending;
+@property(nonatomic) BOOL importPending;
+@property(nonatomic, copy) NSString *displayedFirewallFooter;
+@property(nonatomic) BOOL displayedMonitorFresh;
+@property(nonatomic) BOOL presentationRefreshPending;
+@property(nonatomic) BOOL monitorRefreshDeferred;
+@property(nonatomic) CGFloat measuredTableWidth;
+@property(nonatomic, copy) NSString *measuredContentSizeCategory;
 @property(nonatomic, copy) NSArray *activityEvents;
 @property(nonatomic, copy) NSString *monitorReadError;
 @property(nonatomic, copy) NSDictionary *pendingUpdateResult;
@@ -116,6 +130,7 @@ typedef NS_ENUM(NSInteger, NSDashboardSection) {
             initialKey:(NSString *)initialKey
                 action:(NSString *)initialAction;
 - (void)exportRulesAndRecentActivityFromRow:(NSIndexPath *)path;
+- (void)importRules;
 - (void)editGlobalRule:(NSString *)original;
 - (NSString *)globalRuleTitle:(NSString *)key;
 - (NSString *)globalRuleTitle:(NSString *)key fullAppNames:(BOOL)fullAppNames;

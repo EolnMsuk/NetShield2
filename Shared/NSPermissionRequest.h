@@ -32,9 +32,10 @@ static inline BOOL NSConnectionHasConditions(NSDictionary *canonical, NSString *
 }
 
 static inline NSString *NSPermissionGeneration(NSPolicy *policy, NSString *identity) {
-    return (identity.length ? policy.document[@"askGenerations"][identity]
-                            : policy.document[@"unidentifiedAskGeneration"])
-               ?: @"";
+    NSString *selection = (identity.length ? policy.document[@"askGenerations"][identity]
+                                           : policy.document[@"unidentifiedAskGeneration"])
+                              ?: @"";
+    return [NSString stringWithFormat:@"%@/%@", policy.document[@"ruleSetEpoch"] ?: @"", selection];
 }
 
 static inline BOOL NSPermissionGenerationMatches(NSPolicy *policy, NSDictionary *request) {

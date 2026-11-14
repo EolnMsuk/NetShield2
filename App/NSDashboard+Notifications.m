@@ -11,7 +11,7 @@
                     settings.authorizationStatus == UNAuthorizationStatusAuthorized &&
                             settings.alertSetting == UNNotificationSettingEnabled
                         ? @"Banners enabled. Tap to change notification settings."
-                        : @"Enable notifications and banners to answer requests in other apps.";
+                        : @"Enable notifications and banners to answer requests in other apps";
                 [self refreshTableKeepingPosition];
             });
         }];
@@ -110,7 +110,7 @@
     }
 }
 - (void)answerRequest:(NSDictionary *)request rule:(NSString *)rule {
-    if (self.busy) {
+    if (self.busy || self.importPending) {
         return;
     }
     NSUInteger generation = self.storageGeneration;
@@ -153,7 +153,7 @@
 }
 - (void)presentRequest:(NSDictionary *)request {
     NSPolicy *current = NSReadPolicy(NULL);
-    if (self.presentedViewController || ![self hasFreshMonitor] ||
+    if (self.busy || self.importPending || self.presentedViewController || ![self hasFreshMonitor] ||
         !NSPermissionGenerationMatches(current, request) || ![current requiresPermissionForRequest:request]) {
         return;
     }

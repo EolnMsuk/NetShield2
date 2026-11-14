@@ -7,6 +7,7 @@
 #import "../Shared/NSActivity.h"
 #import "../Shared/NSGlobalRule.h"
 #import "../Shared/NSDNSCache.h"
+#import "RuleFixtures.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -67,6 +68,47 @@ static void TestBoundedFiles(void) {
     close(fd);
     EXPECT(!NSReadDocument(@"../policy.plist", NULL));
     EXPECT(!NSWriteDocument(@{}, @"../policy.plist", NULL));
+    // Arbitrary JSON names use a separate reader; shared leaf protections stay.
+    NSURL *external = [root URLByAppendingPathComponent:@"arbitrary-import.json"];
+    NSData *boundary = [NSMutableData dataWithLength:NSMaximumRuleTransferBytes];
+    EXPECT([boundary writeToURL:external atomically:YES]);
+    EXPECT([NSReadBoundedExternalURL(external, NULL) isEqual:boundary]);
+    EXPECT(!NSReadDocument(external.lastPathComponent, NULL));
+    EXPECT(!NSReadBoundedExternalURL([NSURL URLWithString:@"https://example.com/rules.json"], NULL));
+    EXPECT(!NSReadBoundedExternalURL(root, NULL));
+    EXPECT(!NSReadBoundedExternalURL([root URLByAppendingPathComponent:@"missing.json"], NULL));
+    for (NSUInteger scenario = 0; scenario < 4; scenario++) {
+        EXPECT([boundary writeToURL:external atomically:YES]);
+        int reader = open(external.fileSystemRepresentation, O_RDONLY | O_NOFOLLOW);
+        struct stat info;
+        EXPECT(reader >= 0 && fstat(reader, &info) == 0);
+        if (scenario == 0) {
+            int append = open(external.fileSystemRepresentation, O_WRONLY | O_APPEND);
+            EXPECT(append >= 0 && write(append, "x", 1) == 1);
+            close(append);
+            EXPECT(!NSReadBoundedExternalURL(external, NULL));
+        } else if (scenario == 1) {
+            EXPECT(truncate(external.fileSystemRepresentation, 1) == 0);
+        } else if (scenario == 2) {
+            EXPECT([[@"{}" dataUsingEncoding:NSUTF8StringEncoding] writeToURL:external atomically:YES]);
+        } else {
+            close(reader);
+            reader = -1;
+        }
+        EXPECT(!NSReadBoundedExternalDescriptor(reader, external, info, NULL));
+        if (reader >= 0) {
+            close(reader);
+        }
+    }
+    EXPECT([NSFileManager.defaultManager removeItemAtURL:external error:NULL]);
+    EXPECT(symlink(url.fileSystemRepresentation, external.fileSystemRepresentation) == 0);
+    for (NSUInteger i = 0; i < 32; i++) {
+        EXPECT(!NSReadBoundedExternalURL(external, NULL));
+    }
+    EXPECT([NSFileManager.defaultManager removeItemAtURL:external error:NULL]);
+    EXPECT(mkfifo(external.fileSystemRepresentation, 0600) == 0);
+    EXPECT(!NSReadBoundedExternalURL(external, NULL));
+    EXPECT([NSFileManager.defaultManager removeItemAtURL:external error:NULL]);
 }
 static void TestContainerAliases(void) {
     NSString *path = [@"/private/var/tmp" stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
@@ -131,6 +173,15 @@ static void TestMonitorCorpus(void) {
         @"requests" : @[ request ]
     };
     EXPECT(NSValidateMonitor(base, NULL));
+    NSMutableDictionary *longGeneration = [request mutableCopy];
+    longGeneration[@"askGeneration"] = [@"x" stringByPaddingToLength:NSMaximumPermissionGenerationLength
+                                                          withString:@"x"
+                                                     startingAtIndex:0];
+    NSMutableDictionary *generationMonitor = [base mutableCopy];
+    generationMonitor[@"requests"] = @[ longGeneration ];
+    EXPECT(NSValidateMonitor(generationMonitor, NULL));
+    longGeneration[@"askGeneration"] = [longGeneration[@"askGeneration"] stringByAppendingString:@"x"];
+    EXPECT(!NSValidateMonitor(generationMonitor, NULL));
     for (id invalid in @[ @0, @1, @"yes", @[] ]) {
         NSMutableDictionary *d = [base mutableCopy];
         d[@"controlRunning"] = invalid;
@@ -224,6 +275,7 @@ static void TestDNSLifetime(void) {
     EXPECT(!NSDNSLifetimeIsLive(lifetime, 100.5, @"boot-two"));
     EXPECT(!NSDNSLifetimeIsLive(lifetime, 101, @"boot-one"));
     EXPECT(!NSDNSLifetimeIsLive(lifetime, 0, @"boot-one"));
+    EXPECT(!NSDNSLifetimeIsLive(nil, 100.5, @"boot-one"));
 }
 static void TestEarlyDNSFactories(void) {
     for (NSUInteger sizeIndex = 0; sizeIndex < 4; sizeIndex++) {
@@ -313,39 +365,29 @@ static void TestDecisionParity(void) {
         @"localPort" : @1234,
         @"protocol" : @"tcp"
     };
-    for (NSString *address in @[ @"allow", @"block" ]) {
-        for (NSString *domain in @[ @"allow", @"block" ]) {
+    // Each explicit scope is evaluated independently; overlapping globals are
+    // rejected before evaluation, regardless of their actions.
+    for (NSString *hosts in @[ @"192.0.2.0/24", @"example.test", @"example.test & 192.0.2.1" ]) {
+        for (NSString *action in NSDirectionRuleValues()) {
             NSMutableDictionary *document = [[NSPolicy defaultDocument] mutableCopy];
             document[@"globalRules"] = @{
-                @"ip:192.0.2.1" : address,
-                @"domain:example.test" : domain,
-                @"port:443" : @"allow",
-                @"localPort:1234" : @"block"
+                NSFixtureGlobal(@"exact.app", hosts, @"440-450", @"1200-1300", @"tcp+udp", action) : action
             };
-            for (NSString *customAction in @[ @"allow", @"block", @"allow-inbound", @"block-outbound" ]) {
-                NSMutableDictionary *rules = [document[@"globalRules"] mutableCopy];
-                rules[NSCustomGlobalRuleKey(@"exact.app", @"", @"", @"any")] = customAction;
-                document[@"globalRules"] = rules;
-                NSPolicy *policy = [NSPolicy policyWithDocument:document error:NULL];
-                EXPECT(policy);
-                for (NSNumber *direction in @[ @0, @1, @2, @-1, @99 ]) {
-                    for (NSString *identity in @[ @"exact.app", @"com.apple.test", @"" ]) {
-                        NSFlowDirection normalized = NSNormalizedFlowDirection(direction.integerValue);
-                        NSFlowEvaluation decision = [policy evaluateIdentity:identity
-                                                                   direction:direction.integerValue
-                                                                 destination:peer
-                                                                      socket:YES];
-                        BOOL ask = [policy requiresPermissionForIdentity:identity
-                                                               direction:normalized
-                                                             destination:peer];
-                        BOOL allow = [policy allowsIdentity:identity direction:normalized destination:peer];
-                        EXPECT(decision.disposition ==
-                               (ask ? NSFlowAsk : (allow ? NSFlowAllow : NSFlowDrop)));
-                        if (![identity isEqual:@"exact.app"]) {
-                            EXPECT(allow ==
-                                   [address isEqual:@"allow"]); // schema-3 address precedes domain/ports
-                        }
-                    }
+            NSPolicy *policy = [NSPolicy policyWithDocument:document error:NULL];
+            EXPECT(policy);
+            for (NSNumber *direction in @[ @0, @1, @2, @-1, @99 ]) {
+                for (NSString *identity in @[ @"exact.app", @"com.apple.test", @"" ]) {
+                    NSFlowDirection normalized = NSNormalizedFlowDirection(direction.integerValue);
+                    NSFlowEvaluation decision = [policy evaluateIdentity:identity
+                                                               direction:direction.integerValue
+                                                             destination:peer
+                                                                  socket:YES];
+                    BOOL ask = [policy requiresPermissionForIdentity:identity
+                                                           direction:normalized
+                                                         destination:peer];
+                    BOOL allow = [policy allowsIdentity:identity direction:normalized destination:peer];
+                    EXPECT(ask == (decision.disposition == NSFlowAsk));
+                    EXPECT(allow == (decision.disposition == NSFlowAllow));
                 }
             }
         }

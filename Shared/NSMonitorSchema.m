@@ -96,7 +96,9 @@ NSDictionary *NSValidateMonitor(id document, NSError **error) {
             return NSBadMonitor(error);
         }
         for (NSString *key in @[ @"askGeneration", @"session", @"activation" ]) {
-            if (r[key] && !NSBoundedString(r[key], 128, NO)) {
+            if (r[key] &&
+                !NSBoundedString(
+                    r[key], [key isEqual:@"askGeneration"] ? NSMaximumPermissionGenerationLength : 128, NO)) {
                 return NSBadMonitor(error);
             }
         }
@@ -106,7 +108,8 @@ NSDictionary *NSValidateMonitor(id document, NSError **error) {
             if ([r[@"identity"] length] || !direction || !destination ||
                 ![destination isEqual:NSCanonicalConnectionDestination(destination)] ||
                 ![r[@"fingerprint"] isEqual:NSConnectionFingerprint(destination, direction)] ||
-                !NSBoolean(r[@"deferred"]) || !NSBoundedString(r[@"askGeneration"], 128, NO) ||
+                !NSBoolean(r[@"deferred"]) ||
+                !NSBoundedString(r[@"askGeneration"], NSMaximumPermissionGenerationLength, NO) ||
                 !NSBoundedString(d[@"activation"], 128, YES) ||
                 ![r[@"activation"] isEqual:d[@"activation"]] || !NSBoundedString(d[@"session"], 128, YES) ||
                 ![r[@"session"] isEqual:d[@"session"]] ||

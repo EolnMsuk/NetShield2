@@ -4,6 +4,8 @@
 #import "NSStoreLock.h"
 
 NS_ASSUME_NONNULL_BEGIN
+@class NSRuleImportResult;
+FOUNDATION_EXPORT BOOL NSReplaceRulesFromImport(NSRuleImportResult *result, NSError **error);
 FOUNDATION_EXPORT NSDictionary *_Nullable NSReadDocument(NSString *name, NSError *_Nullable *_Nullable error);
 FOUNDATION_EXPORT BOOL NSWriteDocument(NSDictionary *document, NSString *name,
                                        NSError *_Nullable *_Nullable error);
@@ -23,8 +25,6 @@ FOUNDATION_EXPORT NSArray<NSDictionary *> *NSActivityAfterClear(NSArray<NSDictio
 FOUNDATION_EXPORT BOOL NSWriteMonitorSnapshot(NSDictionary *snapshot, NSError **error);
 FOUNDATION_EXPORT BOOL NSEnsurePolicy(NSError **error);
 FOUNDATION_EXPORT BOOL NSEnsurePolicyIn(NSSharedDirectory *directory, NSError **error);
-FOUNDATION_EXPORT BOOL NSEnsureCompatiblePolicyIn(NSSharedDirectory *directory, BOOL legacyActive,
-                                                  NSError **error);
 FOUNDATION_EXPORT BOOL NSSetUnidentifiedMode(NSMutableDictionary *document, NSString *mode,
                                              BOOL preferencesLoaded, BOOL enabled, NSInteger configuredEngine,
                                              NSString *_Nullable activation, NSError **error);

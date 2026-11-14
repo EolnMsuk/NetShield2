@@ -27,6 +27,11 @@ FOUNDATION_EXPORT BOOL NSCheckReadIdentity(int fd, NSSharedDirectory *directory,
 FOUNDATION_EXPORT NSData *NSReadBoundedDescriptor(int fd, NSSharedDirectory *directory, NSString *leaf,
                                                   struct stat before, NSError **error);
 FOUNDATION_EXPORT NSData *NSReadBoundedFile(NSSharedDirectory *directory, NSString *leaf, NSError **error);
+// Separate from known app-group leaves. Caller owns document-provider
+// coordination/security-scoped access for the full synchronous read.
+FOUNDATION_EXPORT NSData *NSReadBoundedExternalDescriptor(int fd, NSURL *url, struct stat before,
+                                                          NSError **error);
+FOUNDATION_EXPORT NSData *NSReadBoundedExternalURL(NSURL *url, NSError **error);
 FOUNDATION_EXPORT BOOL NSWriteBoundedFile(NSData *data, NSSharedDirectory *directory, NSString *leaf,
                                           BOOL durable, NSError **error);
 FOUNDATION_EXPORT BOOL NSUnlinkBoundedFile(NSSharedDirectory *directory, NSString *leaf, NSError **error);

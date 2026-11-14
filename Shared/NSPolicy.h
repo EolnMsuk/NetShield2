@@ -35,7 +35,6 @@ typedef struct {
 
 @interface NSPolicy : NSObject
 @property(nonatomic, readonly, copy) NSDictionary *document;
-@property(nonatomic, readonly, copy) NSDictionary *expandedGlobalRules;
 @property(nonatomic, readonly, copy) NSDictionary *globalRuleConditions;
 + (NSDictionary *)defaultDocument;
 + (nullable instancetype)policyWithDocument:(id)document error:(NSError *_Nullable *_Nullable)error;

@@ -14,17 +14,14 @@ typedef NS_ENUM(NSInteger, NSGlobalEditorSection) {
     NSGlobalEditorProtocol,
 };
 
-static NSArray<NSString *> *NSExactEditorFieldNames(NSInteger section) {
-    return section == NSGlobalEditorHosts ? @[ @"domain", @"address" ] : @[ @"port", @"localPort" ];
+static NSArray *NSProtocolValues(void) {
+    return @[ @"any", @"tcp", @"udp", @"tcp+udp", @"other", @"other+tcp", @"other+udp", @"other+tcp+udp" ];
 }
-
-static NSString *NSExactEditorFieldTitle(NSString *field) {
-    return @{
-        @"domain" : @"Domain",
-        @"address" : @"IP address",
-        @"port" : @"Remote port",
-        @"localPort" : @"Local port"
-    }[field];
+static NSArray *NSProtocolTitles(void) {
+    return @[
+        @"Any protocol", @"TCP", @"UDP", @"TCP & UDP", @"Other", @"TCP & Other", @"UDP & Other",
+        @"TCP, UDP & Other"
+    ];
 }
 
 @class NSGlobalRuleAppButton;
@@ -33,10 +30,10 @@ static NSString *NSExactEditorFieldTitle(NSString *field) {
 @property(nonatomic, strong) NSMutableSet<NSString *> *selectedIdentities;
 @property(nonatomic, weak) NSGlobalRuleAppButton *appButton;
 @property(nonatomic, strong) UITextField *hostsField;
-@property(nonatomic, copy) NSDictionary<NSString *, UITextField *> *exactFields;
 @property(nonatomic, strong) UITextField *portsField;
-@property(nonatomic) BOOL localPort;
+@property(nonatomic, strong) UITextField *localPortsField;
 @property(nonatomic, copy) NSString *protocol;
+@property(nonatomic) BOOL resolveDomains;
 @property(nonatomic, copy) NSString *ruleAction;
 - (void)appMenuWillDisplay:(NSGlobalRuleAppButton *)button;
 - (void)appMenuDidClose:(NSGlobalRuleAppButton *)button;
@@ -159,41 +156,18 @@ NSAppMenuWithSelection(UIMenu *menu,
     self.tableView.estimatedRowHeight = 56;
     self.tableView.keyboardDismissMode = UIScrollViewKeyboardDismissModeOnDrag;
     self.selectedIdentities = [NSMutableSet new];
-    self.hostsField = [self fieldWithPlaceholder:@"All domains and IPs" label:@"Domains or IP ranges"];
-    self.portsField = [self fieldWithPlaceholder:@"All ports" label:@"Port numbers"];
-    self.protocol = @"any";
+    self.hostsField = [self fieldWithPlaceholder:@"All domains and IPs" label:@"Domains, IP ranges or CIDRs"];
+    self.portsField = [self fieldWithPlaceholder:@"All remote ports" label:@"Remote ports or ranges"];
+    self.localPortsField = [self fieldWithPlaceholder:@"All local ports" label:@"Local ports or ranges"];
     self.ruleAction = self.originalAction ?: @"allow";
-    NSArray *parts = NSCustomGlobalRuleComponents(self.originalKey ?: self.initialKey);
-    NSString *hosts = @"", *ports = @"";
-    if (parts.count == 6) {
-        NSDictionary *endpoints = parts[5];
-        NSMutableDictionary *fields = [NSMutableDictionary new];
-        for (NSString *field in @[ @"domain", @"address", @"port", @"localPort" ]) {
-            UITextField *input = [self fieldWithPlaceholder:@"Any" label:NSExactEditorFieldTitle(field)];
-            id value = endpoints[field];
-            input.text = value ? [value description] : @"";
-            fields[field] = input;
-        }
-        self.exactFields = fields;
-    }
-    if (parts) {
-        [self.selectedIdentities addObjectsFromArray:NSCustomGlobalRuleIdentities(parts)];
-        hosts = parts[1];
-        ports = parts[2];
-        self.protocol = parts[3];
-    } else if (self.originalKey) {
-        NSString *first = NSGlobalRuleMembers(self.originalKey).firstObject;
-        if ([first hasPrefix:@"port:"] || [first hasPrefix:@"localPort:"]) {
-            ports = self.originalKey;
-        } else {
-            hosts = self.originalKey;
-        }
-    }
-    self.hostsField.text = hosts.length ? NSGlobalRuleInputText(hosts) : @"";
-    self.portsField.text = ports.length ? NSGlobalRuleInputText(ports) : @"";
-    self.localPort = ports.length ? [NSGlobalRuleMembers(ports).firstObject hasPrefix:@"localPort:"]
-                                  : self.initialKey && [@[ @"allow-inbound", @"block-inbound" ]
-                                                           containsObject:self.ruleAction];
+    NSDictionary *condition = NSGlobalRuleCondition(self.originalKey ?: self.initialKey);
+    self.resolveDomains = condition ? [condition[@"resolveDomains"] boolValue] : YES;
+    [self.selectedIdentities addObjectsFromArray:condition[@"identities"] ?: @[]];
+    self.hostsField.text = NSGlobalDestinationsText(condition[@"destinations"] ?: @[]);
+    self.portsField.text = NSGlobalPortsText(condition[@"remotePorts"] ?: @[]);
+    self.localPortsField.text = NSGlobalPortsText(condition[@"localPorts"] ?: @[]);
+    self.protocol =
+        [condition[@"protocols"] count] ? [condition[@"protocols"] componentsJoinedByString:@"+"] : @"any";
 }
 - (void)cancel {
     [self dismissViewControllerAnimated:YES completion:nil];
@@ -205,66 +179,35 @@ NSAppMenuWithSelection(UIMenu *menu,
     [alert addAction:[UIAlertAction actionWithTitle:@"Close" style:UIAlertActionStyleDefault handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];
 }
-- (NSString *)exactRuleKey {
-    NSMutableDictionary *conditions = [NSMutableDictionary new];
-    if (![self.protocol isEqual:@"any"]) {
-        conditions[@"protocol"] = self.protocol;
-    }
-    for (NSString *field in self.exactFields) {
-        UITextField *input = self.exactFields[field];
-        NSString *value =
-            [input.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-        if (!value.length) {
-            continue;
-        }
-        if ([field isEqual:@"port"] || [field isEqual:@"localPort"]) {
-            NSString *port = NSGlobalPortKey(value);
-            if (!port) {
-                [self showMessage:@"Enter a single port from 1 to 65535, or clear the field for any port."];
-                return nil;
-            }
-            conditions[field] = @([[port substringFromIndex:5] integerValue]);
-        } else {
-            conditions[field] = value;
-        }
-    }
-    NSDictionary *canonical = NSCanonicalConnectionDestination(conditions);
-    if (canonical.count != conditions.count) {
-        [self
-            showMessage:@"Enter a single domain and a numeric IPv4 or IPv6 address in their labeled fields. "
-                        @"Clear a field to remove its condition."];
-        return nil;
-    }
-    NSString *coverage = NSGlobalCoverage(self.ruleAction);
-    if (!canonical.count && !self.selectedIdentities.count && [coverage isEqual:@"both"]) {
-        [self showMessage:@"Keep at least one app, direction, protocol, or endpoint condition."];
-        return nil;
-    }
-    return NSExactGlobalRuleKey(self.selectedIdentities.allObjects, canonical, coverage);
-}
-- (NSString *)legacyRuleKey {
-    NSCharacterSet *whitespace = NSCharacterSet.whitespaceAndNewlineCharacterSet;
-    NSString *hostText = [self.hostsField.text stringByTrimmingCharactersInSet:whitespace] ?: @"";
-    NSString *portText = [self.portsField.text stringByTrimmingCharactersInSet:whitespace] ?: @"";
-    NSString *hosts = hostText.length ? NSGlobalInputRuleKey(hostText, NO, NO) : @"";
-    NSString *ports = portText.length ? NSGlobalInputRuleKey(portText, YES, self.localPort) : @"";
+- (NSString *)conditionRuleKey {
+    NSArray *hosts = NSGlobalParseDestinations(self.hostsField.text ?: @"");
+    NSArray *remote = NSGlobalParsePorts(self.portsField.text ?: @"");
+    NSArray *local = NSGlobalParsePorts(self.localPortsField.text ?: @"");
     if (!hosts) {
         [self showMessage:
-                  @"Enter exact domains, IPv4/IPv6 addresses, or ascending IP ranges separated by commas. Do "
-                  @"not include URLs or empty entries. Maximum 4096 entries across all rules."];
+                  @"Enter domains, IPv4/IPv6 addresses, ascending ranges or CIDRs separated by commas. Use & "
+                  @"between a domain and an address to require both. Do not include URLs or empty entries."];
         return nil;
     }
-    if (!ports) {
+    if (!remote || !local) {
+        [self showMessage:@"Enter ports or ascending ranges from 1 to 65535, separated by commas (80, 443, "
+                          @"8000-8080). Blank means any port in that field."];
+        return nil;
+    }
+    NSArray *protocols =
+        [self.protocol isEqual:@"any"] ? @[] : [self.protocol componentsSeparatedByString:@"+"];
+    NSString *key =
+        NSGlobalRuleKey(NSGlobalCondition(self.selectedIdentities.allObjects, hosts, remote, local, protocols,
+                                          NSGlobalCoverage(self.ruleAction), self.resolveDomains));
+    if (!key) {
         [self showMessage:
-                  @"Enter port numbers from 1 to 65535 separated by commas, or leave blank for all ports."];
-        return nil;
+                  @"This rule exceeds the identity or predicate capacity. Reduce its entries and try again."];
     }
-    return NSDirectionalGlobalRuleKey(self.selectedIdentities.allObjects, hosts, ports, self.protocol,
-                                      self.ruleAction);
+    return key;
 }
 - (void)save {
     [self.view endEditing:YES];
-    NSString *key = self.exactFields ? [self exactRuleKey] : [self legacyRuleKey];
+    NSString *key = [self conditionRuleKey];
     if (!key) {
         return;
     }
@@ -286,8 +229,33 @@ NSAppMenuWithSelection(UIMenu *menu,
         owner.navigationItem.rightBarButtonItem.enabled = YES;
         owner.navigationItem.leftBarButtonItem.enabled = YES;
         if (error) {
-            [owner
-                showMessage:error.localizedDescription ?: @"The rule could not be saved. Please try again."];
+            NSMutableString *message = [(
+                error.localizedDescription ?: @"The rule could not be saved. Please try again.") mutableCopy];
+            NSDictionary *conflict = NSGlobalRuleCondition(error.userInfo[@"conflictingRule"]);
+            if (conflict) {
+                NSMutableArray *names = [NSMutableArray new];
+                for (NSString *identity in conflict[@"identities"]) {
+                    [names addObject:NSIdentityDisplayName(identity)];
+                }
+                NSString *context = [NSString
+                    stringWithFormat:@"%@ / %@ / %@ / remote %@ / local %@",
+                                     names.count ? [names componentsJoinedByString:@", "] : @"All apps",
+                                     conflict[@"direction"],
+                                     [conflict[@"destinations"] count]
+                                         ? NSGlobalDestinationsText(conflict[@"destinations"])
+                                         : @"All destinations",
+                                     [conflict[@"remotePorts"] count]
+                                         ? NSGlobalPortsText(conflict[@"remotePorts"])
+                                         : @"Any",
+                                     [conflict[@"localPorts"] count]
+                                         ? NSGlobalPortsText(conflict[@"localPorts"])
+                                         : @"Any"];
+                if (context.length > 500) {
+                    context = [[context substringToIndex:500] stringByAppendingString:@"…"];
+                }
+                [message appendFormat:@"\n\nExisting rule: %@", context];
+            }
+            [owner showMessage:message];
         } else {
             [owner dismissViewControllerAnimated:YES completion:nil];
         }
@@ -297,7 +265,7 @@ NSAppMenuWithSelection(UIMenu *menu,
     return 5;
 }
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    return section == NSGlobalEditorPorts || (self.exactFields && section == NSGlobalEditorHosts) ? 2 : 1;
+    return section == NSGlobalEditorPorts ? 2 : 1;
 }
 - (void)tableView:(UITableView *)tableView
     willDisplayHeaderView:(UIView *)view
@@ -305,26 +273,20 @@ NSAppMenuWithSelection(UIMenu *menu,
     NSStyleSectionHeader(view);
 }
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
-    return @[
-        @"Direction", @"App", self.exactFields ? @"Exact endpoints" : @"Domains / IP ranges",
-        self.exactFields ? @"Exact ports" : @"Port", @"Protocol"
-    ][section];
+    return @[ @"Direction", @"App", @"Domains / IPs / CIDRs", @"Ports", @"Protocol" ][section];
 }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
-    if (self.exactFields) {
-        if (section == NSGlobalEditorHosts || section == NSGlobalEditorPorts) {
-            return @"Every filled field must match. A blank field places no constraint.";
-        }
-        if (section == NSGlobalEditorProtocol) {
-            return @"Other matches sockets reported outside the TCP and UDP categories.";
-        }
+    if (section == NSGlobalEditorHosts && !self.resolveDomains) {
+        return @"Every endpoint condition must match. Commas separate alternatives; & requires both a domain "
+               @"and an address. Domains require reported hostname metadata and do not use cached DNS "
+               @"addresses.";
     }
     return @[
-        @"Saved in Global Rules, overriding app rules and the iOS system allowance.",
+        @"Saved in Global Rules, overriding app rules and the iOS system allowance",
         @"Select one or more apps. Tap a checked app to remove it, or choose All apps to clear the selection.",
-        @"Separate entries with commas, e.g. example.com, 192.168.1.10-192.168.1.20. Blank means all destinations.",
-        @"Choose remote or local, then enter port numbers separated by commas. Blank means all ports.",
-        @"UDP & TCP covers all protocols available."
+        @"Separate alternatives with commas, e.g. example.com, 192.0.2.0/24, 2001:db8::/32. Use example.com & 192.0.2.1 to require both endpoints. Blank means all destinations. Blocking may use cached DNS addresses when hostname metadata is unavailable.",
+        @"Remote and local ports are independent conditions. Use numbers, ranges or lists (80, 443, 8000-8080). Blank means any port in that field.",
+        @"Any protocol includes unavailable metadata. TCP & UDP covers only TCP and UDP. Other covers reported protocols outside those categories."
     ][section];
 }
 - (UIMenu *)menuForValues:(NSArray<NSString *> *)values
@@ -557,21 +519,19 @@ NSAppMenuWithSelection(UIMenu *menu,
                                                    reuseIdentifier:nil];
     cell.selectionStyle = UITableViewCellSelectionStyleNone;
     UIView *control;
-    if (self.exactFields && (path.section == NSGlobalEditorHosts || path.section == NSGlobalEditorPorts)) {
-        NSString *field = NSExactEditorFieldNames(path.section)[path.row];
+    if (path.section == NSGlobalEditorHosts) {
+        control = self.hostsField;
+    } else if (path.section == NSGlobalEditorPorts) {
         UILabel *label = [UILabel new];
-        label.text = NSExactEditorFieldTitle(field);
+        label.text = path.row == 0 ? @"Remote ports" : @"Local ports";
         label.font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1];
         label.adjustsFontForContentSizeCategory = YES;
         label.isAccessibilityElement = NO;
-        UIStackView *stack =
-            [[UIStackView alloc] initWithArrangedSubviews:@[ label, self.exactFields[field] ]];
+        UIStackView *stack = [[UIStackView alloc]
+            initWithArrangedSubviews:@[ label, path.row == 0 ? self.portsField : self.localPortsField ]];
         stack.axis = UILayoutConstraintAxisVertical;
         stack.spacing = 2;
         control = stack;
-    } else if (path.section == NSGlobalEditorHosts ||
-               (path.section == NSGlobalEditorPorts && path.row == 1)) {
-        control = path.section == NSGlobalEditorHosts ? self.hostsField : self.portsField;
     } else {
         NSGlobalRuleAppButton *appButton = path.section == NSGlobalEditorApps
                                                ? [NSGlobalRuleAppButton buttonWithType:UIButtonTypeSystem]
@@ -604,22 +564,10 @@ NSAppMenuWithSelection(UIMenu *menu,
             appButton.editor = self;
             [self updateClosedAppButton:appButton resizeRow:NO];
         } else {
-            if (path.section == NSGlobalEditorPorts) {
-                title = self.localPort ? @"Local port" : @"Remote port";
-                button.menu = [self menuForValues:@[ @"remote", @"local" ]
-                                           titles:@[ @"Remote", @"Local" ]
-                                         selected:self.localPort ? @"local" : @"remote"
-                                           change:^(NSString *value) {
-                                               weakSelf.localPort = [value isEqual:@"local"];
-                                               [weakSelf.tableView reloadData];
-                                           }];
-            } else if (path.section == NSGlobalEditorProtocol) {
-                NSString *any = self.exactFields ? @"Any protocol" : @"UDP & TCP";
-                title = [self.protocol isEqual:@"any"] ? any : self.protocol.uppercaseString;
-                NSArray *values =
-                    self.exactFields ? @[ @"any", @"udp", @"tcp", @"other" ] : @[ @"any", @"udp", @"tcp" ];
-                NSArray *titles =
-                    self.exactFields ? @[ any, @"UDP", @"TCP", @"Other" ] : @[ any, @"UDP", @"TCP" ];
+            if (path.section == NSGlobalEditorProtocol) {
+                NSArray *values = NSProtocolValues(), *titles = NSProtocolTitles();
+                NSUInteger index = [values indexOfObject:self.protocol];
+                title = index == NSNotFound ? @"Any protocol" : titles[index];
                 button.menu = [self menuForValues:values
                                            titles:titles
                                          selected:self.protocol

@@ -27,7 +27,7 @@ static inline BOOL NSValidDNSLifetime(id value) {
 }
 static inline BOOL NSDNSLifetimeIsLive(NSDictionary *lifetime, NSTimeInterval uptime, NSString *boot) {
     if (!lifetime) {
-        return YES; // supported legacy policy has wall expiry only
+        return NO;
     }
     return NSValidDNSLifetime(lifetime) && uptime >= [lifetime[@"issued"] doubleValue] &&
            uptime < [lifetime[@"expires"] doubleValue] &&

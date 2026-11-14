@@ -153,8 +153,8 @@
 - (void)presentPendingUpdateResult {
     // Keep permission dialogs and rule editors intact; the monitor timer retries
     // presentation after they close or the app returns to the foreground.
-    if (!self.pendingUpdateResult || self.presentedViewController || self.busy || !self.view.window ||
-        self.tableView.editing ||
+    if (!self.pendingUpdateResult || self.presentedViewController || self.busy || self.importPending ||
+        !self.view.window || self.tableView.editing ||
         UIApplication.sharedApplication.applicationState != UIApplicationStateActive) {
         return;
     }

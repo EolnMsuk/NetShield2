@@ -4,6 +4,86 @@
 #import "NSDashboard+Internal.h"
 #import "../Shared/NSActivity.h"
 
+@interface NSFirewallFooter : UITableViewHeaderFooterView
+@property(nonatomic, strong) UILabel *messageLabel;
+- (void)setFooterText:(NSString *)text;
+@end
+@implementation NSFirewallFooter
+- (instancetype)initWithReuseIdentifier:(NSString *)identifier {
+    if ((self = [super initWithReuseIdentifier:identifier])) {
+        _messageLabel = [UILabel new];
+        _messageLabel.numberOfLines = 0;
+        _messageLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+        _messageLabel.textColor = UIColor.secondaryLabelColor;
+        _messageLabel.adjustsFontForContentSizeCategory = YES;
+        _messageLabel.translatesAutoresizingMaskIntoConstraints = NO;
+        self.contentView.directionalLayoutMargins = NSDirectionalEdgeInsetsMake(8, 20, 20, 20);
+        [self.contentView addSubview:_messageLabel];
+        UILayoutGuide *margins = self.contentView.layoutMarginsGuide;
+        [NSLayoutConstraint activateConstraints:@[
+            [_messageLabel.leadingAnchor constraintEqualToAnchor:margins.leadingAnchor],
+            [_messageLabel.trailingAnchor constraintEqualToAnchor:margins.trailingAnchor],
+            [_messageLabel.topAnchor constraintEqualToAnchor:margins.topAnchor],
+            [_messageLabel.bottomAnchor constraintEqualToAnchor:margins.bottomAnchor]
+        ]];
+    }
+    return self;
+}
+- (void)setFooterText:(NSString *)text {
+    self.textLabel.text = nil;
+    self.textLabel.attributedText = nil;
+    self.messageLabel.attributedText = nil;
+    self.messageLabel.text = text;
+    self.messageLabel.hidden = !text.length;
+    self.messageLabel.alpha = 1;
+    self.messageLabel.accessibilityLabel = text;
+    self.messageLabel.isAccessibilityElement = text.length > 0;
+    [self setNeedsLayout];
+}
+- (void)prepareForReuse {
+    [super prepareForReuse];
+    [self setFooterText:nil];
+}
+@end
+
+static void NSResetDashboardCell(UITableViewCell *cell) {
+    cell.configurationUpdateHandler = nil;
+    cell.contentConfiguration = nil;
+    cell.backgroundConfiguration = nil;
+    cell.accessoryView = nil;
+    cell.editingAccessoryView = nil;
+    cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+    cell.editingAccessoryType = UITableViewCellAccessoryNone;
+    cell.accessibilityLabel = nil;
+    cell.accessibilityValue = nil;
+    cell.accessibilityHint = nil;
+    cell.accessibilityElements = nil;
+    cell.accessibilityTraits = UIAccessibilityTraitNone;
+    cell.selectionStyle = UITableViewCellSelectionStyleDefault;
+    cell.hidden = NO;
+    cell.alpha = 1;
+    cell.contentView.hidden = NO;
+    cell.contentView.alpha = 1;
+    for (UILabel *label in @[ cell.textLabel, cell.detailTextLabel ]) {
+        label.attributedText = nil;
+        label.text = nil;
+        label.hidden = NO;
+        label.alpha = 1;
+        label.numberOfLines = 0;
+        label.textAlignment = NSTextAlignmentNatural;
+        label.lineBreakMode = NSLineBreakByWordWrapping;
+        label.adjustsFontForContentSizeCategory = YES;
+    }
+    cell.textLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
+    cell.detailTextLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
+    cell.textLabel.textColor = UIColor.labelColor;
+    cell.detailTextLabel.textColor = UIColor.secondaryLabelColor;
+    cell.imageView.image = nil;
+    cell.imageView.highlightedImage = nil;
+    cell.imageView.hidden = NO;
+    cell.imageView.alpha = 1;
+}
+
 static UIBackgroundConfiguration *NSDashboardBackground(UICellConfigurationState *state, UIColor *tint) {
     UIBackgroundConfiguration *background =
         [[UIBackgroundConfiguration listGroupedCellConfiguration] updatedConfigurationForState:state];
@@ -251,10 +331,17 @@ static UIImage *NSDashboardUpdateIcon(void) {
 }
 - (void)refreshTableKeepingPosition {
     // Monitor refreshes must not interrupt the native swipe reveal animation.
-    if (self.tableView.editing) {
+    if (self.tableView.editing || self.tableView.dragging || self.tableView.decelerating) {
+        self.presentationRefreshPending = YES;
         return;
     }
+    self.presentationRefreshPending = NO;
+    BOOL fresh = [self hasFreshMonitor];
+    NSString *footer = [self computedFirewallFooterWithFreshMonitor:fresh];
     NSArray *signature = @[
+        footer ?: @"",
+        @(self.tableView.bounds.size.width),
+        self.traitCollection.preferredContentSizeCategory,
         [self.policy.document dictionaryWithValuesForKeys:@[
             @"rules", @"globalRules", @"default", @"unattributed", @"filterSockets",
             @"allowAppleSystemProcesses", @"ruleDestinations"
@@ -265,7 +352,9 @@ static UIImage *NSDashboardUpdateIcon(void) {
         self.monitor[@"policyError"] ?: @"",
         self.monitor[@"dnsIssue"] ?: @"",
         self.monitor[@"notificationDeliveryIssue"] ?: @"",
-        @([self hasFreshMonitor]),
+        @(fresh),
+        @(self.importPending),
+        @(self.exportPending),
         @(self.preferencesLoaded),
         @(self.hasSavedPreferences),
         @(self.configurationReady),
@@ -299,6 +388,16 @@ static UIImage *NSDashboardUpdateIcon(void) {
         return;
     }
     self.displaySignature = signature;
+    self.displayedMonitorFresh = fresh;
+    self.displayedFirewallFooter = footer;
+    // Estimates are content dependent, including status messages and footer
+    // visibility. Invalidate before reload/layout and scroll-anchor restoration.
+    [self.rowHeights removeAllObjects];
+    NSFirewallFooter *visibleFooter =
+        (NSFirewallFooter *)[self.tableView footerViewForSection:NSDashboardSectionFirewall];
+    if ([visibleFooter isKindOfClass:NSFirewallFooter.class]) {
+        [visibleFooter setFooterText:footer];
+    }
     __block CGPoint offset = self.tableView.contentOffset;
     BOOL atTop = offset.y <= -self.tableView.adjustedContentInset.top + 1;
     NSMutableArray *anchors = [NSMutableArray new];
@@ -398,7 +497,7 @@ static UIImage *NSDashboardUpdateIcon(void) {
         return self.globalRuleKeys.count;
     }
     if (section == NSDashboardSectionAdvanced) {
-        return 3;
+        return NSConfigurationRowCount;
     }
     if (section == NSDashboardSectionSupport) {
         return 3;
@@ -421,8 +520,10 @@ static UIImage *NSDashboardUpdateIcon(void) {
     ][section];
 }
 - (NSString *)firewallFooterText {
+    return self.displayedFirewallFooter;
+}
+- (NSString *)computedFirewallFooterWithFreshMonitor:(BOOL)fresh {
     BOOL enabled = self.preferencesLoaded && self.savedEnabled;
-    BOOL fresh = [self hasFreshMonitor];
     BOOL configurationIssue =
         !self.preferencesLoaded || !self.configurationReady || self.preferenceReadError.length ||
         self.configurationRecoveryError.length || self.configurationOperationError.length ||
@@ -440,36 +541,76 @@ static UIImage *NSDashboardUpdateIcon(void) {
         ((!self.savedBrowserFiltering && !self.savedSocketFiltering) ||
          (self.policy && self.savedSocketFiltering != [self.policy.document[@"filterSockets"] boolValue]));
     return configurationIssue || policyIssue || providerIssue || scopeIssue
-               ? (self.bootPolicyStatus ?: @"Fallback policy state unavailable.")
+               ? (self.bootPolicyStatus ?: @"Fallback policy state unavailable")
                : nil;
 }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     if (section == NSDashboardSectionSystemRules) {
-        return [self showsSystemRules] ? @"Tap a system identity to change its rule." : nil;
+        return [self showsSystemRules] ? @"Tap a system identity to change its rule" : nil;
     }
     if ((section == NSDashboardSectionAddGlobalRule && !self.globalRuleKeys.count) ||
         (section == NSDashboardSectionGlobalRules && self.globalRuleKeys.count)) {
-        return @"Overrides app & system rules.";
+        return @"Overrides app & system rules";
     }
     if (section == NSDashboardSectionFirewall) {
-        return [self firewallFooterText];
+        return nil; // Dedicated constrained footer owns this text
     }
     if (section == NSDashboardSectionRequests) {
         if (![self.monitor[@"requests"] count]) {
             return nil;
         }
         return [NSString stringWithFormat:@"During this filter session: %@ connections rejected at queue "
-                                          @"capacity; %@ older requests removed. ",
+                                          @"capacity; %@ older requests removed",
                                           self.monitor[@"overflowCount"] ?: @0,
                                           self.monitor[@"evictedRequestCount"] ?: @0];
     }
     if (section == NSDashboardSectionRules) {
-        return [self showsAppRules] ? @"Tap an app identity to change its rule." : nil;
+        return [self showsAppRules] ? @"Tap an app identity to change its rule" : nil;
     }
     if (section == NSDashboardSectionActivity) {
         return @"Up to 300 recorded events";
     }
     return nil;
+}
+- (UIView *)tableView:(UITableView *)tableView viewForFooterInSection:(NSInteger)section {
+    if (section != NSDashboardSectionFirewall || !self.displayedFirewallFooter.length) {
+        return nil;
+    }
+    NSFirewallFooter *footer =
+        (NSFirewallFooter *)[tableView dequeueReusableHeaderFooterViewWithIdentifier:@"FirewallFooter"];
+    if (!footer) {
+        footer = [[NSFirewallFooter alloc] initWithReuseIdentifier:@"FirewallFooter"];
+    }
+    [footer setFooterText:self.displayedFirewallFooter];
+    return footer;
+}
+- (CGFloat)tableView:(UITableView *)tableView estimatedHeightForFooterInSection:(NSInteger)section {
+    if (section == NSDashboardSectionFirewall) {
+        return self.displayedFirewallFooter.length ? 100 : CGFLOAT_MIN;
+    }
+    return [self tableView:tableView heightForFooterInSection:section];
+}
+- (void)flushDeferredTablePresentation {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (self.tableView.editing || self.tableView.dragging || self.tableView.decelerating) {
+            return;
+        }
+        if (self.presentationRefreshPending) {
+            [self refreshTableKeepingPosition];
+        }
+        if (self.monitorRefreshDeferred) {
+            self.monitorRefreshDeferred = NO;
+            [self reloadMonitor];
+        }
+    });
+}
+- (void)scrollViewDidEndDragging:(UIScrollView *)scrollView willDecelerate:(BOOL)decelerate {
+    if (!decelerate) {
+        [self flushDeferredTablePresentation];
+    }
+}
+- (void)scrollViewDidEndDecelerating:(UIScrollView *)scrollView {
+    [self flushDeferredTablePresentation];
 }
 - (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section {
     if ([self isRuleSectionHidden:section]) {
@@ -482,7 +623,7 @@ static UIImage *NSDashboardUpdateIcon(void) {
     if (heading.length || globalRulesHeader) {
         NSUInteger count = [self itemCountForClearSection:section];
         BOOL hasItems = count > 0;
-        BOOL canClear = hasItems && !self.busy && !self.clearingSection &&
+        BOOL canClear = hasItems && !self.busy && !self.importPending && !self.clearingSection &&
                         (section == NSDashboardSectionActivity || self.policy != nil);
         if (section == NSDashboardSectionActivity && self.activityHeader) {
             if (self.activityHeaderHasClear == hasItems) {
@@ -682,53 +823,28 @@ static UIImage *NSDashboardUpdateIcon(void) {
             cached = self.appleCell;
         }
     }
-    if (cached) {
-        UISwitch *toggle = (UISwitch *)cached.accessoryView;
-        BOOL firewall = path.row == 0;
-        BOOL on =
-            firewall ? self.savedEnabled : [self.policy.document[@"allowAppleSystemProcesses"] boolValue];
-        BOOL ready = firewall ? (self.preferencesLoaded && self.configurationReady &&
-                                 (self.savedEnabled || self.policy != nil || self.policyMissing))
-                              : self.policy != nil;
-        BOOL enabled = ready && !self.busy;
-        toggle.hidden = firewall && !self.hasSavedPreferences;
-        if (toggle.on != on) {
-            [toggle setOn:on animated:NO];
-        }
-        if (toggle.enabled != enabled) {
-            toggle.enabled = enabled;
-        }
-        NSConfigureDashboardBackground(cached, nil);
-        return cached;
-    }
+    UISwitch *cachedToggle =
+        [cached.accessoryView isKindOfClass:UISwitch.class] ? (UISwitch *)cached.accessoryView : nil;
     BOOL persistent = path.section == NSDashboardSectionFirewall && (path.row == 0 || path.row == 2);
     NSString *reuse = persistent ? nil : @"DashboardSubtitle";
-    UITableViewCell *cell = reuse ? [tableView dequeueReusableCellWithIdentifier:reuse] : nil;
+    UITableViewCell *cell = cached ?: (reuse ? [tableView dequeueReusableCellWithIdentifier:reuse] : nil);
     if (!cell) {
         cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:reuse];
     }
-    cell.textLabel.text = nil;
-    cell.detailTextLabel.text = nil;
-    cell.textLabel.textColor = UIColor.labelColor;
-    cell.detailTextLabel.textColor = UIColor.secondaryLabelColor;
-    cell.imageView.image = nil;
+    NSResetDashboardCell(cell);
     UIColor *rowTint = nil;
-    cell.accessoryView = nil;
-    cell.accessibilityHint = nil;
-    cell.selectionStyle = UITableViewCellSelectionStyleDefault;
-    cell.textLabel.numberOfLines = 0;
-    cell.detailTextLabel.numberOfLines = 0;
-    cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
     if (path.section == NSDashboardSectionFirewall && path.row == 0) {
         cell.textLabel.text = @"Firewall";
         cell.detailTextLabel.text = @"Enable firewall and monitor";
         cell.imageView.image = [UIImage systemImageNamed:@"shield.lefthalf.filled"];
-        UISwitch *toggle = [UISwitch new];
+        UISwitch *toggle = cachedToggle ?: [UISwitch new];
         toggle.on = self.savedEnabled;
         toggle.hidden = !self.hasSavedPreferences;
         toggle.enabled = self.preferencesLoaded && self.configurationReady &&
-                         (self.savedEnabled || self.policy != nil || self.policyMissing) && !self.busy;
+                         (self.savedEnabled || self.policy != nil || self.policyMissing) && !self.busy &&
+                         !self.importPending;
         toggle.accessibilityLabel = @"Firewall";
+        [toggle removeTarget:self action:NULL forControlEvents:UIControlEventValueChanged];
         [toggle addTarget:self
                       action:@selector(firewallChanged:)
             forControlEvents:UIControlEventValueChanged];
@@ -737,15 +853,15 @@ static UIImage *NSDashboardUpdateIcon(void) {
     } else if (path.section == NSDashboardSectionFirewall && path.row == 3) {
         BOOL enabled = self.preferencesLoaded && self.savedEnabled;
         BOOL healthy =
-            enabled && self.policy && [self hasFreshMonitor] && ![self.monitor[@"policyError"] length];
+            enabled && self.policy && self.displayedMonitorFresh && ![self.monitor[@"policyError"] length];
         NSString *detail = nil;
-        if (self.busy) {
+        if (self.busy || self.importPending) {
             cell.textLabel.text = self.configurationProgress ?: @"Updating…";
         } else if (!self.preferencesLoaded) {
             cell.textLabel.text = @"Saved preferences unavailable";
             if (self.hasSavedPreferences) {
-                detail = self.savedEnabled ? @"Last successful read showed Firewall on."
-                                           : @"Last successful read showed Firewall off.";
+                detail = self.savedEnabled ? @"Last successful read showed Firewall on"
+                                           : @"Last successful read showed Firewall off";
             }
         } else if (!self.configurationReady) {
             cell.textLabel.text =
@@ -754,14 +870,14 @@ static UIImage *NSDashboardUpdateIcon(void) {
             cell.textLabel.text =
                 self.configurationOperationError.length ? @"Firewall off. Setup needs attention." : @"Off";
             if (self.policy) {
-                detail = @"Turn on Firewall to apply your rules.";
+                detail = @"Turn on Firewall to apply your rules";
             }
         } else {
             cell.textLabel.text = healthy ? @"Control provider responding" : @"Needs attention";
             if (!healthy) {
                 detail = @"Saved On. Waiting for a healthy report from the current control provider.";
             } else if (self.savedBrowserFiltering && self.savedSocketFiltering) {
-                detail = @"Browser and socket filtering configured.";
+                detail = @"Browser and socket filtering configured";
             } else if (self.savedBrowserFiltering) {
                 detail = @"Browser filtering configured. Socket filtering is off.";
             } else if (self.savedSocketFiltering) {
@@ -770,8 +886,9 @@ static UIImage *NSDashboardUpdateIcon(void) {
                 detail = @"Both filtering scopes are off. Restart Firewall to apply scope.";
             }
         }
-        cell.textLabel.textColor =
-            healthy && self.configurationReady && !self.busy ? UIColor.systemGreenColor : UIColor.labelColor;
+        cell.textLabel.textColor = healthy && self.configurationReady && !self.busy && !self.importPending
+                                       ? UIColor.systemGreenColor
+                                       : UIColor.labelColor;
         NSMutableArray<NSString *> *details = [NSMutableArray new];
         if (detail) {
             [details addObject:detail];
@@ -785,7 +902,7 @@ static UIImage *NSDashboardUpdateIcon(void) {
         if (self.configurationOperationError.length) {
             [details addObject:self.configurationOperationError];
         }
-        if (!self.busy) {
+        if (!self.busy && !self.importPending) {
             NSConfigurationRecoveryAction action = self.configurationRecoveryAction;
             if (action == NSConfigurationRecoveryNone) {
                 action = self.configurationOperationAction;
@@ -803,42 +920,41 @@ static UIImage *NSDashboardUpdateIcon(void) {
         }
         if (enabled && self.monitorReadError.length) {
             [details addObject:[@"Provider report: " stringByAppendingString:self.monitorReadError]];
-        } else if (enabled && [self.monitor[@"policyError"] length] && [self hasFreshMonitor]) {
+        } else if (enabled && [self.monitor[@"policyError"] length] && self.displayedMonitorFresh) {
             [details addObject:[@"Provider policy: " stringByAppendingString:self.monitor[@"policyError"]]];
         }
         if (enabled && self.policy &&
             self.savedSocketFiltering != [self.policy.document[@"filterSockets"] boolValue]) {
-            [details addObject:@"Toggle Firewall off and on to apply the saved socket setting."];
+            [details addObject:@"Toggle Firewall off and on to apply the saved socket setting"];
         }
         if (healthy && [self.monitor[@"dnsIssue"] length]) {
             [details addObject:self.monitor[@"dnsIssue"]];
         }
         if (healthy && [self.monitor[@"droppedWorkCount"] unsignedLongLongValue]) {
-            [details addObject:[NSString stringWithFormat:@"Control work skipped under load: %@.",
+            [details addObject:[NSString stringWithFormat:@"Control work skipped under load: %@",
                                                           self.monitor[@"droppedWorkCount"]]];
         }
         if (self.message.length && !self.configurationRecoveryError.length) {
             [details addObject:self.message];
         }
-        if (self.busy) {
+        if (self.busy || self.importPending) {
             cell.accessoryType = UITableViewCellAccessoryNone;
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
         } else {
-            cell.accessibilityHint = @"Refreshes saved preferences and policy.";
+            cell.accessibilityHint = @"Refreshes saved preferences and policy";
             if ([self firewallFooterText].length) {
-                [details addObject:@"Tap to refresh saved preferences and policy."];
+                [details addObject:@"Tap to refresh saved preferences and policy"];
             }
         }
         cell.detailTextLabel.text = [details componentsJoinedByString:@"\n"];
     } else if (path.section == NSDashboardSectionFirewall && path.row == 2) {
         cell.textLabel.text = @"Allow all iOS system traffic";
         cell.detailTextLabel.text = @"Allow Apple identities unless a global rule matches";
-        UISwitch *toggle = [UISwitch new];
-        if ([self.policy.document[@"allowAppleSystemProcesses"] boolValue]) {
-            [toggle setOn:YES animated:NO];
-        }
-        toggle.enabled = self.policy != nil && !self.busy;
+        UISwitch *toggle = cachedToggle ?: [UISwitch new];
+        [toggle setOn:[self.policy.document[@"allowAppleSystemProcesses"] boolValue] animated:NO];
+        toggle.enabled = self.policy != nil && !self.busy && !self.importPending;
         toggle.accessibilityLabel = cell.textLabel.text;
+        [toggle removeTarget:self action:NULL forControlEvents:UIControlEventValueChanged];
         [toggle addTarget:self
                       action:@selector(appleSystemProcessesChanged:)
             forControlEvents:UIControlEventValueChanged];
@@ -846,12 +962,13 @@ static UIImage *NSDashboardUpdateIcon(void) {
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
     } else if (path.section == NSDashboardSectionFirewall && path.row == 1) {
         cell.textLabel.text = @"Filter System Sockets";
-        cell.detailTextLabel.text = @"Required to filter all app network.";
-        UISwitch *toggle = [UISwitch new];
+        cell.detailTextLabel.text = @"Required to filter all app network";
+        UISwitch *toggle = cachedToggle ?: [UISwitch new];
         toggle.on = [self.policy.document[@"filterSockets"] boolValue];
-        toggle.enabled =
-            self.policy != nil && self.preferencesLoaded && self.configurationReady && !self.busy;
+        toggle.enabled = self.policy != nil && self.preferencesLoaded && self.configurationReady &&
+                         !self.busy && !self.importPending;
         toggle.accessibilityLabel = cell.textLabel.text;
+        [toggle removeTarget:self action:NULL forControlEvents:UIControlEventValueChanged];
         [toggle addTarget:self
                       action:@selector(socketFilteringChanged:)
             forControlEvents:UIControlEventValueChanged];
@@ -898,11 +1015,7 @@ static UIImage *NSDashboardUpdateIcon(void) {
     } else if (path.section == NSDashboardSectionGlobalRules) {
         NSString *key = self.globalRuleKeys[path.row];
         NSString *rule = self.policy.document[@"globalRules"][key];
-        rowTint =
-            [rule isKindOfClass:NSDictionary.class]
-                ? (NSAppRuleSelections(rule).count == 1 ? NSRuleColor(NSAppRuleSelections(rule).firstObject)
-                                                        : nil)
-                : NSRuleColor(rule);
+        rowTint = NSRuleColor(rule);
         cell.textLabel.text = [self globalRuleTitle:key];
         cell.detailTextLabel.text = [self ruleTitle:rule];
     } else if (path.section == NSDashboardSectionRules || path.section == NSDashboardSectionSystemRules) {
@@ -920,7 +1033,8 @@ static UIImage *NSDashboardUpdateIcon(void) {
         cell.textLabel.text = path.row == 0 ? @"Notification Settings" : @"Banners & Do Not Disturb";
         cell.detailTextLabel.text =
             path.row == 0 ? self.notificationStatus : @"How to answer while using another app";
-        if (path.row == 0 && [self hasFreshMonitor] && [self.monitor[@"notificationDeliveryIssue"] length]) {
+        if (path.row == 0 && self.displayedMonitorFresh &&
+            [self.monitor[@"notificationDeliveryIssue"] length]) {
             cell.detailTextLabel.text = self.monitor[@"notificationDeliveryIssue"];
         }
     } else if (path.section == NSDashboardSectionActivity) {
@@ -976,14 +1090,17 @@ static UIImage *NSDashboardUpdateIcon(void) {
                @"Choose Venmo or Crypto" ][path.row];
         cell.textLabel.textColor = UIColor.systemBlueColor;
     } else {
-        cell.textLabel.text =
-            @[ @"Export Rules and Recent Activity", @"Reset Settings",
-               @"Remove Filter & Settings" ][path.row];
-        cell.detailTextLabel.text = @[
-            @"Share rules and recent activity as a JSON file", @"Removes rules, history and resets settings.",
-            @"Removes content filter, rules, history and resets settings."
+        cell.textLabel.text = @[
+            @"Export Rules and Recent Activity", @"Import Rules", @"Reset Settings",
+            @"Remove Filter & Settings"
         ][path.row];
-        cell.textLabel.textColor = path.row == 0 ? UIColor.systemBlueColor : UIColor.systemRedColor;
+        cell.detailTextLabel.text = @[
+            @"Share rules and recent activity as a JSON file", @"Import rules from a saved JSON file",
+            @"Removes rules, history and resets settings",
+            @"Removes content filter, rules, history and resets settings"
+        ][path.row];
+        cell.textLabel.textColor =
+            path.row <= NSConfigurationRowImport ? UIColor.systemBlueColor : UIColor.systemRedColor;
     }
     NSConfigureDashboardBackground(cell, rowTint);
     if (path.section == NSDashboardSectionFirewall && path.row == 0) {
@@ -996,7 +1113,7 @@ static UIImage *NSDashboardUpdateIcon(void) {
 }
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)path {
     [tableView deselectRowAtIndexPath:path animated:YES];
-    if (self.busy) {
+    if (self.busy || self.importPending) {
         return;
     }
     if (path.section == NSDashboardSectionFirewall && path.row == 3) {
@@ -1032,16 +1149,18 @@ static UIImage *NSDashboardUpdateIcon(void) {
             [self supportDeveloper];
         }
     } else if (path.section == NSDashboardSectionAdvanced) {
-        if (path.row == 0) {
+        if (path.row == NSConfigurationRowExport) {
             [self exportRulesAndRecentActivityFromRow:path];
+        } else if (path.row == NSConfigurationRowImport) {
+            [self importRules];
         } else {
-            BOOL removeFilter = path.row == 2;
+            BOOL removeFilter = path.row == NSConfigurationRowRemove;
             UIAlertController *alert = [UIAlertController
                 alertControllerWithTitle:removeFilter ? @"Remove Filter & Settings?" : @"Reset Settings?"
                                  message:removeFilter ? @"Removes the content filter, rules and "
-                                                        @"history, then resets settings."
+                                                        @"history, then resets settings"
                                                       : @"Removes rules and history, resets settings, "
-                                                        @"and disables the installed content filter."
+                                                        @"and disables the installed content filter"
                           preferredStyle:UIAlertControllerStyleAlert];
             [alert addAction:[UIAlertAction actionWithTitle:removeFilter ? @"Remove Filter & Settings"
                                                                          : @"Reset Settings"
@@ -1059,11 +1178,12 @@ static UIImage *NSDashboardUpdateIcon(void) {
 }
 
 - (void)tableView:(UITableView *)tableView didEndEditingRowAtIndexPath:(NSIndexPath *)path {
-    [self reloadMonitor];
+    self.monitorRefreshDeferred = YES;
+    [self flushDeferredTablePresentation];
 }
 - (UISwipeActionsConfiguration *)tableView:(UITableView *)tableView
     trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)path {
-    if (self.busy || !self.policy) {
+    if (self.busy || self.importPending || !self.policy) {
         return nil;
     }
     BOOL global = path.section == NSDashboardSectionGlobalRules;

@@ -1,3 +1,13 @@
+# 2.8.9
+
+- Added Import Rules below Export. Read JSON through a bounded coordinated file read, reported rejected entries, and replaced all Global, App and System rules in one atomic publication. Kept local settings/activity and invalidated previous permission/DNS work. An admitted empty or all-rejected file replaced saved rules with zero rules.
+- Breaking rule format: policy schema 5 and JSON export schema 3 replaced older formats. Removed/reset saved rules before updating; older rule files and exports were unsupported and were not migrated.
+- Rejected intersecting global rules regardless of Allow/Block action, including partial identity, destination, direction, protocol and port intersections. Rechecked edits under the storage lock.
+- Added IPv4/IPv6 CIDRs and numeric port ranges/lists without expanding intervals. Shared matching and validation across the editor, activity prefill, unidentified decisions, policy and import/export. Preserved endpoint AND conditions and independent remote/local ports; distinguished Any protocol from TCP & UDP.
+- Gave the FIREWALL fallback footer its own constrained view, stable display snapshot and height invalidation; reset reused cells defensively. The reported overlap still needed device verification on iOS 15-18.
+- Removed final periods from single-sentence descriptions while keeping multi-sentence punctuation.
+- Kept bundle metadata generated from control and engine/build 20051 through the existing scripts/templates.
+
 # 2.8.8
 
 - Added Ask Me for unidentified connections. Allow remains the default.

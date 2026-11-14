@@ -175,11 +175,10 @@ BOOL NSCheckReadIdentity(int fd, NSSharedDirectory *directory, NSString *leaf, s
     }
     return [directory validateForLeaf:leaf error:error];
 }
-NSData *NSReadBoundedDescriptor(int fd, NSSharedDirectory *directory, NSString *leaf, struct stat before,
-                                NSError **error) {
+static NSData *NSReadLimitedDescriptor(int fd, NSString *leaf, struct stat before, NSUInteger maximum,
+                                       BOOL (^verify)(NSError **), NSError **error) {
     NSMutableData *data = [NSMutableData data];
     uint8_t buffer[8192];
-    NSUInteger maximum = NSDocumentByteLimit(leaf);
     for (;;) {
         // Read at most one byte beyond the cap, without appending that byte.
         size_t limit = MIN(sizeof(buffer), maximum - data.length + 1);
@@ -200,7 +199,7 @@ NSData *NSReadBoundedDescriptor(int fd, NSSharedDirectory *directory, NSString *
         }
         [data appendBytes:buffer length:(NSUInteger)count];
     }
-    if (!NSCheckReadIdentity(fd, directory, leaf, before, error)) {
+    if (!verify(error)) {
         return nil;
     }
     if (data.length != (NSUInteger)before.st_size) {
@@ -208,6 +207,70 @@ NSData *NSReadBoundedDescriptor(int fd, NSSharedDirectory *directory, NSString *
         return nil;
     }
     return [data copy];
+}
+NSData *NSReadBoundedDescriptor(int fd, NSSharedDirectory *directory, NSString *leaf, struct stat before,
+                                NSError **error) {
+    return NSReadLimitedDescriptor(
+        fd, leaf, before, NSDocumentByteLimit(leaf),
+        ^BOOL(NSError **checkError) {
+            return NSCheckReadIdentity(fd, directory, leaf, before, checkError);
+        },
+        error);
+}
+NSData *NSReadBoundedExternalDescriptor(int fd, NSURL *url, struct stat before, NSError **error) {
+    NSString *name = @"selected JSON file";
+    if (![url isKindOfClass:NSURL.class] || !url.isFileURL || !url.path.isAbsolutePath ||
+        NSContainsNUL(url.path) || (url.host.length && ![url.host isEqual:@"localhost"])) {
+        NSFileFailure(@"Validate external file URL", name, EINVAL, error);
+        return nil;
+    }
+    if (!S_ISREG(before.st_mode) || before.st_size < 0) {
+        NSFileFailure(@"Validate external file type", name, EINVAL, error);
+        return nil;
+    }
+    if ((uint64_t)before.st_size > NSMaximumRuleTransferBytes) {
+        NSFileFailure(@"Check external file size", name, EFBIG, error);
+        return nil;
+    }
+    return NSReadLimitedDescriptor(
+        fd, name, before, NSMaximumRuleTransferBytes,
+        ^BOOL(NSError **checkError) {
+            struct stat after, named;
+            if (fstat(fd, &after) || lstat(url.fileSystemRepresentation, &named)) {
+                return NSFileFailure(NSReadChangedStage, name, errno, checkError);
+            }
+            NSArray *identity = NSDescriptorIdentity(before);
+            return ([identity isEqual:NSDescriptorIdentity(after)] &&
+                    [identity isEqual:NSDescriptorIdentity(named)]) ||
+                   NSFileFailure(NSReadChangedStage, name, ESTALE, checkError);
+        },
+        error);
+}
+NSData *NSReadBoundedExternalURL(NSURL *url, NSError **error) {
+    NSString *name = @"selected JSON file";
+    if (![url isKindOfClass:NSURL.class] || !url.isFileURL || !url.path.isAbsolutePath ||
+        NSContainsNUL(url.path) || (url.host.length && ![url.host isEqual:@"localhost"])) {
+        NSFileFailure(@"Validate external file URL", name, EINVAL, error);
+        return nil;
+    }
+    int fd;
+    do {
+        fd = open(url.fileSystemRepresentation, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC);
+    } while (fd < 0 && errno == EINTR);
+    if (fd < 0) {
+        NSFileFailure(@"Open external file", name, errno, error);
+        return nil;
+    }
+    @try {
+        struct stat before;
+        if (fstat(fd, &before)) {
+            NSFileFailure(@"Stat external file", name, errno, error);
+            return nil;
+        }
+        return NSReadBoundedExternalDescriptor(fd, url, before, error);
+    } @finally {
+        close(fd);
+    }
 }
 NSData *NSReadBoundedFile(NSSharedDirectory *directory, NSString *leaf, NSError **error) {
     struct stat info;

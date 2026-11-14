@@ -17,19 +17,6 @@ static inline NSString *NSDirectionRuleTitle(NSString *rule) {
 
 // App/system records distinguish an explicit both-directions selection from two decisions.
 static inline NSDictionary *NSAppRuleRecord(id value) {
-    if ([value isKindOfClass:NSString.class]) {
-        if ([value isEqual:@"allow"] || [value isEqual:@"block"]) {
-            return @{@"both" : value};
-        }
-        if (![NSDirectionRuleValues() containsObject:value]) {
-            return nil;
-        }
-        return @{
-            [value hasSuffix:@"-inbound"]              ? @"inbound"
-            : @"outbound" : [value hasPrefix:@"allow"] ? @"allow"
-                                                       : @"block"
-        };
-    }
     if (![value isKindOfClass:NSDictionary.class] || ![value count]) {
         return nil;
     }

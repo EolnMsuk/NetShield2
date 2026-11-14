@@ -1,4 +1,5 @@
 #import "NSStore.h"
+#import "NSExport.h"
 #import "NSConfigurationRecord.h"
 #import "NSDestination.h"
 #import "NSGlobalRule.h"
@@ -324,9 +325,7 @@ BOOL NSEnsurePolicy(NSError **error) {
     return directory && NSEnsurePolicyIn(directory, error);
 }
 BOOL NSEnsurePolicyIn(NSSharedDirectory *directory, NSError **error) {
-    return NSEnsureCompatiblePolicyIn(directory, NO, error);
-}
-BOOL NSEnsureCompatiblePolicyIn(NSSharedDirectory *directory, BOOL legacyActive, NSError **error) {
+
     __attribute__((objc_precise_lifetime)) NSStoreLock *lock = [NSStoreLock tryLockInDirectory:directory
                                                                                           leaf:@"policy.lock"
                                                                                          error:error];
@@ -337,9 +336,7 @@ BOOL NSEnsureCompatiblePolicyIn(NSSharedDirectory *directory, BOOL legacyActive,
         NSError *readError = nil;
         NSPolicy *existing = NSReadPolicyIn(directory, &readError);
         if (existing) {
-            NSDictionary *stored = NSReadDocumentIn(directory, NSPolicyFile, error);
-            return stored && ([stored isEqual:existing.document] ||
-                              NSWriteDocumentIn(directory, existing.document, NSPolicyFile, error));
+            return YES;
         }
         if (!NSFileIsAbsent(readError)) {
             if (error) {
@@ -348,9 +345,6 @@ BOOL NSEnsureCompatiblePolicyIn(NSSharedDirectory *directory, BOOL legacyActive,
             return NO;
         }
         NSMutableDictionary *defaults = [[NSPolicy defaultDocument] mutableCopy];
-        if (legacyActive) {
-            defaults[@"schema"] = @3;
-        }
         return NSWriteDocumentIn(directory, defaults, NSPolicyFile, error);
     } @finally {
         [lock unlock];
@@ -374,7 +368,6 @@ BOOL NSSetUnidentifiedMode(NSMutableDictionary *document, NSString *mode, BOOL p
             }
             return NO;
         }
-        document[@"schema"] = @(NSSchemaVersion);
     }
     document[@"unattributed"] = mode;
     return YES;
@@ -400,26 +393,10 @@ static BOOL NSUpdatePolicyWithDurability(BOOL (^mutation)(NSMutableDictionary *,
             ![document[@"unattributed"] isEqual:current.document[@"unattributed"]]) {
             document[@"unidentifiedAskGeneration"] = NSUUID.UUID.UUIDString;
         }
-        // Existing legacy overlaps remain readable; every added/changed rule is checked atomically.
-        NSDictionary *before = current.document[@"globalRules"] ?: @{};
-        NSDictionary *after = document[@"globalRules"] ?: @{};
-        if (![after isKindOfClass:NSDictionary.class]) {
-            if (error) {
-                *error = NSStorageError(@"Invalid global rules.");
-            }
+        NSDictionary *before = current.document[@"globalRules"];
+        NSDictionary *after = document[@"globalRules"];
+        if (!NSCompileGlobalRules(after, error)) {
             return NO;
-        }
-        for (NSString *key in after) {
-            if (!NSValidGlobalRuleKey(key) || ![after[key] isKindOfClass:NSString.class]) {
-                if (error) {
-                    *error = NSStorageError(@"Invalid global rule.");
-                }
-                return NO;
-            }
-            if (![after[key] isEqual:before[key]] &&
-                !NSValidateGlobalRuleChange(after, key, after[key], key, error)) {
-                return NO;
-            }
         }
         NSMutableDictionary *destinations = [document[@"ruleDestinations"] mutableCopy];
         for (NSString *identity in destinations.allKeys) {
@@ -474,6 +451,55 @@ static BOOL NSUpdatePolicyWithDurability(BOOL (^mutation)(NSMutableDictionary *,
 }
 BOOL NSUpdatePolicy(BOOL (^mutation)(NSMutableDictionary *, NSError **), NSError **error) {
     return NSUpdatePolicyWithDurability(mutation, YES, error);
+}
+BOOL NSReplaceRulesFromImport(NSRuleImportResult *result, NSError **error) {
+    NSString *epoch = NSUUID.UUID.UUIDString;
+    __block NSDictionary *previous = nil;
+    NSError *writeError = nil;
+    BOOL saved = result && NSUpdatePolicy(
+                               ^BOOL(NSMutableDictionary *document, NSError **mutationError) {
+                                   previous = [document copy];
+                                   document[@"rules"] = [result.identityRules mutableCopy];
+                                   document[@"globalRules"] = result.globalRules;
+                                   document[@"ruleSetEpoch"] = epoch;
+                                   document[@"globalRuleGeneration"] = NSUUID.UUID.UUIDString;
+                                   for (NSString *key in @[
+                                            @"ruleDestinations", @"askGenerations",
+                                            @"unidentifiedAskGeneration", @"globalDomainAddresses",
+                                            @"globalDomainExpirations", @"globalDomainLifetimes"
+                                        ]) {
+                                       [document removeObjectForKey:key];
+                                   }
+                                   return YES;
+                               },
+                               &writeError);
+    if (!saved && error) {
+        // A directory-sync error can occur after atomic rename. Verify what is
+        // readable rather than claiming that a failed write preserved old rules.
+        NSError *readError = nil;
+        NSPolicy *readback = NSReadPolicy(&readError);
+        BOOL published = [readback.document[@"ruleSetEpoch"] isEqual:epoch];
+        NSMutableDictionary *info = [NSMutableDictionary new];
+        NSString *state =
+            published ? @"The replacement is published and readable, but storage durability could not be "
+                        @"confirmed. Review the imported rules before retrying."
+            : [readback.document isEqual:previous]
+                ? @"Import failed. Readback confirms that the previous policy is still present."
+            : readback
+                ? @"The requested replacement could not be confirmed. A valid policy is readable; "
+                  @"refresh saved state to review its rules."
+                : @"Import failed and the saved policy could not be verified. Refresh saved state and review "
+                  @"rules before retrying.";
+        info[NSLocalizedDescriptionKey] =
+            writeError ? [NSString stringWithFormat:@"%@\n%@", state, writeError.localizedDescription]
+                       : state;
+        info[@"replacementPublished"] = @(published);
+        if (writeError ?: readError) {
+            info[NSUnderlyingErrorKey] = writeError ?: readError;
+        }
+        *error = [NSError errorWithDomain:@"NetShield2.Import" code:2 userInfo:info];
+    }
+    return saved;
 }
 BOOL NSUpdateResolvedDNS(NSDictionary *pending, BOOL invalidate, NSError **error) {
     return NSUpdatePolicyWithDurability(
@@ -610,6 +636,8 @@ BOOL NSResetSharedStateIn(NSSharedDirectory *directory, BOOL legacyProviderMayBe
                         [replacement removeObjectForKey:@"globalDomainLifetimes"];
                         [replacement removeObjectForKey:@"ruleDestinations"];
                         [replacement removeObjectForKey:@"askGenerations"];
+                        replacement[@"ruleSetEpoch"] = NSUUID.UUID.UUIDString;
+                        replacement[@"globalRuleGeneration"] = NSUUID.UUID.UUIDString;
                         if (replacement[@"unidentifiedAskGeneration"]) {
                             replacement[@"unidentifiedAskGeneration"] = NSUUID.UUID.UUIDString;
                         }
@@ -797,7 +825,7 @@ static NSArray<NSDictionary *> *NSReadPermissionResponses(NSSharedDirectory *dir
                 !NSBoundedString(record[@"session"], 128, YES) ||
                 !NSBoundedString(record[@"activation"], 128, YES) ||
                 !NSBoundedString(record[@"fingerprint"], 512, YES) ||
-                !NSBoundedString(record[@"askGeneration"], 128, NO) ||
+                !NSBoundedString(record[@"askGeneration"], NSMaximumPermissionGenerationLength, NO) ||
                 ![@[ @"inbound", @"outbound", @"unknown" ] containsObject:record[@"direction"]] ||
                 (once ? !NSBoundedString(record[@"flow"], 128, NO) : record[@"flow"] != nil) ||
                 ![record[@"expires"] isKindOfClass:NSDate.class] ||

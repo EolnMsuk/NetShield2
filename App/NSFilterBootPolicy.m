@@ -209,10 +209,10 @@ NSDictionary *NSFilterBootPolicyReport(id configuration) {
 
 NSString *NSFilterBootPolicyStatus(id configuration, BOOL loaded) {
     if (!loaded) {
-        return @"Fallback policy unverified; the saved filter state could not be read.";
+        return @"Fallback policy unverified; the saved filter state could not be read";
     }
     if (!configuration) {
-        return @"Fallback policy will be configured when Firewall is enabled.";
+        return @"Fallback policy will be configured when Firewall is enabled";
     }
     BOOL value = NO;
     if (!NSFilterBootPolicyRead(configuration, &value, NULL)) {
