@@ -1,4 +1,5 @@
 #import "NSDomainResolver.h"
+#include <arpa/inet.h>
 #import "../Shared/NSGlobalRule.h"
 #import "../Shared/NSDNSCache.h"
 #include <dns_sd.h>
@@ -100,7 +101,7 @@ static void NSDNSAnswer(DNSServiceRef reference, DNSServiceFlags flags, uint32_t
                                   DISPATCH_TIME_FOREVER, NSEC_PER_MSEC * 10);
         dispatch_resume(_timer);
         NSError *failure = nil;
-        for (NSString *host in NSGlobalDomainAliases(key)) {
+        for (NSString *host in [key hasPrefix:@"domain:"] ? @[ [key substringFromIndex:7] ] : @[]) {
             for (NSNumber *family in @[ @(kDNSServiceProtocol_IPv4), @(kDNSServiceProtocol_IPv6) ]) {
                 DNSServiceRef reference = NULL;
                 void *context = (__bridge_retained void *)self;
@@ -398,7 +399,7 @@ static void NSDNSAnswer(DNSServiceRef reference, DNSServiceFlags flags, uint32_t
                              NSDNSExpiryIsLive(result[@"expires"], NSDate.date);
                 for (id address in valid ? result[@"addresses"] : @[]) {
                     if (![address isKindOfClass:NSString.class] || ![address hasPrefix:@"ip:"] ||
-                        !NSValidGlobalRuleKey(address)) {
+                        ![address isEqual:NSGlobalHostKey([address substringFromIndex:3])]) {
                         valid = NO;
                     }
                 }
