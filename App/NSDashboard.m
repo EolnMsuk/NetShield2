@@ -1066,8 +1066,7 @@
                       actionWithTitle:@"Venmo"
                                 style:UIAlertActionStyleDefault
                               handler:^(UIAlertAction *action) {
-                                  [self openSupportURL:[NSURL
-                                                           URLWithString:@"https://venmo.com/u/EolnMsuk"]];
+                                  [self openSupportURL:[NSURL URLWithString:@"https://venmo.com/u/EolnMsuk"]];
                               }]];
     [alert addAction:[UIAlertAction
                          actionWithTitle:@"Crypto"
