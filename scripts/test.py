@@ -25,6 +25,7 @@ sources = [
     "App/NSFilterRemoval.m",
     "App/NSFilterRestart.m",
     "App/NSFilterBootPolicy.m",
+    "Shared/NSGlobalRule.m",
     "Shared/NSPolicy.m",
     "Shared/NSPermissionQueue.m",
     "Shared/NSPolicyCache.m",
