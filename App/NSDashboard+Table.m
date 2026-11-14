@@ -75,7 +75,6 @@ static void NSResetDashboardCell(UITableViewCell *cell) {
         label.adjustsFontForContentSizeCategory = YES;
     }
     cell.textLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
-    cell.detailTextLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
     cell.textLabel.textColor = UIColor.labelColor;
     cell.detailTextLabel.textColor = UIColor.secondaryLabelColor;
     cell.imageView.image = nil;
