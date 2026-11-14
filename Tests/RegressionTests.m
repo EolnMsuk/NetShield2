@@ -2026,17 +2026,35 @@ static void TestDirectionalNotifications(void) {
         CHECK([banner.content.categoryIdentifier isEqual:NSPermissionCategoryForDirection(@"outbound")]);
     }
     [copyNotifications stop];
+    // Global-only cases must not inherit the app Allow Incoming selection from
+    // the earlier waiter test. Keep the epoch so these request tokens stay current.
+    NSMutableDictionary *globalBaseline = [NSReadPolicy(NULL).document mutableCopy];
+    globalBaseline[@"rules"] = @{};
+    globalBaseline[@"globalRules"] = @{};
+    NSPolicy *asking = [NSPolicy policyWithDocument:globalBaseline error:NULL];
+    CHECK(asking);
+    CHECK(NSPermissionGenerationMatches(asking, incoming));
+    CHECK(NSPermissionGenerationMatches(asking, outgoing));
+    CHECK([asking requiresPermissionForRequest:incoming]);
+    CHECK([asking requiresPermissionForRequest:outgoing]);
     for (NSString *action in @[ @"block-inbound", @"block-outbound" ]) {
-        NSMutableDictionary *document = [NSReadPolicy(NULL).document mutableCopy];
+        NSMutableDictionary *document = [asking.document mutableCopy];
         document[@"globalRules"] = @{NSFixtureGlobal(@"mixed.app", @"", @"", @"", @"any", action) : action};
         CHECK(NSWriteDocument(document, NSPolicyFile, NULL));
+        NSPolicy *directional = NSReadPolicy(NULL);
+        CHECK(directional);
+        NSDictionary *pending = [action isEqual:@"block-inbound"] ? outgoing : incoming;
+        NSDictionary *blocked = [action isEqual:@"block-inbound"] ? incoming : outgoing;
+        CHECK([directional requiresPermissionForRequest:pending]);
+        CHECK(![directional requiresPermissionForRequest:blocked]);
         FakeNotificationCenter *globalCenter = [FakeNotificationCenter new];
         NSPermissionNotifications *globalNotifications =
             [[NSPermissionNotifications alloc] initWithCenter:globalCenter];
-        [globalNotifications updateRequests:@[ incoming, outgoing ]
-                                     policy:NSReadPolicy(NULL)
-                              retryRevision:nil];
+        [globalNotifications updateRequests:@[ incoming, outgoing ] policy:directional retryRevision:nil];
         CHECK(globalCenter.requests.count == 1);
+        UNNotificationRequest *globalBanner = globalCenter.requests.firstObject;
+        CHECK([globalBanner.content.userInfo[@"direction"] isEqual:pending[@"direction"]]);
+        CHECK([globalBanner.content.categoryIdentifier isEqual:NSPermissionCategoryForRequest(pending)]);
         CHECK(![globalCenter.removed
             containsObject:((UNNotificationRequest *)globalCenter.requests[0]).identifier]);
         document[@"globalRules"] =
