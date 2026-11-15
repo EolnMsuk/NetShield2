@@ -381,8 +381,8 @@ static UIImage *NSDashboardUpdateIcon(void) {
         @(self.tableView.bounds.size.width),
         self.traitCollection.preferredContentSizeCategory,
         [self.policy.document dictionaryWithValuesForKeys:@[
-            @"rules", @"default", @"unattributed", @"filterSockets",
-            @"allowAppleSystemProcesses", @"ruleDestinations"
+            @"rules", @"default", @"unattributed", @"filterSockets", @"allowAppleSystemProcesses",
+            @"ruleDestinations"
         ]]
             ?: @{},
         globalRules,
@@ -442,9 +442,8 @@ static UIImage *NSDashboardUpdateIcon(void) {
     // and actions. Nothing in the displayed pair changes during a deferred reload.
     NSArray<NSString *> *globalKeys = [globalRules.allKeys sortedArrayUsingSelector:@selector(compare:)];
     NSIndexPath *pendingPath = self.pendingGlobalRuleSelectionPath;
-    if (pendingPath &&
-        ((NSUInteger)pendingPath.row >= globalKeys.count ||
-         ![self.pendingGlobalRuleSelectionKey isEqual:globalKeys[pendingPath.row]])) {
+    if (pendingPath && ((NSUInteger)pendingPath.row >= globalKeys.count ||
+                        ![self.pendingGlobalRuleSelectionKey isEqual:globalKeys[pendingPath.row]])) {
         // Keep the path so a delayed selection cannot capture its new occupant.
         self.pendingGlobalRuleSelectionKey = nil;
     }
@@ -881,9 +880,9 @@ static UIImage *NSDashboardUpdateIcon(void) {
     NSString *reuse = persistent ? nil : global ? @"DashboardGlobalRule" : @"DashboardSubtitle";
     UITableViewCell *cell = cached ?: (reuse ? [tableView dequeueReusableCellWithIdentifier:reuse] : nil);
     if (!cell) {
-        cell = [(global ? [NSDashboardGlobalRuleCell alloc] : [UITableViewCell alloc])
-            initWithStyle:UITableViewCellStyleSubtitle
-          reuseIdentifier:reuse];
+        cell = [(global ? [NSDashboardGlobalRuleCell alloc]
+                        : [UITableViewCell alloc]) initWithStyle:UITableViewCellStyleSubtitle
+                                                 reuseIdentifier:reuse];
     }
     NSResetDashboardCell(cell);
     UIColor *rowTint = nil;
@@ -1202,9 +1201,8 @@ static UIImage *NSDashboardUpdateIcon(void) {
 }
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)path {
     [tableView deselectRowAtIndexPath:path animated:YES];
-    NSString *globalKey = [self.pendingGlobalRuleSelectionPath isEqual:path]
-                              ? self.pendingGlobalRuleSelectionKey
-                              : nil;
+    NSString *globalKey =
+        [self.pendingGlobalRuleSelectionPath isEqual:path] ? self.pendingGlobalRuleSelectionKey : nil;
     self.pendingGlobalRuleSelectionPath = nil;
     self.pendingGlobalRuleSelectionKey = nil;
     if (self.busy || self.importPending) {

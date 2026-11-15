@@ -852,9 +852,8 @@
     NSDictionary *condition = NSGlobalRuleCondition(key);
     NSMutableArray *names = [NSMutableArray new];
     for (NSString *identity in condition[@"identities"]) {
-        [names
-            addObject:fullAppNames || [identity isEqual:@".com"] ? NSIdentityFullDisplayName(identity)
-                                                               : NSIdentityDisplayName(identity)];
+        [names addObject:fullAppNames || [identity isEqual:@".com"] ? NSIdentityFullDisplayName(identity)
+                                                                    : NSIdentityDisplayName(identity)];
     }
     NSMutableArray *labels =
         [NSMutableArray arrayWithObjects:names.count ? [names componentsJoinedByString:@", "] : @"All apps",
