@@ -88,6 +88,10 @@ static NSArray<NSString *> *NSSortedAppIdentities(NSSet<NSString *> *identities)
         }];
 }
 
+static NSString *NSGlobalAppDisplayName(NSString *identity) {
+    return [identity isEqual:@".com"] ? NSIdentityFullDisplayName(identity) : NSIdentityDisplayName(identity);
+}
+
 static UIMenu *
 NSAppMenuWithSelection(UIMenu *menu,
                        NSDictionary<UIActionIdentifier, NSString *> *identitiesByActionIdentifier,
@@ -235,7 +239,7 @@ NSAppMenuWithSelection(UIMenu *menu,
             if (conflict) {
                 NSMutableArray *names = [NSMutableArray new];
                 for (NSString *identity in conflict[@"identities"]) {
-                    [names addObject:NSIdentityDisplayName(identity)];
+                    [names addObject:NSGlobalAppDisplayName(identity)];
                 }
                 NSString *context = [NSString
                     stringWithFormat:@"%@ / %@ / %@ / remote %@ / local %@",
@@ -357,7 +361,17 @@ NSAppMenuWithSelection(UIMenu *menu,
                                   NSString *identity = [weakAlert.textFields.firstObject.text
                                       stringByTrimmingCharactersInSet:NSCharacterSet
                                                                           .whitespaceAndNewlineCharacterSet];
-                                  if (!identity.length || identity.length > NSMaximumIdentityLength) {
+                                  if (!identity.length) {
+                                      dispatch_async(dispatch_get_main_queue(), ^{
+                                          [weakSelf showMessage:@"Enter a nonempty app identity."];
+                                      });
+                                      return;
+                                  }
+                                  // Only manual entry adds the raw process-identity prefix.
+                                  if (![identity hasPrefix:@"."]) {
+                                      identity = [@"." stringByAppendingString:identity];
+                                  }
+                                  if (identity.length > NSMaximumIdentityLength) {
                                       dispatch_async(dispatch_get_main_queue(), ^{
                                           [weakSelf showMessage:@"Enter a nonempty app identity of no more "
                                                                 @"than 1024 characters."];
@@ -426,7 +440,7 @@ NSAppMenuWithSelection(UIMenu *menu,
         UIActionIdentifier identifier =
             [@"netshield.custom-rule.apps.identity:" stringByAppendingString:identity];
         identitiesByActionIdentifier[identifier] = identity;
-        UIAction *option = [UIAction actionWithTitle:NSIdentityDisplayName(identity)
+        UIAction *option = [UIAction actionWithTitle:NSGlobalAppDisplayName(identity)
                                                image:nil
                                           identifier:identifier
                                              handler:^(UIAction *action) {
@@ -459,7 +473,7 @@ NSAppMenuWithSelection(UIMenu *menu,
     button.menu = [self appMenuForButton:button];
     NSMutableArray<NSString *> *names = [NSMutableArray new];
     for (NSString *identity in NSSortedAppIdentities(self.selectedIdentities)) {
-        [names addObject:NSIdentityDisplayName(identity)];
+        [names addObject:NSGlobalAppDisplayName(identity)];
     }
     NSString *label = names.count ? [names componentsJoinedByString:@", "] : @"All apps";
     UIButtonConfiguration *configuration = button.configuration;

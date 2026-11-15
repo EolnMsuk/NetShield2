@@ -4,11 +4,6 @@
 
 NetShield2 is a firewall and network monitor for jailbroken iOS 15–18 devices using rootless, RootHide, or rootful packages. Apple's Network Extension content filter evaluates the browser flows that iOS delivers and, with **Filter System Sockets** enabled, the socket flows it delivers.
 
-- The data provider uses the read-only policy reader, cache, evaluator, and bounded file access to evaluate delivered flows. It requests activity reports on allow and drop verdicts, asks the control provider for rules on permission decisions, and can defer evaluation to a data callback when endpoint information is needed.
-
-- The control provider handles pending decisions, permission notifications and delivery retries, flow reports, and the current activation's heartbeat. It refreshes DNS-derived blocking addresses with bounded concurrency, invalidates stale results on rule or network changes, and checks expiry using wall time, elapsed time, and boot evidence where available.
-
-- The app presents verified filter settings, rules, pending requests, and Recent Activity. Its serial storage queue handles policy edits, activity grouping, bounded import and export preparation. Activity groups distinguish transport and show mixed outcomes. Clearing activity records a generation boundary while preserving rules and pending requests. JSON export stages rules and ungrouped activity in the shared cache and protects the staged file while sharing is active.
 
 ## GitHub build and release
 
@@ -18,7 +13,7 @@ NetShield2 is a firewall and network monitor for jailbroken iOS 15–18 devices 
 | RootHide | `roothide` | `iphoneos-arm64e` | `Applications/NetShield2.app` |
 | rootful | empty string | `iphoneos-arm` | `Applications/NetShield2.app` |
 
-`control` supplies the package version and the generated bundle marketing version. `NSEngineVersion` in `Shared/NSConstants.h` supplies the generated bundle build version. The packaging and source validators share helpers. `prepare_package.py` imports `sync_version.py`. `validate.py`, `test_packaging.py`, and `release_manifest.py` use both. The mocked draft test imports `prepare_draft.cjs`.
+`control` supplies the package version and the generated bundle marketing version for the app and both providers, currently `3.0.0`. `NSEngineVersion` in `Shared/NSConstants.h` supplies the separate generated bundle build version. Source Info.plist templates omit both generated version fields. The packaging and source validators share helpers. `prepare_package.py` imports `sync_version.py`. `validate.py`, `test_packaging.py`, and `release_manifest.py` use both. The mocked draft test imports `prepare_draft.cjs`.
 
 ## Build and CI inputs
 
@@ -38,12 +33,12 @@ NetShield2/
 |   +-- NSConfigurationCoordinator.h   # Defines the shared filter configuration transaction API.
 |   +-- NSConfigurationCoordinator.m   # Serializes preference changes and tracks unfinished writes.
 |   +-- NSDashboard+Configuration.m    # Captures fallback readback state and handles firewall toggles, scope, and reset.
-|   +-- NSDashboard+Internal.h         # Shares dashboard state, fallback attention state, and private category methods.
+|   +-- NSDashboard+Internal.h         # Shares dashboard state, displayed global rules, pending selections, and private category methods.
 |   +-- NSDashboard+Notifications.m    # Manages notification authorization and in-app permission requests.
-|   +-- NSDashboard+Table.m            # Renders stable footer/status snapshots, constrained footers, defensive cells, search and swipe actions.
+|   +-- NSDashboard+Table.m            # Renders sections and search, publishes matching global rows/actions, and guards selections and swipes.
 |   +-- NSDashboard+Updates.m          # Schedules update checks and displays available releases.
 |   +-- NSDashboard.h                  # Declares the main dashboard controller.
-|   +-- NSDashboard.m                  # Coordinates dashboard refreshes, rule edits, JSON import and export.
+|   +-- NSDashboard.m                  # Coordinates policy readback, dashboard refreshes, guarded rule edits, JSON import and export.
 |   +-- NSFilterBootPolicy.h           # Declares boot fallback checks and migration helpers.
 |   +-- NSFilterBootPolicy.m           # Applies and verifies the stock-boot fallback setting.
 |   +-- NSFilterRemoval.h              # Declares verified filter removal and shared-state cleanup.
@@ -51,7 +46,7 @@ NetShield2/
 |   +-- NSFilterRestart.h              # Defines the filter restart interface and result states.
 |   +-- NSFilterRestart.m              # Stages, verifies, and rolls back filter restarts as needed.
 |   +-- NSGlobalRuleEditor.h           # Declares the global rule editor and its save callback.
-|   +-- NSGlobalRuleEditor.m           # Edits and validates custom rules and updates the native App dropdown.
+|   +-- NSGlobalRuleEditor.m           # Edits custom rules, prefixes only manual app identities, and maintains native App dropdown selections.
 |   +-- NSReleaseFetch.h               # Declares the bounded release fetcher and response buffer.
 |   +-- NSReleaseFetch.m               # Streams GitHub release data with size and redirect checks.
 |   +-- NSRespring.h                   # Declares the respring launcher and its test hook.
@@ -97,7 +92,8 @@ NetShield2/
 |   +-- NSExport.h                     # Declares immutable import results, current JSON parsing and export staging.
 |   +-- NSExport.m                     # Parses schema-3 rules, reports rejects, builds bounded exports and manages staged files.
 |   +-- NSFlowDestination.h            # Extracts hosts, ports, and protocol from iOS filter flows.
-|   +-- NSGlobalRule.h                 # Parses and normalizes global rule conditions and keys.
+|   +-- NSGlobalRule.h                 # Declares global-condition parsing, canonical keys, overlap validation, and matching.
+|   +-- NSGlobalRule.m                 # Parses CIDRs and port ranges, compiles conditions, rejects overlaps, and matches raw identities and endpoints.
 |   +-- NSIdentityDisplay.h            # Formats shortened app labels and full process names from raw identities.
 |   +-- NSMonitorSchema.h              # Declares validation for shared monitor snapshots.
 |   +-- NSMonitorSchema.m              # Validates monitor fields, activity records, and request entries.
@@ -107,7 +103,7 @@ NetShield2/
 |   +-- NSPermissionQueue.m            # Tracks pending flows, timeouts, and completed decisions.
 |   +-- NSPermissionRequest.h          # Defines canonical request fingerprints, scope, and presentation checks.
 |   +-- NSPolicy.h                     # Defines the policy interface, flow directions, and verdict types.
-|   +-- NSPolicy.m                     # Validates rules and shares protocol matching, endpoint acquisition, and flow decisions.
+|   +-- NSPolicy.m                     # Validates schema-5 policies, compiles global rules, and evaluates global, system, app, and fallback decisions.
 |   +-- NSPolicyCache.h                # Declares policy caching and invalidation.
 |   +-- NSPolicyCache.m                # Tracks policy file identity and caches validated snapshots.
 |   +-- NSPolicyReader.h               # Declares the shared policy reader and app-group path helpers.
@@ -129,6 +125,7 @@ NetShield2/
 |   +-- RecoveryTests.m                # Tests DNS recovery, notification retries, and activity clearing.
 |   +-- RegressionTests.m              # Tests rule matching, process-name formatting, requests, storage, and exports.
 |   +-- RespringTests.m                # Tests respring launch and fallback with a mock launcher.
+|   +-- RuleFixtures.h                 # Builds current-schema rule, DNS lifetime, and permission-request test fixtures.
 +-- changelog.md                       # Supplies versioned notes for the GitHub draft release.
 +-- control                            # Defines the Debian package ID, version, and dependencies.
 +-- depiction.json                     # Defines the package presentation in Sileo.
@@ -160,7 +157,6 @@ NetShield2/
 | File | Role |
 | --- | --- |
 | `README.md` | User guide and hosted web depiction destination. |
-| `ProjectOverview.md` | Project architecture and build inputs. |
 | `LICENSE` | Project license. |
 | `scripts/check_objc.py` | Optional syntax-only iOS check using the local `.theos-toolchain` SDK and libclang. |
 | `scripts/test_uninstall.py` | Standalone uninstall and deferred-respring fixtures using mock tools. |

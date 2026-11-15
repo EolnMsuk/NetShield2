@@ -555,7 +555,6 @@ static NSDictionary *NSSavedFilterFingerprint(NEFilterManager *manager) {
             self.activityEvents = @[];
             self.identities = @[];
             self.systemIdentities = @[];
-            self.globalRuleKeys = @[];
             NSResetAppPreferences(NSUserDefaults.standardUserDefaults, NSBundle.mainBundle.bundleIdentifier);
             [self.configuration finish];
             self.configuration = nil;

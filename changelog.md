@@ -1,3 +1,9 @@
+# 3.0.0
+
+- Fixed swipe removal in Global Rules so only the selected rule disappears, without showing an incorrect “Default Rule” label.
+- Added protection against crashes and opening the wrong rule when tapping during rule removal or refresh.
+- “Add app by identity” now accepts names with or without a leading period, including names such as `networkd`. Both spellings select the same app once, and blank or overly long names are rejected. Existing and picked names keep their original spelling.
+
 # 2.8.9
 
 - Rule format policy schema 5 and JSON export schema 3 replaced older rule formats. Users MUST remove/reset saved rules before updating; older rule files and exports are unsupported and will not migrate.

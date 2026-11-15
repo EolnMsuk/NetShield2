@@ -58,6 +58,10 @@ typedef NS_ENUM(NSInteger, NSConfigurationRow) {
 @property(nonatomic, weak) NSRuleActionController *ruleEditor;
 @property(nonatomic, copy) NSString *editingRuleIdentity;
 @property(nonatomic, copy) NSArray<NSString *> *globalRuleKeys;
+@property(nonatomic, copy) NSDictionary<NSString *, NSString *> *displayedGlobalRules;
+@property(nonatomic, copy) NSIndexPath *pendingGlobalRuleSelectionPath;
+@property(nonatomic, copy) NSString *pendingGlobalRuleSelectionKey;
+@property(nonatomic) BOOL globalRulesAwaitingReadback;
 @property(nonatomic, copy) NSString *message;
 @property(nonatomic, copy) NSString *bootPolicyStatus;
 @property(nonatomic) BOOL bootPolicyNeedsAttention;

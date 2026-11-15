@@ -4,6 +4,12 @@
 #import "NSDashboard+Internal.h"
 #import "../Shared/NSActivity.h"
 
+@interface NSDashboardGlobalRuleCell : UITableViewCell
+@property(nonatomic, copy) NSString *ruleKey;
+@end
+@implementation NSDashboardGlobalRuleCell
+@end
+
 @interface NSFirewallFooter : UITableViewHeaderFooterView
 @property(nonatomic, strong) UILabel *messageLabel;
 - (void)setFooterText:(NSString *)text;
@@ -47,6 +53,9 @@
 @end
 
 static void NSResetDashboardCell(UITableViewCell *cell) {
+    if ([cell isKindOfClass:NSDashboardGlobalRuleCell.class]) {
+        ((NSDashboardGlobalRuleCell *)cell).ruleKey = nil;
+    }
     cell.configurationUpdateHandler = nil;
     cell.contentConfiguration = nil;
     cell.backgroundConfiguration = nil;
@@ -291,9 +300,24 @@ static UIImage *NSDashboardUpdateIcon(void) {
     }
     return 0;
 }
+- (NSString *)globalRuleKeyAtIndexPath:(NSIndexPath *)path {
+    if (path.section != NSDashboardSectionGlobalRules || (NSUInteger)path.row >= self.globalRuleKeys.count) {
+        return nil;
+    }
+    NSString *key = self.globalRuleKeys[path.row];
+    return self.displayedGlobalRules[key] ? key : nil;
+}
+- (NSString *)representedGlobalRuleKeyAtIndexPath:(NSIndexPath *)path {
+    UITableViewCell *cell = [self.tableView cellForRowAtIndexPath:path];
+    if (![cell isKindOfClass:NSDashboardGlobalRuleCell.class]) {
+        return nil;
+    }
+    NSString *key = ((NSDashboardGlobalRuleCell *)cell).ruleKey;
+    return [key isEqual:[self globalRuleKeyAtIndexPath:path]] ? key : nil;
+}
 - (id)rowKey:(NSIndexPath *)path {
     if (path.section == NSDashboardSectionGlobalRules) {
-        return self.globalRuleKeys[path.row];
+        return [self globalRuleKeyAtIndexPath:path];
     }
     if (path.section == NSDashboardSectionRequests && [self.monitor[@"requests"] count]) {
         return self.monitor[@"requests"][path.row][@"token"];
@@ -308,8 +332,12 @@ static UIImage *NSDashboardUpdateIcon(void) {
     return @(path.row);
 }
 - (id)heightKey:(NSIndexPath *)path {
+    id rowKey = [self rowKey:path];
+    if (!rowKey) {
+        return nil;
+    }
     return @[
-        @(path.section), [self rowKey:path],
+        @(path.section), rowKey,
         path.section == NSDashboardSectionActivity && self.filteredActivityGroups.count
             ? self.filteredActivityGroups[path.row][@"time"]
             : @0,
@@ -317,16 +345,26 @@ static UIImage *NSDashboardUpdateIcon(void) {
     ];
 }
 - (CGFloat)tableView:(UITableView *)tableView estimatedHeightForRowAtIndexPath:(NSIndexPath *)path {
-    NSNumber *height = self.rowHeights[[self heightKey:path]];
+    id key = [self heightKey:path];
+    NSNumber *height = key ? self.rowHeights[key] : nil;
     return height ? height.doubleValue : 64;
 }
 - (void)tableView:(UITableView *)tableView
       willDisplayCell:(UITableViewCell *)cell
     forRowAtIndexPath:(NSIndexPath *)path {
+    if (path.section == NSDashboardSectionGlobalRules &&
+        (![cell isKindOfClass:NSDashboardGlobalRuleCell.class] ||
+         ![((NSDashboardGlobalRuleCell *)cell).ruleKey isEqual:[self globalRuleKeyAtIndexPath:path]])) {
+        return;
+    }
+    id key = [self heightKey:path];
+    if (!key) {
+        return;
+    }
     if (self.rowHeights.count >= 512) {
         [self.rowHeights removeAllObjects];
     }
-    self.rowHeights[[self heightKey:path]] = @(cell.bounds.size.height);
+    self.rowHeights[key] = @(cell.bounds.size.height);
 }
 - (void)refreshTableKeepingPosition {
     // Monitor refreshes must not interrupt the native swipe reveal animation.
@@ -335,6 +373,7 @@ static UIImage *NSDashboardUpdateIcon(void) {
         return;
     }
     self.presentationRefreshPending = NO;
+    NSDictionary<NSString *, NSString *> *globalRules = [self.policy.document[@"globalRules"] copy] ?: @{};
     BOOL fresh = [self hasFreshMonitor];
     NSString *footer = [self computedFirewallFooterWithFreshMonitor:fresh];
     NSArray *signature = @[
@@ -342,10 +381,11 @@ static UIImage *NSDashboardUpdateIcon(void) {
         @(self.tableView.bounds.size.width),
         self.traitCollection.preferredContentSizeCategory,
         [self.policy.document dictionaryWithValuesForKeys:@[
-            @"rules", @"globalRules", @"default", @"unattributed", @"filterSockets",
+            @"rules", @"default", @"unattributed", @"filterSockets",
             @"allowAppleSystemProcesses", @"ruleDestinations"
         ]]
             ?: @{},
+        globalRules,
         self.monitor[@"requests"] ?: @[],
         self.monitor[@"events"] ?: @[],
         self.monitor[@"policyError"] ?: @"",
@@ -386,17 +426,6 @@ static UIImage *NSDashboardUpdateIcon(void) {
     if ([signature isEqual:self.displaySignature]) {
         return;
     }
-    self.displaySignature = signature;
-    self.displayedMonitorFresh = fresh;
-    self.displayedFirewallFooter = footer;
-    // Estimates are content dependent, including status messages and footer
-    // visibility. Invalidate before reload/layout and scroll-anchor restoration.
-    [self.rowHeights removeAllObjects];
-    NSFirewallFooter *visibleFooter =
-        (NSFirewallFooter *)[self.tableView footerViewForSection:NSDashboardSectionFirewall];
-    if ([visibleFooter isKindOfClass:NSFirewallFooter.class]) {
-        [visibleFooter setFooterText:footer];
-    }
     __block CGPoint offset = self.tableView.contentOffset;
     BOOL atTop = offset.y <= -self.tableView.adjustedContentInset.top + 1;
     NSMutableArray *anchors = [NSMutableArray new];
@@ -409,6 +438,18 @@ static UIImage *NSDashboardUpdateIcon(void) {
             ]];
         }
     }
+    // Capture anchors against the old rows before publishing the matching keys
+    // and actions. Nothing in the displayed pair changes during a deferred reload.
+    NSArray<NSString *> *globalKeys = [globalRules.allKeys sortedArrayUsingSelector:@selector(compare:)];
+    NSIndexPath *pendingPath = self.pendingGlobalRuleSelectionPath;
+    if (pendingPath &&
+        ((NSUInteger)pendingPath.row >= globalKeys.count ||
+         ![self.pendingGlobalRuleSelectionKey isEqual:globalKeys[pendingPath.row]])) {
+        // Keep the path so a delayed selection cannot capture its new occupant.
+        self.pendingGlobalRuleSelectionKey = nil;
+    }
+    self.globalRuleKeys = globalKeys;
+    self.displayedGlobalRules = globalRules;
     // Grouping is prepared on the app storage worker with its monitor snapshot.
     self.filteredActivityGroups = [self.activityGroups
         filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *connection,
@@ -433,6 +474,17 @@ static UIImage *NSDashboardUpdateIcon(void) {
         [rows addObject:keys];
     }
     self.displayedRows = rows;
+    self.displaySignature = signature;
+    self.displayedMonitorFresh = fresh;
+    self.displayedFirewallFooter = footer;
+    // Estimates are content dependent, including status messages and footer
+    // visibility. Invalidate before reload/layout and scroll-anchor restoration.
+    [self.rowHeights removeAllObjects];
+    NSFirewallFooter *visibleFooter =
+        (NSFirewallFooter *)[self.tableView footerViewForSection:NSDashboardSectionFirewall];
+    if ([visibleFooter isKindOfClass:NSFirewallFooter.class]) {
+        [visibleFooter setFooterText:footer];
+    }
     [UIView performWithoutAnimation:^{
         [self.tableView reloadData];
         [self.tableView layoutIfNeeded];
@@ -825,10 +877,13 @@ static UIImage *NSDashboardUpdateIcon(void) {
     UISwitch *cachedToggle =
         [cached.accessoryView isKindOfClass:UISwitch.class] ? (UISwitch *)cached.accessoryView : nil;
     BOOL persistent = path.section == NSDashboardSectionFirewall && (path.row == 0 || path.row == 2);
-    NSString *reuse = persistent ? nil : @"DashboardSubtitle";
+    BOOL global = path.section == NSDashboardSectionGlobalRules;
+    NSString *reuse = persistent ? nil : global ? @"DashboardGlobalRule" : @"DashboardSubtitle";
     UITableViewCell *cell = cached ?: (reuse ? [tableView dequeueReusableCellWithIdentifier:reuse] : nil);
     if (!cell) {
-        cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:reuse];
+        cell = [(global ? [NSDashboardGlobalRuleCell alloc] : [UITableViewCell alloc])
+            initWithStyle:UITableViewCellStyleSubtitle
+          reuseIdentifier:reuse];
     }
     NSResetDashboardCell(cell);
     UIColor *rowTint = nil;
@@ -1012,11 +1067,17 @@ static UIImage *NSDashboardUpdateIcon(void) {
         cell.textLabel.textColor = UIColor.systemGreenColor;
         cell.detailTextLabel.text = @"Choose apps, destinations, ports and protocols";
     } else if (path.section == NSDashboardSectionGlobalRules) {
-        NSString *key = self.globalRuleKeys[path.row];
-        NSString *rule = self.policy.document[@"globalRules"][key];
-        rowTint = NSRuleColor(rule);
-        cell.textLabel.text = [self globalRuleTitle:key];
-        cell.detailTextLabel.text = [self ruleTitle:rule];
+        NSString *key = [self globalRuleKeyAtIndexPath:path];
+        NSString *rule = key ? self.displayedGlobalRules[key] : nil;
+        if (key && rule) {
+            ((NSDashboardGlobalRuleCell *)cell).ruleKey = key;
+            rowTint = NSRuleColor(rule);
+            cell.textLabel.text = [self globalRuleTitle:key];
+            cell.detailTextLabel.text = [self ruleTitle:rule];
+        } else {
+            cell.accessoryType = UITableViewCellAccessoryNone;
+            cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        }
     } else if (path.section == NSDashboardSectionRules || path.section == NSDashboardSectionSystemRules) {
         NSString *identity = [self identitiesForSection:path.section][path.row];
         id rule = self.policy.document[@"rules"][identity];
@@ -1110,9 +1171,52 @@ static UIImage *NSDashboardUpdateIcon(void) {
     }
     return cell;
 }
+- (BOOL)tableView:(UITableView *)tableView shouldHighlightRowAtIndexPath:(NSIndexPath *)path {
+    BOOL global = path.section == NSDashboardSectionGlobalRules;
+    self.pendingGlobalRuleSelectionPath = global ? path : nil;
+    self.pendingGlobalRuleSelectionKey =
+        global && !self.busy && !self.importPending && !self.globalRulesAwaitingReadback
+            ? [self representedGlobalRuleKeyAtIndexPath:path]
+            : nil;
+    return !global || self.pendingGlobalRuleSelectionKey != nil;
+}
+- (NSIndexPath *)tableView:(UITableView *)tableView willSelectRowAtIndexPath:(NSIndexPath *)path {
+    if (path.section == NSDashboardSectionGlobalRules) {
+        // Accessibility selection may arrive without a preceding highlight.
+        if (![self.pendingGlobalRuleSelectionPath isEqual:path]) {
+            self.pendingGlobalRuleSelectionPath = path;
+            self.pendingGlobalRuleSelectionKey = [self representedGlobalRuleKeyAtIndexPath:path];
+        }
+        NSString *key = self.pendingGlobalRuleSelectionKey;
+        if (self.busy || self.importPending || self.globalRulesAwaitingReadback || !key ||
+            ![key isEqual:[self representedGlobalRuleKeyAtIndexPath:path]] ||
+            !self.policy.document[@"globalRules"][key]) {
+            self.pendingGlobalRuleSelectionPath = nil;
+            self.pendingGlobalRuleSelectionKey = nil;
+            [self refreshTableKeepingPosition];
+            [self reloadMonitor];
+            return nil;
+        }
+    }
+    return path;
+}
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)path {
     [tableView deselectRowAtIndexPath:path animated:YES];
+    NSString *globalKey = [self.pendingGlobalRuleSelectionPath isEqual:path]
+                              ? self.pendingGlobalRuleSelectionKey
+                              : nil;
+    self.pendingGlobalRuleSelectionPath = nil;
+    self.pendingGlobalRuleSelectionKey = nil;
     if (self.busy || self.importPending) {
+        return;
+    }
+    if (path.section == NSDashboardSectionGlobalRules) {
+        if (globalKey && [globalKey isEqual:[self representedGlobalRuleKeyAtIndexPath:path]]) {
+            [self editGlobalRule:globalKey];
+        } else {
+            [self refreshTableKeepingPosition];
+            [self reloadMonitor];
+        }
         return;
     }
     if (path.section == NSDashboardSectionFirewall && path.row == 3) {
@@ -1123,8 +1227,6 @@ static UIImage *NSDashboardUpdateIcon(void) {
         [self presentRequest:self.monitor[@"requests"][path.row]];
     } else if (path.section == NSDashboardSectionAddGlobalRule) {
         [self editGlobalRule:nil];
-    } else if (path.section == NSDashboardSectionGlobalRules) {
-        [self editGlobalRule:self.globalRuleKeys[path.row]];
     } else if ((path.section == NSDashboardSectionRules || path.section == NSDashboardSectionSystemRules) &&
                [self identitiesForSection:path.section].count) {
         [self chooseActionForIdentity:[self identitiesForSection:path.section][path.row] defaultKey:nil];
@@ -1187,12 +1289,22 @@ static UIImage *NSDashboardUpdateIcon(void) {
     }
     BOOL global = path.section == NSDashboardSectionGlobalRules;
     BOOL app = path.section == NSDashboardSectionRules || path.section == NSDashboardSectionSystemRules;
-    NSArray *keys = global ? self.globalRuleKeys : app ? [self identitiesForSection:path.section] : @[];
-    NSUInteger index = path.row;
-    if (index >= keys.count) {
-        return nil;
+    NSString *key = nil;
+    if (global) {
+        key = [self representedGlobalRuleKeyAtIndexPath:path];
+        if (self.globalRulesAwaitingReadback || !key || !self.policy.document[@"globalRules"][key]) {
+            [self refreshTableKeepingPosition];
+            [self reloadMonitor];
+            return nil;
+        }
+    } else {
+        NSArray *keys = app ? [self identitiesForSection:path.section] : @[];
+        NSUInteger index = path.row;
+        if (index >= keys.count) {
+            return nil;
+        }
+        key = keys[index];
     }
-    NSString *key = keys[index];
     UIContextualAction *remove = [UIContextualAction
         contextualActionWithStyle:UIContextualActionStyleDestructive
                             title:@"Remove"
@@ -1200,7 +1312,11 @@ static UIImage *NSDashboardUpdateIcon(void) {
                               void (^finished)(BOOL) = ^(BOOL saved) {
                                   completion(saved);
                                   [tableView setEditing:NO animated:YES];
-                                  [self reloadMonitor];
+                                  if (global) {
+                                      [self flushDeferredTablePresentation];
+                                  } else {
+                                      [self reloadMonitor];
+                                  }
                               };
                               if (!global) {
                                   [self removeAppRuleForIdentity:key completion:finished];

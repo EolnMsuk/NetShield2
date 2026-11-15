@@ -234,6 +234,7 @@
             if (generation == owner.storageGeneration && !owner.tableView.editing &&
                 !owner.tableView.dragging && !owner.tableView.decelerating) {
                 owner.policy = policy;
+                owner.globalRulesAwaitingReadback = !policy;
                 owner.policyMissing = !policy && NSFileIsAbsent(policyError);
                 owner.policyReadError = policy ? @"" : policyError.localizedDescription;
                 owner.monitorReadError =
@@ -318,8 +319,6 @@
     };
     self.identities = [[identities allObjects] sortedArrayUsingComparator:byDisplayName];
     self.systemIdentities = [[systemIdentities allObjects] sortedArrayUsingComparator:byDisplayName];
-    self.globalRuleKeys =
-        [[self.policy.document[@"globalRules"] allKeys] sortedArrayUsingSelector:@selector(compare:)];
     NSSet *tokens = [NSSet setWithArray:[self.monitor[@"requests"] valueForKey:@"token"] ?: @[]];
     [self.deferredRequests intersectSet:tokens];
     [self checkSubmittedPermissionDecisions];
@@ -592,7 +591,8 @@
                                             @"Saved state is unavailable or the operation did not persist."
                                     }];
         }
-        NSPolicy *persisted = NSReadPolicy(NULL);
+        NSError *readError = nil;
+        NSPolicy *persisted = NSReadPolicy(&readError);
         dispatch_async(dispatch_get_main_queue(), ^{
             [owner finish];
             self.busy = NO;
@@ -600,6 +600,10 @@
             if (persisted) {
                 self.policy = persisted;
             }
+            self.globalRulesAwaitingReadback = !persisted;
+            self.policyMissing = !persisted && NSFileIsAbsent(readError);
+            self.policyReadError = persisted ? @"" : readError.localizedDescription;
+            self.presentationRefreshPending = YES;
             completion(saved, error);
             [self reloadMonitor];
             if (self.configurationRefreshPending && !self.busy && !self.importPending) {
@@ -849,7 +853,8 @@
     NSMutableArray *names = [NSMutableArray new];
     for (NSString *identity in condition[@"identities"]) {
         [names
-            addObject:fullAppNames ? NSIdentityFullDisplayName(identity) : NSIdentityDisplayName(identity)];
+            addObject:fullAppNames || [identity isEqual:@".com"] ? NSIdentityFullDisplayName(identity)
+                                                               : NSIdentityDisplayName(identity)];
     }
     NSMutableArray *labels =
         [NSMutableArray arrayWithObjects:names.count ? [names componentsJoinedByString:@", "] : @"All apps",
@@ -891,13 +896,18 @@
 - (void)editGlobalRule:(NSString *)original
             initialKey:(NSString *)initialKey
                 action:(NSString *)initialAction {
+    if (original && (self.globalRulesAwaitingReadback || !self.policy.document[@"globalRules"][original])) {
+        [self refreshTableKeepingPosition];
+        [self reloadMonitor];
+        return;
+    }
     if (!self.policy || self.busy || self.importPending) {
         return;
     }
     NSGlobalRuleEditor *editor = [[NSGlobalRuleEditor alloc] initWithStyle:UITableViewStyleInsetGrouped];
     NSMutableSet *identities = [NSMutableSet setWithArray:self.identities ?: @[]];
     [identities addObjectsFromArray:self.systemIdentities ?: @[]];
-    for (NSString *key in self.globalRuleKeys) {
+    for (NSString *key in self.policy.document[@"globalRules"]) {
         [identities addObjectsFromArray:NSGlobalRuleCondition(key)[@"identities"] ?: @[]];
     }
     editor.identities =
