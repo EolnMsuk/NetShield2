@@ -342,11 +342,13 @@ NSAppMenuWithSelection(UIMenu *menu,
     }
     UIAlertController *alert =
         [UIAlertController alertControllerWithTitle:@"Add app by identity"
-                                            message:@"Enter the exact iOS app identity. A shortened name "
-                                                    @"will appear in the selection."
+                                            message:@"Enter one or more iOS app or process identities "
+                                                    @"separated by commas, with no empty entries. A leading "
+                                                    @"period is added when missing. Shortened names will "
+                                                    @"appear in the selection."
                                      preferredStyle:UIAlertControllerStyleAlert];
     [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
-        field.placeholder = @"Exact iOS identity";
+        field.placeholder = @"Comma-separated app identities";
         field.autocapitalizationType = UITextAutocapitalizationTypeNone;
         field.autocorrectionType = UITextAutocorrectionTypeNo;
         field.keyboardType = UIKeyboardTypeASCIICapable;
@@ -358,34 +360,55 @@ NSAppMenuWithSelection(UIMenu *menu,
                       actionWithTitle:@"Add"
                                 style:UIAlertActionStyleDefault
                               handler:^(UIAlertAction *action) {
-                                  NSString *identity = [weakAlert.textFields.firstObject.text
-                                      stringByTrimmingCharactersInSet:NSCharacterSet
-                                                                          .whitespaceAndNewlineCharacterSet];
-                                  if (!identity.length) {
-                                      dispatch_async(dispatch_get_main_queue(), ^{
-                                          [weakSelf showMessage:@"Enter a nonempty app identity."];
-                                      });
-                                      return;
-                                  }
-                                  // Only manual entry adds the raw process-identity prefix.
-                                  if (![identity hasPrefix:@"."]) {
-                                      identity = [@"." stringByAppendingString:identity];
-                                  }
-                                  if (identity.length > NSMaximumIdentityLength) {
-                                      dispatch_async(dispatch_get_main_queue(), ^{
-                                          [weakSelf showMessage:@"Enter a nonempty app identity of no more "
-                                                                @"than 1024 characters."];
-                                      });
-                                      return;
-                                  }
                                   NSGlobalRuleEditor *owner = weakSelf;
                                   if (!owner) {
                                       return;
                                   }
-                                  [owner.selectedIdentities addObject:identity];
+                                  NSMutableSet<NSString *> *identities = [NSMutableSet new];
+                                  NSString *message = nil;
+                                  NSString *text = weakAlert.textFields.firstObject.text ?: @"";
+                                  for (NSString *entry in [text componentsSeparatedByString:@","]) {
+                                      NSString *identity =
+                                          [entry stringByTrimmingCharactersInSet:
+                                                     NSCharacterSet.whitespaceAndNewlineCharacterSet];
+                                      if (!identity.length) {
+                                          message = @"Enter one or more app identities separated by commas, "
+                                                    @"with no empty entries. No apps were added.";
+                                          break;
+                                      }
+                                      // Only manual entry adds the raw process-identity prefix.
+                                      if (![identity hasPrefix:@"."]) {
+                                          identity = [@"." stringByAppendingString:identity];
+                                      }
+                                      if (identity.length > NSMaximumIdentityLength) {
+                                          message = [NSString
+                                              stringWithFormat:@"Each app identity must be no more than %lu "
+                                                               @"characters, including its leading period. "
+                                                               @"No apps were added.",
+                                                               (unsigned long)NSMaximumIdentityLength];
+                                          break;
+                                      }
+                                      [identities addObject:identity];
+                                  }
+                                  NSMutableSet<NSString *> *selection =
+                                      [owner.selectedIdentities mutableCopy];
+                                  [selection unionSet:identities];
+                                  if (!message && selection.count > NSMaximumRules) {
+                                      message = [NSString
+                                          stringWithFormat:@"A rule can select no more than %lu app "
+                                                           @"identities. No apps were added.",
+                                                           (unsigned long)NSMaximumRules];
+                                  }
+                                  if (message) {
+                                      dispatch_async(dispatch_get_main_queue(), ^{
+                                          [weakSelf showMessage:message];
+                                      });
+                                      return;
+                                  }
                                   NSMutableSet<NSString *> *available =
                                       [NSMutableSet setWithArray:owner.identities ?: @[]];
-                                  [available addObject:identity];
+                                  [available unionSet:identities];
+                                  owner.selectedIdentities = selection;
                                   owner.identities = available.allObjects;
                                   [owner appSelectionChanged];
                               }]];
