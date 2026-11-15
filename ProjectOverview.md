@@ -1,6 +1,6 @@
 # NetShield2
 
-## Overview 
+## Overview
 
 NetShield2 is a firewall and network monitor for jailbroken iOS 15â€“18 devices using rootless, RootHide, or rootful packages. Apple's Network Extension content filter evaluates the browser flows that iOS delivers and, with **Filter System Sockets** enabled, the socket flows it delivers.
 
