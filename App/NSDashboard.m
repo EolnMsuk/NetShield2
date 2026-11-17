@@ -14,7 +14,7 @@ static NSString *const NSSystemRulesLockedErrorDomain = @"NetShield2.SystemRules
 
 // Recheck inside the policy transaction before changing rules or ask generations.
 static BOOL NSSystemRuleEditAllowed(NSDictionary *document, BOOL system, NSError **error) {
-    if (!system || ![document[@"allowAppleSystemProcesses"] boolValue]) {
+    if (!system || !NSAppleSystemTrafficEnabled(document)) {
         return YES;
     }
     if (error) {
@@ -1111,14 +1111,17 @@ static BOOL NSSystemRuleEditAllowed(NSDictionary *document, BOOL system, NSError
     }];
 }
 - (void)appleSystemProcessesChanged:(UISwitch *)sender {
-    if (!self.policy || self.busy || self.importPending) {
-        [sender setOn:[self.policy.document[@"allowAppleSystemProcesses"] boolValue] animated:NO];
+    BOOL allow = sender.on;
+    [sender setOn:NSAppleSystemTrafficEnabled(self.policy.document) animated:NO];
+    if (!self.policy || self.busy || self.importPending ||
+        ![self.policy.document[@"filterSockets"] boolValue]) {
+        [self refreshTableKeepingPosition];
         return;
     }
-    BOOL allow = sender.on;
     [self
         updatePolicy:^BOOL(NSMutableDictionary *document, NSError **error) {
-            document[@"allowAppleSystemProcesses"] = @(allow);
+            document[@"allowAppleSystemProcesses"] =
+                allow && [document[@"filterSockets"] boolValue] ? @YES : @NO;
             document[@"blockAppleSystemTelemetry"] = @NO;
             return YES;
         }
@@ -1128,15 +1131,19 @@ static BOOL NSSystemRuleEditAllowed(NSDictionary *document, BOOL system, NSError
     [self refreshTableKeepingPosition];
 }
 - (void)appleSystemTelemetryChanged:(UISwitch *)sender {
-    if (!self.policy || self.busy || self.importPending) {
-        [sender setOn:[self.policy.document[@"blockAppleSystemTelemetry"] boolValue] animated:NO];
+    BOOL block = sender.on;
+    [sender setOn:NSAppleSystemTrafficEnabled(self.policy.document) &&
+                  [self.policy.document[@"blockAppleSystemTelemetry"] boolValue]
+         animated:NO];
+    if (!self.policy || self.busy || self.importPending ||
+        !NSAppleSystemTrafficEnabled(self.policy.document)) {
+        [self refreshTableKeepingPosition];
         return;
     }
-    BOOL block = sender.on;
     [self
         updatePolicy:^BOOL(NSMutableDictionary *document, NSError **error) {
             document[@"blockAppleSystemTelemetry"] =
-                block && [document[@"allowAppleSystemProcesses"] boolValue] ? @YES : @NO;
+                block && NSAppleSystemTrafficEnabled(document) ? @YES : @NO;
             if ([document[@"blockAppleSystemTelemetry"] boolValue]) {
                 document[@"appleSystemTelemetryIntroduced"] = @YES;
             }

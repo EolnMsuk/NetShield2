@@ -124,21 +124,42 @@ static void TestAppleSystemTransitions(void) {
     NSPolicy *withoutParent = [NSPolicy policyWithDocument:missingParent error:NULL];
     CHECK(withoutParent && ![withoutParent.document[@"blockAppleSystemTelemetry"] boolValue]);
     CHECK(![withoutParent automaticSystemActionForIdentity:savedIdentity]);
-    for (NSString *key in @[ @"blockAppleSystemTelemetry", @"appleSystemTelemetryIntroduced" ]) {
+    for (NSString *key in @[
+             @"filterSockets", @"allowAppleSystemProcesses", @"blockAppleSystemTelemetry",
+             @"appleSystemTelemetryIntroduced"
+         ]) {
         for (id invalid in @[ @0, @1, @"true", NSNull.null ]) {
             NSMutableDictionary *bad = [upgrade mutableCopy];
             bad[key] = invalid;
             CHECK(![NSPolicy policyWithDocument:bad error:NULL]);
         }
     }
-    for (NSArray *state in @[
-             @[ @YES, @YES ], @[ @YES, @NO ], @[ @NO, @NO ], @[ @YES, @NO ], @[ @YES, @YES ], @[ @NO, @YES ]
+    for (NSDictionary *change in @[
+             @{@"allowAppleSystemProcesses" : @YES,
+               @"blockAppleSystemTelemetry" : @YES},
+             @{@"filterSockets" : @NO},
+             @{@"allowAppleSystemProcesses" : @YES}, // Stale parent callback while sockets are off.
+             @{@"blockAppleSystemTelemetry" : @YES}, // Stale child callback while sockets are off.
+             @{@"filterSockets" : @YES},             // Re-enabling sockets alone leaves both dependents off.
+             @{@"allowAppleSystemProcesses" : @YES},
+             @{@"blockAppleSystemTelemetry" : @YES},
+             @{@"allowAppleSystemProcesses" : @NO},
+             @{@"blockAppleSystemTelemetry" : @YES}, // Stale child callback while the parent is off.
+             @{@"allowAppleSystemProcesses" : @YES},
+             @{@"blockAppleSystemTelemetry" : @YES},
+             @{@"blockAppleSystemTelemetry" : @NO}
          ]) {
+        NSPolicy *before = NSReadPolicy(NULL);
+        BOOL sockets = [(change[@"filterSockets"] ?: before.document[@"filterSockets"]) boolValue];
+        BOOL parent = sockets && [(change[@"allowAppleSystemProcesses"]
+                                       ?: before.document[@"allowAppleSystemProcesses"]) boolValue];
+        BOOL block = parent && [(change[@"blockAppleSystemTelemetry"]
+                                     ?: before.document[@"blockAppleSystemTelemetry"]) boolValue];
         CHECK(NSUpdatePolicy(
             ^BOOL(NSMutableDictionary *document, NSError **error) {
-                document[@"allowAppleSystemProcesses"] = state[0];
-                document[@"blockAppleSystemTelemetry"] = state[1];
-                if ([state[0] boolValue] && [state[1] boolValue]) {
+                [document addEntriesFromDictionary:change];
+                if (NSAppleSystemTrafficEnabled(document) &&
+                    [document[@"blockAppleSystemTelemetry"] boolValue]) {
                     document[@"appleSystemTelemetryIntroduced"] = @YES;
                 }
                 return YES;
@@ -146,7 +167,13 @@ static void TestAppleSystemTransitions(void) {
             NULL));
         NSInvalidatePolicyCache(); // A new reader must restore the same choices.
         NSPolicy *policy = NSReadPolicy(NULL);
-        BOOL parent = [state[0] boolValue], block = parent && [state[1] boolValue];
+        CHECK([NSReadDocument(NSPolicyFile, NULL) isEqual:policy.document]);
+        CHECK(![policy.document[@"revision"] isEqual:before.document[@"revision"]]);
+        CHECK([policy.document[@"filterSockets"] boolValue] == sockets);
+        CHECK(NSAppleSystemTrafficEnabled(policy.document) == parent);
+        CHECK([policy.document[@"allowAppleSystemProcesses"] boolValue] == parent);
+        CHECK(NSBoolean(policy.document[@"filterSockets"]));
+        CHECK(NSBoolean(policy.document[@"allowAppleSystemProcesses"]));
         CHECK(NSBoolean(policy.document[@"blockAppleSystemTelemetry"]));
         CHECK(NSBoolean(policy.document[@"appleSystemTelemetryIntroduced"]));
         NSPolicy *revalidated = [NSPolicy policyWithDocument:policy.document error:NULL];
@@ -154,6 +181,12 @@ static void TestAppleSystemTransitions(void) {
         CHECK([policy.document[@"rules"] isEqual:rules] && !policy.document[@"rules"][unsavedIdentity]);
         CHECK([policy.document[@"ruleDestinations"] isEqual:upgrade[@"ruleDestinations"]]);
         CHECK([policy.document[@"askGenerations"] isEqual:upgrade[@"askGenerations"]]);
+        CHECK([policy.document[@"ruleSetEpoch"] isEqual:upgrade[@"ruleSetEpoch"]]);
+        CHECK([policy.document[@"globalRuleGeneration"] isEqual:upgrade[@"globalRuleGeneration"]]);
+        CHECK([NSPermissionGeneration(policy, savedIdentity)
+            isEqual:NSPermissionGeneration(before, savedIdentity)]);
+        CHECK([NSPermissionGeneration(policy, unsavedIdentity)
+            isEqual:NSPermissionGeneration(before, unsavedIdentity)]);
         CHECK([policy.document[@"appleSystemTelemetryIntroduced"] boolValue]);
         CHECK([policy.document[@"blockAppleSystemTelemetry"] boolValue] == block);
         for (NSNumber *direction in @[ @0, @1, @2 ]) {
@@ -182,6 +215,16 @@ static void TestAppleSystemTransitions(void) {
         CHECK([export[@"systemRules"] count] == 1);
         CHECK([export[@"blockAppleSystemTelemetry"] boolValue] == block);
     }
+    NSPolicy *committed = NSReadPolicy(NULL);
+    CHECK(!NSUpdatePolicy(
+        ^BOOL(NSMutableDictionary *document, NSError **error) {
+            document[@"filterSockets"] = @NO;
+            document[@"default"] = @"invalid";
+            return YES;
+        },
+        NULL));
+    NSInvalidatePolicyCache();
+    CHECK([NSReadPolicy(NULL).document isEqual:committed.document]);
     NSMutableDictionary *empty = [[NSPolicy defaultDocument] mutableCopy];
     empty[@"rules"] = [NSMutableDictionary new];
     empty[@"allowAppleSystemProcesses"] = @NO;
@@ -189,9 +232,10 @@ static void TestAppleSystemTransitions(void) {
     CHECK(NSClearIdentityRules(empty, YES, @[], NULL).count == 0);
     CHECK(![empty[@"appleSystemTelemetryIntroduced"] boolValue]);
 
-    // Both automatic actions settle every held direction. A global Allow still
-    // decides its own waiter from the peer captured when that flow was held.
-    for (NSNumber *block in @[ @NO, @YES ]) {
+    // Automatic actions require sockets. A global Allow still decides its own
+    // waiter from the peer captured when that flow was held.
+    for (NSArray *state in @[ @[ @YES, @NO ], @[ @YES, @YES ], @[ @NO, @NO ], @[ @NO, @YES ] ]) {
+        NSNumber *sockets = state[0], *block = state[1];
         NSMutableDictionary *document = [[NSPolicy defaultDocument] mutableCopy];
         document[@"allowAppleSystemProcesses"] = @NO;
         CHECK(NSWriteDocument(document, NSPolicyFile, NULL));
@@ -211,8 +255,8 @@ static void TestAppleSystemTransitions(void) {
                             now:1
                            date:NSDate.date
                      completion:^(BOOL allow) {
-                         CHECK(allow ==
-                               (!block.boolValue || direction.integerValue == NSFlowDirectionOutbound));
+                         CHECK(allow == (direction.integerValue == NSFlowDirectionOutbound ||
+                                         (sockets.boolValue && !block.boolValue)));
                          finished++;
                      }];
             request = request ?: created;
@@ -221,6 +265,7 @@ static void TestAppleSystemTransitions(void) {
               NSWriteDocument(Monitor(@[ request ], YES, NSEngineVersion, NSDate.date), NSMonitorFile, NULL));
         CHECK(NSUpdatePolicy(
             ^BOOL(NSMutableDictionary *current, NSError **error) {
+                current[@"filterSockets"] = sockets;
                 current[@"allowAppleSystemProcesses"] = @YES;
                 current[@"blockAppleSystemTelemetry"] = block;
                 current[@"globalRules"] = @{
@@ -231,12 +276,38 @@ static void TestAppleSystemTransitions(void) {
             NULL));
         NSPolicy *settled = NSReadPolicy(NULL);
         CHECK(NSPermissionGenerationMatches(settled, request));
-        CHECK(![settled requiresPermissionForRequest:request]);
-        CHECK(NSShouldWithdrawPermissionRequestNotification(settled, request, YES));
-        CHECK(!NSAnswerPermissionRequestWithRule(request, @"allow-inbound", NULL));
-        CHECK([NSReadPolicy(NULL).document isEqual:settled.document]);
+        CHECK([settled requiresPermissionForRequest:request] == !sockets.boolValue);
+        CHECK(NSShouldWithdrawPermissionRequestNotification(settled, request, YES) == sockets.boolValue);
+        if (sockets.boolValue) {
+            CHECK(!NSAnswerPermissionRequestWithRule(request, @"allow-inbound", NULL));
+            CHECK([NSReadPolicy(NULL).document isEqual:settled.document]);
+        }
         [queue resolveWithPolicy:settled now:2];
-        CHECK(finished == 3 && queue.waitingCount == 0 && queue.requests.count == 0);
+        if (sockets.boolValue) {
+            CHECK(finished == 3 && queue.waitingCount == 0 && queue.requests.count == 0);
+        } else {
+            CHECK(finished == 1 && queue.waitingCount == 2 && queue.requests.count == 1);
+            CHECK(![settled.document[@"rules"] count]);
+            CHECK(NSUpdatePolicy(
+                ^BOOL(NSMutableDictionary *current, NSError **error) {
+                    current[@"filterSockets"] = @YES;
+                    return YES;
+                },
+                NULL));
+            NSPolicy *reenabled = NSReadPolicy(NULL);
+            CHECK(!NSAppleSystemTrafficEnabled(reenabled.document));
+            CHECK(![reenabled.document[@"blockAppleSystemTelemetry"] boolValue]);
+            CHECK(NSPermissionGenerationMatches(reenabled, request));
+            [queue resolveWithPolicy:reenabled now:3];
+            CHECK(finished == 1 && queue.waitingCount == 2);
+            CHECK(NSWriteDocument(Monitor(queue.requests, YES, NSEngineVersion, NSDate.date), NSMonitorFile,
+                                  NULL));
+            CHECK(NSAnswerPermissionRequestWithRule(queue.requests.firstObject, @"block-inbound", NULL));
+            [queue resolveWithPolicy:NSReadPolicy(NULL) now:4];
+            CHECK(finished == 2 && queue.waitingCount == 1);
+            [queue cancelAll];
+            CHECK(finished == 3);
+        }
     }
     CHECK(NSWriteDocument(original, NSPolicyFile, NULL));
 }
@@ -1005,8 +1076,8 @@ static void TestRuleImport(void) {
     local[@"default"] = @"ask";
     local[@"unattributed"] = @"ask";
     local[@"filterSockets"] = @NO;
-    local[@"allowAppleSystemProcesses"] = @NO;
-    local[@"blockAppleSystemTelemetry"] = @NO;
+    local[@"allowAppleSystemProcesses"] = @YES; // Stale local metadata must obey the socket prerequisite.
+    local[@"blockAppleSystemTelemetry"] = @YES;
     local[@"appleSystemTelemetryIntroduced"] = @YES;
     local[@"rules"] = NSFixtureRules(@{@"old.app" : @"block", @"com.apple.old" : @"allow"});
     local[@"globalRules"] = @{NSFixtureGlobal(@[], @"old.example", @"", @"", @"any", @"block") : @"block"};
@@ -1018,6 +1089,8 @@ static void TestRuleImport(void) {
     CHECK(NSWriteDocument(local, NSPolicyFile, NULL));
     NSPolicy *old = NSReadPolicy(NULL);
     CHECK(old);
+    CHECK(![old.document[@"allowAppleSystemProcesses"] boolValue]);
+    CHECK(![old.document[@"blockAppleSystemTelemetry"] boolValue]);
     NSPermissionQueue *queue = [NSPermissionQueue new];
     [queue resolveWithPolicy:old now:0];
     __block NSUInteger invalidated = 0;
@@ -1085,7 +1158,7 @@ static void TestRuleImport(void) {
              @"default", @"unattributed", @"allowAppleSystemProcesses", @"filterSockets",
              @"blockAppleSystemTelemetry", @"appleSystemTelemetryIntroduced"
          ]) {
-        CHECK([saved.document[key] isEqual:local[key]]);
+        CHECK([saved.document[key] isEqual:old.document[key]]);
     }
     for (NSString *key in
          @[ @"ruleDestinations", @"askGenerations", @"globalDomainAddresses", @"globalDomainLifetimes" ]) {
@@ -1843,6 +1916,54 @@ static void TestSocketSettingsAndDestinations(void) {
     CHECK([NSPolicy policyWithDocument:document error:NULL] != nil);
     CHECK([[NSPolicy policyWithDocument:document error:NULL].document[@"filterSockets"] boolValue]);
     CHECK(document[@"filterSockets"] == nil);
+    // All legacy/missing and explicit Boolean combinations must serialize as
+    // genuine Booleans and remain stable through repeated reader round trips.
+    NSArray *settings = @[ @"filterSockets", @"allowAppleSystemProcesses", @"blockAppleSystemTelemetry" ];
+    for (id sockets in @[ NSNull.null, @NO, @YES ]) {
+        for (id parent in @[ NSNull.null, @NO, @YES ]) {
+            for (id telemetry in @[ NSNull.null, @NO, @YES ]) {
+                NSMutableDictionary *raw = [[NSPolicy defaultDocument] mutableCopy];
+                NSArray *values = @[ sockets, parent, telemetry ];
+                for (NSUInteger index = 0; index < settings.count; index++) {
+                    if (values[index] == NSNull.null) {
+                        [raw removeObjectForKey:settings[index]];
+                    } else {
+                        raw[settings[index]] = values[index];
+                    }
+                }
+                raw[@"appleSystemTelemetryIntroduced"] = @YES;
+                NSDictionary *original = [raw copy];
+                BOOL effectiveSockets = sockets == NSNull.null || [sockets boolValue];
+                BOOL effectiveParent = effectiveSockets && parent != NSNull.null && [parent boolValue];
+                BOOL effectiveTelemetry =
+                    effectiveParent && telemetry != NSNull.null && [telemetry boolValue];
+                NSPolicy *reader = [NSPolicy policyWithDocument:raw error:NULL];
+                CHECK(reader && [raw isEqual:original]);
+                CHECK([reader.document[@"filterSockets"] boolValue] == effectiveSockets);
+                CHECK([reader.document[@"allowAppleSystemProcesses"] boolValue] == effectiveParent);
+                CHECK([reader.document[@"blockAppleSystemTelemetry"] boolValue] == effectiveTelemetry);
+                CHECK([reader.document[@"appleSystemTelemetryIntroduced"] boolValue]);
+                for (NSUInteger pass = 0; pass < 3; pass++) {
+                    for (NSString *key in settings) {
+                        CHECK(NSBoolean(reader.document[key]));
+                    }
+                    NSData *encoded =
+                        [NSPropertyListSerialization dataWithPropertyList:reader.document
+                                                                   format:NSPropertyListBinaryFormat_v1_0
+                                                                  options:0
+                                                                    error:NULL];
+                    NSDictionary *decoded =
+                        [NSPropertyListSerialization propertyListWithData:encoded
+                                                                  options:NSPropertyListImmutable
+                                                                   format:NULL
+                                                                    error:NULL];
+                    NSPolicy *next = [NSPolicy policyWithDocument:decoded error:NULL];
+                    CHECK(next && [next.document isEqual:reader.document]);
+                    reader = next;
+                }
+            }
+        }
+    }
     document[@"filterSockets"] = @NO;
     CHECK(![[NSPolicy policyWithDocument:document error:NULL].document[@"filterSockets"] boolValue]);
     document[@"filterSockets"] = @"yes";
@@ -2095,7 +2216,8 @@ static void TestLateNotifications(void) {
     [center finish:3 error:nil];
     CHECK([center.removed containsObject:((UNNotificationRequest *)center.requests[3]).identifier]);
     [old stop];
-    for (NSNumber *block in @[ @NO, @YES ]) {
+    for (NSArray *state in @[ @[ @YES, @NO ], @[ @YES, @YES ], @[ @NO, @NO ], @[ @NO, @YES ] ]) {
+        NSNumber *sockets = state[0], *block = state[1];
         NSMutableDictionary *document = [[NSPolicy defaultDocument] mutableCopy];
         document[@"allowAppleSystemProcesses"] = @NO;
         CHECK(NSWriteDocument(document, NSPolicyFile, NULL));
@@ -2108,6 +2230,7 @@ static void TestLateNotifications(void) {
         CHECK(lateCenter.requests.count == 1);
         CHECK(NSUpdatePolicy(
             ^BOOL(NSMutableDictionary *current, NSError **error) {
+                current[@"filterSockets"] = sockets;
                 current[@"allowAppleSystemProcesses"] = @YES;
                 current[@"blockAppleSystemTelemetry"] = block;
                 return YES;
@@ -2115,8 +2238,9 @@ static void TestLateNotifications(void) {
             NULL));
         // Completion must consult current policy even before the next refresh.
         [lateCenter finish:0 error:nil];
-        CHECK(
-            [lateCenter.removed containsObject:((UNNotificationRequest *)lateCenter.requests[0]).identifier]);
+        CHECK([lateCenter.removed
+                  containsObject:((UNNotificationRequest *)lateCenter.requests[0]).identifier] ==
+              sockets.boolValue);
         [late updateRequests:@[ telemetry ] policy:NSReadPolicy(NULL) retryRevision:nil];
         CHECK(lateCenter.requests.count == 1 && late.deliveryIssue.length == 0);
         [late stop];

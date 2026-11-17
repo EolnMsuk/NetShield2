@@ -411,16 +411,20 @@ static void TestDecisionParity(void) {
           @"localPort" : @1},
         peer
     ];
-    for (NSArray *state in @[ @[ @NO, @NO ], @[ @YES, @NO ], @[ @YES, @YES ] ]) {
+    for (NSArray *state in @[
+             @[ @NO, @NO, @NO ], @[ @NO, @NO, @YES ], @[ @NO, @YES, @NO ], @[ @NO, @YES, @YES ],
+             @[ @YES, @NO, @NO ], @[ @YES, @NO, @YES ], @[ @YES, @YES, @NO ], @[ @YES, @YES, @YES ]
+         ]) {
         NSMutableDictionary *document = [[NSPolicy defaultDocument] mutableCopy];
-        document[@"allowAppleSystemProcesses"] = state[0];
-        document[@"blockAppleSystemTelemetry"] = state[1];
+        document[@"filterSockets"] = state[0];
+        document[@"allowAppleSystemProcesses"] = state[1];
+        document[@"blockAppleSystemTelemetry"] = state[2];
         document[@"unattributed"] = @"block";
         NSPolicy *policy = [NSPolicy policyWithDocument:document error:NULL];
         EXPECT(policy);
         for (NSString *identity in identities) {
-            BOOL system = [state[0] boolValue] && NSIsAppleSystemIdentity(identity);
-            BOOL blocked = system && [state[1] boolValue] &&
+            BOOL system = [state[0] boolValue] && [state[1] boolValue] && NSIsAppleSystemIdentity(identity);
+            BOOL blocked = system && [state[2] boolValue] &&
                            [NSAppleSystemTelemetryIdentities() containsObject:identity];
             NSFlowDisposition expected = !identity.length ? NSFlowDrop
                                          : system         ? (blocked ? NSFlowDrop : NSFlowAllow)
@@ -447,10 +451,14 @@ static void TestDecisionParity(void) {
         EXPECT([policy evaluateIdentity:nil direction:NSFlowDirectionUnknown destination:@{} socket:NO]
                    .disposition == NSFlowDrop);
     }
-    for (NSString *action in @[ @"allow", @"block" ]) {
+    for (NSArray *state in
+         @[ @[ @NO, @"allow" ], @[ @NO, @"block" ], @[ @YES, @"allow" ], @[ @YES, @"block" ] ]) {
+        NSNumber *sockets = state[0];
+        NSString *action = state[1];
         NSString *identity =
             [action isEqual:@"allow"] ? @".com.apple.ReportCrash.Root" : @"prefixcom.apple.example";
         NSMutableDictionary *document = [[NSPolicy defaultDocument] mutableCopy];
+        document[@"filterSockets"] = sockets;
         document[@"blockAppleSystemTelemetry"] = @YES;
         document[@"globalRules"] =
             @{NSFixtureGlobal(identity, @"192.0.2.1", @"443", @"1234", @"tcp", action) : action};
@@ -465,6 +473,11 @@ static void TestDecisionParity(void) {
             EXPECT(matched.disposition == ([action isEqual:@"allow"] ? NSFlowAllow : NSFlowDrop));
             EXPECT([policy allowsIdentity:identity direction:direction.integerValue
                               destination:peer] == (matched.disposition == NSFlowAllow));
+            NSFlowEvaluation browser = [policy evaluateIdentity:identity
+                                                      direction:direction.integerValue
+                                                    destination:peer
+                                                         socket:NO];
+            EXPECT(browser.reason == matched.reason && browser.disposition == matched.disposition);
             NSFlowEvaluation deferred = [policy evaluateIdentity:identity
                                                        direction:direction.integerValue
                                                      destination:@{@"protocol" : @"tcp"}
@@ -474,8 +487,9 @@ static void TestDecisionParity(void) {
                                                         direction:direction.integerValue
                                                       destination:@{@"protocol" : @"tcp"}
                                                            socket:NO];
-            EXPECT(available.reason == NSFlowReasonSystem);
-            EXPECT(available.disposition == ([action isEqual:@"allow"] ? NSFlowDrop : NSFlowAllow));
+            EXPECT(available.reason == (sockets.boolValue ? NSFlowReasonSystem : NSFlowReasonDefault));
+            EXPECT(available.disposition ==
+                   (sockets.boolValue ? ([action isEqual:@"allow"] ? NSFlowDrop : NSFlowAllow) : NSFlowAsk));
         }
     }
 }

@@ -96,6 +96,7 @@ typedef NS_ENUM(NSInteger, NSFirewallRow) {
 @property(nonatomic, copy) NSString *monitorReadError;
 @property(nonatomic, copy) NSDictionary *pendingUpdateResult;
 @property(nonatomic, strong) UITableViewCell *firewallCell;
+@property(nonatomic, strong) UITableViewCell *socketCell;
 @property(nonatomic, strong) UITableViewCell *appleCell;
 @property(nonatomic, strong) UITableViewCell *telemetryCell;
 @property(nonatomic, copy) NSArray *displayedRows;

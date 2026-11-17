@@ -32,16 +32,24 @@ static NSDictionary *NSSavedFilterFingerprint(NEFilterManager *manager) {
 
 @implementation NSDashboard (Configuration)
 - (void)socketFilteringChanged:(UISwitch *)sender {
-    if (self.busy || self.importPending || !self.preferencesLoaded || !self.configurationReady) {
+    BOOL enabled = sender.on;
+    [sender setOn:[self.policy.document[@"filterSockets"] boolValue] animated:NO];
+    if (!self.policy || self.busy || self.importPending || !self.preferencesLoaded ||
+        !self.configurationReady) {
+        [self refreshTableKeepingPosition];
         return;
     }
-    BOOL enabled = sender.on;
     [self
         updatePolicy:^BOOL(NSMutableDictionary *document, NSError **error) {
             document[@"filterSockets"] = @(enabled);
+            if (!enabled) {
+                document[@"allowAppleSystemProcesses"] = @NO;
+                document[@"blockAppleSystemTelemetry"] = @NO;
+            }
             return YES;
         }
         completion:^(BOOL saved) {
+            [self refreshTableKeepingPosition];
             if (!saved) {
                 return;
             }

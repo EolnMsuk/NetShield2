@@ -6,7 +6,6 @@
 #import "NSRuleChoices.h"
 #import "NSPermissionRequest.h"
 #import "NSValidation.h"
-#import <CoreFoundation/CoreFoundation.h>
 
 NSArray<NSString *> *NSAppleSystemTelemetryIdentities(void) {
     static NSArray<NSString *> *identities;
@@ -86,8 +85,7 @@ static NSString *NSAppActionForDirection(id value, NSFlowDirection direction) {
         valid = valid && (!d[key] || NSBoolean(d[key]));
     }
     id sockets = d[@"filterSockets"];
-    valid = valid && (!sockets || ([sockets isKindOfClass:NSNumber.class] &&
-                                   CFGetTypeID((__bridge CFTypeRef)sockets) == CFBooleanGetTypeID()));
+    valid = valid && (!sockets || NSBoolean(sockets));
     if (valid) {
         valid = [d[@"rules"] count] <= NSMaximumRules;
         for (id key in d[@"rules"]) {
@@ -217,8 +215,13 @@ static NSString *NSAppActionForDirection(id value, NSFlowDirection direction) {
         appRules[identity] = NSAppRuleRecord(d[@"rules"][identity]);
     }
     canonicalDocument[@"rules"] = appRules;
+    // Normalize missing sockets to On before enforcing the dependency chain.
+    canonicalDocument[@"filterSockets"] = sockets ?: @YES;
+    canonicalDocument[@"allowAppleSystemProcesses"] =
+        NSAppleSystemTrafficEnabled(canonicalDocument) ? @YES : @NO;
     canonicalDocument[@"blockAppleSystemTelemetry"] =
-        [appleAllowance boolValue] && [d[@"blockAppleSystemTelemetry"] boolValue] ? @YES : @NO;
+        NSAppleSystemTrafficEnabled(canonicalDocument) && [d[@"blockAppleSystemTelemetry"] boolValue] ? @YES
+                                                                                                      : @NO;
     canonicalDocument[@"appleSystemTelemetryIntroduced"] =
         @([d[@"appleSystemTelemetryIntroduced"] boolValue]);
     // Preserve saved keys: canonical aliases can carry distinct direction coverage.
@@ -235,11 +238,6 @@ static NSString *NSAppActionForDirection(id value, NSFlowDirection direction) {
         canonicalDocument[@"globalDomainAddresses"] = canonicalAddresses;
     }
     d = canonicalDocument;
-    if (!sockets) {
-        NSMutableDictionary *normalized = [d mutableCopy];
-        normalized[@"filterSockets"] = @YES;
-        d = normalized;
-    }
     NSData *encoded = [NSPropertyListSerialization dataWithPropertyList:d
                                                                  format:NSPropertyListBinaryFormat_v1_0
                                                                 options:0
@@ -268,7 +266,7 @@ static NSString *NSAppActionForDirection(id value, NSFlowDirection direction) {
     return [[self automaticSystemActionForIdentity:identity] isEqual:@"allow"];
 }
 - (NSString *)automaticSystemActionForIdentity:(NSString *)identity {
-    if (![self.document[@"allowAppleSystemProcesses"] boolValue] || !NSIsAppleSystemIdentity(identity)) {
+    if (!NSAppleSystemTrafficEnabled(self.document) || !NSIsAppleSystemIdentity(identity)) {
         return nil;
     }
     return [self.document[@"blockAppleSystemTelemetry"] boolValue] &&

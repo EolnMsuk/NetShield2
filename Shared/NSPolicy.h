@@ -5,6 +5,11 @@ static inline BOOL NSIsAppleSystemIdentity(NSString *_Nullable identity) {
     return [identity isKindOfClass:NSString.class] &&
            [identity rangeOfString:@"com.apple." options:NSLiteralSearch].location != NSNotFound;
 }
+static inline BOOL NSAppleSystemTrafficEnabled(NSDictionary *_Nullable document) {
+    // Older schema-5 documents without a socket preference filter sockets.
+    return (!document[@"filterSockets"] || [document[@"filterSockets"] boolValue]) &&
+           [document[@"allowAppleSystemProcesses"] boolValue];
+}
 FOUNDATION_EXPORT NSArray<NSString *> *NSAppleSystemTelemetryIdentities(void);
 
 typedef NS_ENUM(NSInteger, NSFlowDirection) {

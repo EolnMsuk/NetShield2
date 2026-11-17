@@ -365,7 +365,35 @@ static UIImage *NSDashboardUpdateIcon(void) {
     }
     self.rowHeights[key] = @(cell.bounds.size.height);
 }
+- (void)refreshFirewallSwitchCell:(UITableViewCell *)cell row:(NSFirewallRow)row {
+    if (!cell) {
+        return;
+    }
+    BOOL sockets = [self.policy.document[@"filterSockets"] boolValue];
+    BOOL parent = NSAppleSystemTrafficEnabled(self.policy.document);
+    BOOL scope = row == NSFirewallRowSockets;
+    BOOL telemetry = row == NSFirewallRowAppleTelemetry;
+    UISwitch *toggle = (UISwitch *)cell.accessoryView;
+    BOOL on = scope       ? sockets
+              : telemetry ? parent && [self.policy.document[@"blockAppleSystemTelemetry"] boolValue]
+                          : parent;
+    [toggle setOn:on animated:NO];
+    toggle.enabled = self.policy != nil && !self.busy && !self.importPending &&
+                     (scope       ? self.preferencesLoaded && self.configurationReady
+                      : telemetry ? parent
+                                  : sockets);
+    toggle.accessibilityLabel = cell.textLabel.text;
+    cell.accessibilityTraits = toggle.enabled ? UIAccessibilityTraitNone : UIAccessibilityTraitNotEnabled;
+    cell.textLabel.textColor = toggle.enabled ? UIColor.labelColor : UIColor.tertiaryLabelColor;
+    cell.detailTextLabel.textColor =
+        toggle.enabled ? UIColor.secondaryLabelColor : UIColor.tertiaryLabelColor;
+}
 - (void)refreshTableKeepingPosition {
+    // Cached switches always reflect committed policy, even when a table reload
+    // is deferred or its signature is unchanged after a rejected callback.
+    [self refreshFirewallSwitchCell:self.socketCell row:NSFirewallRowSockets];
+    [self refreshFirewallSwitchCell:self.appleCell row:NSFirewallRowAppleSystem];
+    [self refreshFirewallSwitchCell:self.telemetryCell row:NSFirewallRowAppleTelemetry];
     // Monitor refreshes must not interrupt the native swipe reveal animation.
     if (self.tableView.editing || self.tableView.dragging || self.tableView.decelerating) {
         self.presentationRefreshPending = YES;
@@ -596,7 +624,7 @@ static UIImage *NSDashboardUpdateIcon(void) {
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     if (section == NSDashboardSectionSystemRules) {
         return ![self showsSystemRules] ? nil
-               : [self.policy.document[@"allowAppleSystemProcesses"] boolValue]
+               : NSAppleSystemTrafficEnabled(self.policy.document)
                    ? NSSystemRulesLockedMessage
                    : @"Tap a system identity to change its rule";
     }
@@ -871,6 +899,8 @@ static UIImage *NSDashboardUpdateIcon(void) {
     if (path.section == NSDashboardSectionFirewall) {
         if (path.row == NSFirewallRowEnabled) {
             cached = self.firewallCell;
+        } else if (path.row == NSFirewallRowSockets) {
+            cached = self.socketCell;
         } else if (path.row == NSFirewallRowAppleSystem) {
             cached = self.appleCell;
         } else if (path.row == NSFirewallRowAppleTelemetry) {
@@ -880,8 +910,8 @@ static UIImage *NSDashboardUpdateIcon(void) {
     UISwitch *cachedToggle =
         [cached.accessoryView isKindOfClass:UISwitch.class] ? (UISwitch *)cached.accessoryView : nil;
     BOOL persistent = path.section == NSDashboardSectionFirewall &&
-                      (path.row == NSFirewallRowEnabled || path.row == NSFirewallRowAppleSystem ||
-                       path.row == NSFirewallRowAppleTelemetry);
+                      (path.row == NSFirewallRowEnabled || path.row == NSFirewallRowSockets ||
+                       path.row == NSFirewallRowAppleSystem || path.row == NSFirewallRowAppleTelemetry);
     BOOL global = path.section == NSDashboardSectionGlobalRules;
     NSString *reuse = persistent ? nil : global ? @"DashboardGlobalRule" : @"DashboardSubtitle";
     UITableViewCell *cell = cached ?: (reuse ? [tableView dequeueReusableCellWithIdentifier:reuse] : nil);
@@ -1010,45 +1040,35 @@ static UIImage *NSDashboardUpdateIcon(void) {
         cell.textLabel.text = @"Allow iOS system traffic";
         cell.detailTextLabel.text = @"Allow Apple identities unless a global rule matches";
         UISwitch *toggle = cachedToggle ?: [UISwitch new];
-        [toggle setOn:[self.policy.document[@"allowAppleSystemProcesses"] boolValue] animated:NO];
-        toggle.enabled = self.policy != nil && !self.busy && !self.importPending;
-        toggle.accessibilityLabel = cell.textLabel.text;
         [toggle removeTarget:self action:NULL forControlEvents:UIControlEventValueChanged];
         [toggle addTarget:self
                       action:@selector(appleSystemProcessesChanged:)
             forControlEvents:UIControlEventValueChanged];
         cell.accessoryView = toggle;
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        [self refreshFirewallSwitchCell:cell row:NSFirewallRowAppleSystem];
     } else if (path.section == NSDashboardSectionFirewall && path.row == NSFirewallRowAppleTelemetry) {
-        BOOL parent = [self.policy.document[@"allowAppleSystemProcesses"] boolValue];
         cell.textLabel.text = @"Block iOS system telemetry";
         cell.detailTextLabel.text = @"Block 20 telemetry processes unless a global rule matches";
-        cell.textLabel.textColor = parent ? UIColor.labelColor : UIColor.tertiaryLabelColor;
-        cell.detailTextLabel.textColor = parent ? UIColor.secondaryLabelColor : UIColor.tertiaryLabelColor;
         UISwitch *toggle = cachedToggle ?: [UISwitch new];
-        [toggle setOn:[self.policy.document[@"blockAppleSystemTelemetry"] boolValue] animated:NO];
-        toggle.enabled = parent && self.policy != nil && !self.busy && !self.importPending;
-        toggle.accessibilityLabel = cell.textLabel.text;
         [toggle removeTarget:self action:NULL forControlEvents:UIControlEventValueChanged];
         [toggle addTarget:self
                       action:@selector(appleSystemTelemetryChanged:)
             forControlEvents:UIControlEventValueChanged];
         cell.accessoryView = toggle;
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        [self refreshFirewallSwitchCell:cell row:NSFirewallRowAppleTelemetry];
     } else if (path.section == NSDashboardSectionFirewall && path.row == NSFirewallRowSockets) {
         cell.textLabel.text = @"Filter System Sockets";
         cell.detailTextLabel.text = @"Required to filter all app network";
         UISwitch *toggle = cachedToggle ?: [UISwitch new];
-        toggle.on = [self.policy.document[@"filterSockets"] boolValue];
-        toggle.enabled = self.policy != nil && self.preferencesLoaded && self.configurationReady &&
-                         !self.busy && !self.importPending;
-        toggle.accessibilityLabel = cell.textLabel.text;
         [toggle removeTarget:self action:NULL forControlEvents:UIControlEventValueChanged];
         [toggle addTarget:self
                       action:@selector(socketFilteringChanged:)
             forControlEvents:UIControlEventValueChanged];
         cell.accessoryView = toggle;
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        [self refreshFirewallSwitchCell:cell row:NSFirewallRowSockets];
     } else if (path.section == NSDashboardSectionFirewall) {
         cell.textLabel.text = path.row == NSFirewallRowDefault ? @"Default Rule" : @"Unidentified";
         cell.detailTextLabel.text =
@@ -1190,6 +1210,9 @@ static UIImage *NSDashboardUpdateIcon(void) {
     NSConfigureDashboardBackground(cell, rowTint);
     if (path.section == NSDashboardSectionFirewall && path.row == NSFirewallRowEnabled) {
         self.firewallCell = cell;
+    }
+    if (path.section == NSDashboardSectionFirewall && path.row == NSFirewallRowSockets) {
+        self.socketCell = cell;
     }
     if (path.section == NSDashboardSectionFirewall && path.row == NSFirewallRowAppleSystem) {
         self.appleCell = cell;
