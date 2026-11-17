@@ -1136,7 +1136,7 @@ static BOOL NSSystemRuleEditAllowed(NSDictionary *document, BOOL system, NSError
     [self
         updatePolicy:^BOOL(NSMutableDictionary *document, NSError **error) {
             document[@"blockAppleSystemTelemetry"] =
-                @(block && [document[@"allowAppleSystemProcesses"] boolValue]);
+                block && [document[@"allowAppleSystemProcesses"] boolValue] ? @YES : @NO;
             if ([document[@"blockAppleSystemTelemetry"] boolValue]) {
                 document[@"appleSystemTelemetryIntroduced"] = @YES;
             }

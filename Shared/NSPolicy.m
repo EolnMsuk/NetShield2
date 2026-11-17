@@ -218,7 +218,7 @@ static NSString *NSAppActionForDirection(id value, NSFlowDirection direction) {
     }
     canonicalDocument[@"rules"] = appRules;
     canonicalDocument[@"blockAppleSystemTelemetry"] =
-        @([appleAllowance boolValue] && [d[@"blockAppleSystemTelemetry"] boolValue]);
+        [appleAllowance boolValue] && [d[@"blockAppleSystemTelemetry"] boolValue] ? @YES : @NO;
     canonicalDocument[@"appleSystemTelemetryIntroduced"] =
         @([d[@"appleSystemTelemetryIntroduced"] boolValue]);
     // Preserve saved keys: canonical aliases can carry distinct direction coverage.

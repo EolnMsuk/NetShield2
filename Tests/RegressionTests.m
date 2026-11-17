@@ -15,6 +15,7 @@
 #import "../Shared/NSPermissionQueue.h"
 #import "../Shared/NSMonitorSchema.h"
 #import "../Shared/NSNotificationPolicy.h"
+#import "../Shared/NSValidation.h"
 #import "../FilterControl/NSPermissionNotifications.h"
 #import "RuleFixtures.h"
 #include <errno.h>
@@ -50,17 +51,26 @@ static NSDictionary *Monitor(NSArray *requests, BOOL running, NSInteger engine, 
     };
 }
 static void SaveRule(NSString *identity, NSString *action) {
-    CHECK(NSUpdatePolicy(
+    NSError *error = nil;
+    BOOL saved = NSUpdatePolicy(
         ^BOOL(NSMutableDictionary *document, NSError **error) {
             document[@"rules"][identity] = NSAppRuleBySelecting(nil, action);
             return YES;
         },
-        NULL));
+        &error);
+    if (!saved) {
+        NSLog(@"Saving rule for %@ failed: %@", identity, error);
+    }
+    CHECK(saved);
 }
 static void TestPolicyAndCache(void) {
     CHECK(NSEnsurePolicy(NULL));
     NSPolicy *first = NSReadPolicy(NULL);
     CHECK(first != nil);
+    CHECK(NSBoolean(first.document[@"blockAppleSystemTelemetry"]));
+    CHECK(NSBoolean(first.document[@"appleSystemTelemetryIntroduced"]));
+    NSPolicy *revalidated = [NSPolicy policyWithDocument:first.document error:NULL];
+    CHECK(revalidated && [revalidated.document isEqual:first.document]);
     CHECK([first.document[@"filterSockets"] boolValue]);
     CHECK(first == NSReadPolicy(NULL));
     SaveRule(@"test.app", @"block");
@@ -137,6 +147,10 @@ static void TestAppleSystemTransitions(void) {
         NSInvalidatePolicyCache(); // A new reader must restore the same choices.
         NSPolicy *policy = NSReadPolicy(NULL);
         BOOL parent = [state[0] boolValue], block = parent && [state[1] boolValue];
+        CHECK(NSBoolean(policy.document[@"blockAppleSystemTelemetry"]));
+        CHECK(NSBoolean(policy.document[@"appleSystemTelemetryIntroduced"]));
+        NSPolicy *revalidated = [NSPolicy policyWithDocument:policy.document error:NULL];
+        CHECK(revalidated && [revalidated.document isEqual:policy.document]);
         CHECK([policy.document[@"rules"] isEqual:rules] && !policy.document[@"rules"][unsavedIdentity]);
         CHECK([policy.document[@"ruleDestinations"] isEqual:upgrade[@"ruleDestinations"]]);
         CHECK([policy.document[@"askGenerations"] isEqual:upgrade[@"askGenerations"]]);
