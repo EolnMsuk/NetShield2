@@ -119,7 +119,7 @@
     BOOL once = [request[@"mode"] isEqual:@"once"];
     dispatch_async(NSAppStorageQueue(), ^{
         NSError *error = nil;
-        BOOL automatic = [NSReadPolicy(NULL) automaticallyAllowsIdentity:request[@"identity"]];
+        BOOL automatic = [NSReadPolicy(NULL) automaticSystemActionForIdentity:request[@"identity"]] != nil;
         BOOL saved = !automatic && NSAnswerPermissionRequestWithRule(request, rule, &error);
         NSDictionary *destination =
             saved && !unidentified ? NSReadPolicy(NULL).document[@"ruleDestinations"][request[@"identity"]]

@@ -392,6 +392,92 @@ static void TestDecisionParity(void) {
             }
         }
     }
+    EXPECT(!NSIsAppleSystemIdentity(nil) && !NSIsAppleSystemIdentity((id) @123));
+    NSArray *ordinarySystem = @[
+        @"com.apple.example", @".com.apple.example", @"Apple.com.apple.example",
+        @"ZL6BUSYGB3.com.apple.example", @"prefixcom.apple.example", @".com.apple.ReportCrash.Other",
+        @"com.apple.analyticsd", @".com.apple.Analyticsd", @"prefix.com.apple.analyticsd"
+    ];
+    NSArray *identities = [[NSAppleSystemTelemetryIdentities() arrayByAddingObjectsFromArray:ordinarySystem]
+        arrayByAddingObjectsFromArray:@[ @"com.appleish.example", @".com.Apple.analyticsd", @"app", @"" ]];
+    NSArray *destinations = @[
+        @{}, @{@"protocol" : @"tcp"},
+        @{@"protocol" : @"udp",
+          @"port" : @1,
+          @"localPort" : @65535},
+        @{@"domain" : @"example.test"}, @{@"address" : @"192.0.2.1", @"protocol" : @"other"},
+        @{@"address" : @"2001:db8::1",
+          @"port" : @65535,
+          @"localPort" : @1},
+        peer
+    ];
+    for (NSArray *state in @[ @[ @NO, @NO ], @[ @YES, @NO ], @[ @YES, @YES ] ]) {
+        NSMutableDictionary *document = [[NSPolicy defaultDocument] mutableCopy];
+        document[@"allowAppleSystemProcesses"] = state[0];
+        document[@"blockAppleSystemTelemetry"] = state[1];
+        document[@"unattributed"] = @"block";
+        NSPolicy *policy = [NSPolicy policyWithDocument:document error:NULL];
+        EXPECT(policy);
+        for (NSString *identity in identities) {
+            BOOL system = [state[0] boolValue] && NSIsAppleSystemIdentity(identity);
+            BOOL blocked = system && [state[1] boolValue] &&
+                           [NSAppleSystemTelemetryIdentities() containsObject:identity];
+            NSFlowDisposition expected = !identity.length ? NSFlowDrop
+                                         : system         ? (blocked ? NSFlowDrop : NSFlowAllow)
+                                                          : NSFlowAsk;
+            for (NSNumber *direction in @[ @0, @1, @2, @-1, @99 ]) {
+                for (NSDictionary *destination in destinations) {
+                    for (NSNumber *socket in @[ @NO, @YES ]) {
+                        NSFlowEvaluation decision = [policy evaluateIdentity:identity
+                                                                   direction:direction.integerValue
+                                                                 destination:destination
+                                                                      socket:socket.boolValue];
+                        EXPECT(decision.disposition == expected);
+                        EXPECT((decision.reason == NSFlowReasonSystem) == system);
+                        EXPECT([policy allowsIdentity:identity
+                                            direction:direction.integerValue
+                                          destination:destination] == (expected == NSFlowAllow));
+                        EXPECT([policy requiresPermissionForIdentity:identity
+                                                           direction:direction.integerValue
+                                                         destination:destination] == (expected == NSFlowAsk));
+                    }
+                }
+            }
+        }
+        EXPECT([policy evaluateIdentity:nil direction:NSFlowDirectionUnknown destination:@{} socket:NO]
+                   .disposition == NSFlowDrop);
+    }
+    for (NSString *action in @[ @"allow", @"block" ]) {
+        NSString *identity =
+            [action isEqual:@"allow"] ? @".com.apple.ReportCrash.Root" : @"prefixcom.apple.example";
+        NSMutableDictionary *document = [[NSPolicy defaultDocument] mutableCopy];
+        document[@"blockAppleSystemTelemetry"] = @YES;
+        document[@"globalRules"] =
+            @{NSFixtureGlobal(identity, @"192.0.2.1", @"443", @"1234", @"tcp", action) : action};
+        NSPolicy *policy = [NSPolicy policyWithDocument:document error:NULL];
+        EXPECT(policy);
+        for (NSNumber *direction in @[ @0, @1, @2 ]) {
+            NSFlowEvaluation matched = [policy evaluateIdentity:identity
+                                                      direction:direction.integerValue
+                                                    destination:peer
+                                                         socket:YES];
+            EXPECT(matched.reason == NSFlowReasonGlobal);
+            EXPECT(matched.disposition == ([action isEqual:@"allow"] ? NSFlowAllow : NSFlowDrop));
+            EXPECT([policy allowsIdentity:identity direction:direction.integerValue
+                              destination:peer] == (matched.disposition == NSFlowAllow));
+            NSFlowEvaluation deferred = [policy evaluateIdentity:identity
+                                                       direction:direction.integerValue
+                                                     destination:@{@"protocol" : @"tcp"}
+                                                          socket:YES];
+            EXPECT(deferred.disposition == NSFlowNeedsEndpoints && deferred.reason == NSFlowReasonEndpoints);
+            NSFlowEvaluation available = [policy evaluateIdentity:identity
+                                                        direction:direction.integerValue
+                                                      destination:@{@"protocol" : @"tcp"}
+                                                           socket:NO];
+            EXPECT(available.reason == NSFlowReasonSystem);
+            EXPECT(available.disposition == ([action isEqual:@"allow"] ? NSFlowDrop : NSFlowAllow));
+        }
+    }
 }
 static void TestActivityGenerationsAndCounters(void) {
     NSDictionary *event = @{

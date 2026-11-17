@@ -50,7 +50,7 @@ static inline BOOL NSIsPermissionNotificationAction(NSString *category, NSDictio
            [NSPermissionRuleValues(request) containsObject:action];
 }
 
-static inline void NSRemoveAutomaticallyAllowedNotifications(void) {
+static inline void NSRemoveAutomaticallyManagedNotifications(void) {
     UNUserNotificationCenter *center = UNUserNotificationCenter.currentNotificationCenter;
     [center
         getPendingNotificationRequestsWithCompletionHandler:^(NSArray<UNNotificationRequest *> *requests) {
@@ -58,7 +58,7 @@ static inline void NSRemoveAutomaticallyAllowedNotifications(void) {
             NSMutableArray *identifiers = [NSMutableArray new];
             for (UNNotificationRequest *request in requests) {
                 if (NSIsPermissionCategory(request.content.categoryIdentifier) &&
-                    [policy automaticallyAllowsIdentity:request.content.userInfo[@"identity"]]) {
+                    [policy automaticSystemActionForIdentity:request.content.userInfo[@"identity"]]) {
                     [identifiers addObject:request.identifier];
                 }
             }
@@ -72,7 +72,7 @@ static inline void NSRemoveAutomaticallyAllowedNotifications(void) {
         for (UNNotification *notification in notifications) {
             UNNotificationRequest *request = notification.request;
             if (NSIsPermissionCategory(request.content.categoryIdentifier) &&
-                [policy automaticallyAllowsIdentity:request.content.userInfo[@"identity"]]) {
+                [policy automaticSystemActionForIdentity:request.content.userInfo[@"identity"]]) {
                 [identifiers addObject:request.identifier];
             }
         }

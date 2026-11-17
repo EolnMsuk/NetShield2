@@ -3,9 +3,9 @@
 NS_ASSUME_NONNULL_BEGIN
 static inline BOOL NSIsAppleSystemIdentity(NSString *_Nullable identity) {
     return [identity isKindOfClass:NSString.class] &&
-           ([identity hasPrefix:@"com.apple."] || [identity hasPrefix:@".com.apple."] ||
-            [identity hasPrefix:@"Apple.com.apple."]);
+           [identity rangeOfString:@"com.apple." options:NSLiteralSearch].location != NSNotFound;
 }
+FOUNDATION_EXPORT NSArray<NSString *> *NSAppleSystemTelemetryIdentities(void);
 
 typedef NS_ENUM(NSInteger, NSFlowDirection) {
     NSFlowDirectionUnknown = 0,
@@ -43,6 +43,7 @@ typedef struct {
                          destination:(NSDictionary *)destination
                               socket:(BOOL)socket;
 - (BOOL)automaticallyAllowsIdentity:(nullable NSString *)identity;
+- (nullable NSString *)automaticSystemActionForIdentity:(nullable NSString *)identity;
 - (BOOL)allowsIdentity:(nullable NSString *)identity direction:(NSFlowDirection)direction;
 - (BOOL)requiresPermissionForIdentity:(nullable NSString *)identity;
 - (BOOL)requiresPermissionForRequest:(NSDictionary *)request;

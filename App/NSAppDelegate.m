@@ -79,7 +79,8 @@
         }
         NSError *error = nil;
         BOOL saved = NSAnswerPermissionRequestWithRule(request, rule, &error);
-        BOOL automatic = !saved && [NSReadPolicy(NULL) automaticallyAllowsIdentity:request[@"identity"]];
+        BOOL automatic =
+            !saved && [NSReadPolicy(NULL) automaticSystemActionForIdentity:request[@"identity"]] != nil;
         dispatch_async(dispatch_get_main_queue(), ^{
             if (delivered) {
                 return;

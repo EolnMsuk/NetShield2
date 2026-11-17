@@ -4,7 +4,6 @@
 
 NetShield2 is a firewall and network monitor for jailbroken iOS 15–18 devices using rootless, RootHide, or rootful packages. Apple's Network Extension content filter evaluates the browser flows that iOS delivers and, with **Filter System Sockets** enabled, the socket flows it delivers.
 
-
 ## GitHub build and release
 
 | Variant | `THEOS_PACKAGE_SCHEME` | Debian architecture | App path inside the extracted package |
@@ -31,12 +30,12 @@ NetShield2/
 |   +-- NSConfigurationCoordinator.h   # Defines the shared filter configuration transaction API.
 |   +-- NSConfigurationCoordinator.m   # Serializes preference changes and tracks unfinished writes.
 |   +-- NSDashboard+Configuration.m    # Captures fallback readback state and handles firewall toggles, scope, and reset.
-|   +-- NSDashboard+Internal.h         # Shares dashboard state, displayed global rules, pending selections, and private category methods.
+|   +-- NSDashboard+Internal.h         # Names the seven FIREWALL rows and shares switch cells, lock text, state and private methods.
 |   +-- NSDashboard+Notifications.m    # Manages notification authorization and in-app permission requests.
-|   +-- NSDashboard+Table.m            # Renders sections and search, publishes matching global rows/actions, and guards selections and swipes.
+|   +-- NSDashboard+Table.m            # Renders system switches, effective System Rules, activity and guarded row/swipe actions.
 |   +-- NSDashboard+Updates.m          # Schedules update checks and displays available releases.
 |   +-- NSDashboard.h                  # Declares the main dashboard controller.
-|   +-- NSDashboard.m                  # Coordinates policy readback, dashboard refreshes, guarded rule edits, JSON import and export.
+|   +-- NSDashboard.m                  # Commits system switches, reveals telemetry rows and guards edits, readbacks, imports and exports.
 |   +-- NSFilterBootPolicy.h           # Declares boot fallback checks and migration helpers.
 |   +-- NSFilterBootPolicy.m           # Applies and verifies the stock-boot fallback setting.
 |   +-- NSFilterRemoval.h              # Declares verified filter removal and shared-state cleanup.
@@ -66,14 +65,14 @@ NetShield2/
 |   +-- NSDomainResolver.h             # Declares the DNS resolver and injectable lookup interfaces.
 |   +-- NSDomainResolver.m             # Schedules DNS lookups and handles retries and cancellation.
 |   +-- NSPermissionNotifications.h    # Declares permission notification delivery interfaces.
-|   +-- NSPermissionNotifications.m    # Sends, retries, and withdraws permission notifications.
+|   +-- NSPermissionNotifications.m    # Sends, retries and withdraws notifications using current request-level policy checks.
 |   +-- NSProviderWorkQueue.h          # Declares bounded work and reply queues for the provider.
 |   +-- NSProviderWorkQueue.m          # Limits queued work and delivers each admitted reply once.
 |   +-- Resources/
 |       +-- Info.plist                 # Registers the Network Extension control provider.
 +-- FilterData/
 |   +-- Entitlements.plist             # Declares the data extension's signing entitlements.
-|   +-- FilterDataProvider.m           # Evaluates flows against policy and returns iOS filter verdicts.
+|   +-- FilterDataProvider.m           # Uses shared evaluation for new/deferred flows and refreshes policy after rules change.
 |   +-- Makefile                       # Defines the data extension target and signing options.
 |   +-- Resources/
 |       +-- Info.plist                 # Registers the Network Extension data provider.
@@ -88,7 +87,7 @@ NetShield2/
 |   +-- NSDNSCache.h                   # Checks DNS answer expiry and merges results into policy.
 |   +-- NSDestination.h                # Validates destinations and formats hosts before direction/protocol in connection details.
 |   +-- NSExport.h                     # Declares immutable import results, current JSON parsing and export staging.
-|   +-- NSExport.m                     # Parses schema-3 rules, reports rejects, builds bounded exports and manages staged files.
+|   +-- NSExport.m                     # Transfers explicit raw rules, supports 3.0.0 classifier placement and reports accepted/rejected counts.
 |   +-- NSFlowDestination.h            # Extracts hosts, ports, and protocol from iOS filter flows.
 |   +-- NSGlobalRule.h                 # Declares global-condition parsing, canonical keys, overlap validation, and matching.
 |   +-- NSGlobalRule.m                 # Parses CIDRs and port ranges, compiles conditions, rejects overlaps, and matches raw identities and endpoints.
@@ -96,12 +95,12 @@ NetShield2/
 |   +-- NSMonitorSchema.h              # Declares validation for shared monitor snapshots.
 |   +-- NSMonitorSchema.m              # Validates monitor fields, activity records, and request entries.
 |   +-- NSNotificationPolicy.h         # Determines when to withdraw stale permission notifications.
-|   +-- NSNotifications.h              # Defines permission notification categories and actions.
+|   +-- NSNotifications.h              # Defines permission actions and withdraws banners for either automatic system action.
 |   +-- NSPermissionQueue.h            # Declares the queue for flows waiting on user decisions.
-|   +-- NSPermissionQueue.m            # Tracks pending flows, timeouts, and completed decisions.
+|   +-- NSPermissionQueue.m            # Settles held flows with shared evaluation of captured directions/peers and handles timeouts.
 |   +-- NSPermissionRequest.h          # Defines canonical request fingerprints, scope, and presentation checks.
-|   +-- NSPolicy.h                     # Defines the policy interface, flow directions, and verdict types.
-|   +-- NSPolicy.m                     # Validates schema-5 policies, compiles global rules, and evaluates global, system, app, and fallback decisions.
+|   +-- NSPolicy.h                     # Defines raw system classification, the telemetry list interface and shared verdict APIs.
+|   +-- NSPolicy.m                     # Defines the 20 telemetry identities, validates system settings and evaluates precedence for all callers.
 |   +-- NSPolicyCache.h                # Declares policy caching and invalidation.
 |   +-- NSPolicyCache.m                # Tracks policy file identity and caches validated snapshots.
 |   +-- NSPolicyReader.h               # Declares the shared policy reader and app-group path helpers.
@@ -110,7 +109,7 @@ NetShield2/
 |   +-- NSReleaseVersion.h             # Validates release versions and compares their numeric parts.
 |   +-- NSRuleChoices.h                # Defines rule choices and directional selection behavior.
 |   +-- NSStore.h                      # Declares shared policy, monitoring, and cleanup operations.
-|   +-- NSStore.m                      # Persists rules and monitor data, applies decisions, and clears state.
+|   +-- NSStore.m                      # Commits policy transactions, checks current requests, imports rules atomically and clears presentation state.
 |   +-- NSConfigurationRecord.h        # Defines record admission, immutable tokens, and execution hooks.
 |   +-- NSConfigurationRecord.m        # Validates records and bounds physical locking.
 |   +-- NSStoreLock.h                  # Declares the shared filesystem lock.
@@ -119,14 +118,14 @@ NetShield2/
 +-- Tests/
 |   +-- BootPolicyTests.m              # Tests boot fallback settings, preference readback, and recovery.
 |   +-- ConfigurationTests.m           # Tests preference transaction timeouts and pending writes.
-|   +-- HardeningTests.m               # Tests bounded I/O, DNS, reply queues, and activity safety.
+|   +-- HardeningTests.m               # Tests decision parity across system states, identities/endpoints, globals, bounded I/O, DNS and queues.
 |   +-- RecoveryTests.m                # Tests DNS recovery, notification retries, and activity clearing.
-|   +-- RegressionTests.m              # Tests rule matching, process-name formatting, requests, storage, and exports.
+|   +-- RegressionTests.m              # Tests switch restoration at capacity, transfers, held requests, late banners and existing rule/storage behavior.
 |   +-- RespringTests.m                # Tests respring launch and fallback with a mock launcher.
 |   +-- RuleFixtures.h                 # Builds current-schema rule, DNS lifetime, and permission-request test fixtures.
-+-- changelog.md                       # Supplies versioned notes for the GitHub draft release.
++-- changelog.md                       # Supplies newest-first history for the Sileo Changelog tab and GitHub draft release.
 +-- control                            # Defines the Debian package ID, version, and dependencies.
-+-- depiction.json                     # Defines the package presentation in Sileo.
++-- depiction.json                     # Defines the Sileo Details and Changelog tabs with the existing header/screenshots.
 +-- layout/
 |   +-- DEBIAN/
 |       +-- postinst                   # Registers the app after install and schedules a respring.

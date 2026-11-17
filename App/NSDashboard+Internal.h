@@ -12,6 +12,8 @@
 #import "NSReleaseFetch.h"
 #import "NSAppStorage.h"
 
+FOUNDATION_EXPORT NSString *const NSSystemRulesLockedMessage;
+
 typedef NS_ENUM(NSInteger, NSConfigurationOperation) {
     NSConfigurationDisable,
     NSConfigurationEnable,
@@ -36,6 +38,16 @@ typedef NS_ENUM(NSInteger, NSConfigurationRow) {
     NSConfigurationRowReset,
     NSConfigurationRowRemove,
     NSConfigurationRowCount,
+};
+typedef NS_ENUM(NSInteger, NSFirewallRow) {
+    NSFirewallRowEnabled,
+    NSFirewallRowSockets,
+    NSFirewallRowAppleSystem,
+    NSFirewallRowAppleTelemetry,
+    NSFirewallRowStatus,
+    NSFirewallRowUnidentified,
+    NSFirewallRowDefault,
+    NSFirewallRowCount,
 };
 
 @interface NSDashboard () <UISearchBarDelegate, UIGestureRecognizerDelegate, UIDocumentPickerDelegate>
@@ -85,6 +97,7 @@ typedef NS_ENUM(NSInteger, NSConfigurationRow) {
 @property(nonatomic, copy) NSDictionary *pendingUpdateResult;
 @property(nonatomic, strong) UITableViewCell *firewallCell;
 @property(nonatomic, strong) UITableViewCell *appleCell;
+@property(nonatomic, strong) UITableViewCell *telemetryCell;
 @property(nonatomic, copy) NSArray *displayedRows;
 @property(nonatomic, copy) NSArray *displaySignature;
 @property(nonatomic, strong) NSMutableDictionary *rowHeights;
@@ -141,6 +154,8 @@ typedef NS_ENUM(NSInteger, NSConfigurationRow) {
 - (NSString *)ruleTitle:(NSString *)rule;
 - (void)firewallChanged:(UISwitch *)sender;
 - (void)appleSystemProcessesChanged:(UISwitch *)sender;
+- (void)appleSystemTelemetryChanged:(UISwitch *)sender;
+- (void)showSystemRulesLocked;
 - (void)openSupportURL:(NSURL *)url;
 - (void)supportDeveloper;
 - (void)showNotificationHelp;

@@ -78,9 +78,15 @@ NSRuleImportResult *NSParseRulesJSON(NSData *data, NSError **error) {
     NSMutableDictionary *identities = [NSMutableDictionary new], *globals = [NSMutableDictionary new],
                         *accepted = [NSMutableDictionary new], *rejected = [NSMutableDictionary new];
     NSMutableArray *compiled = [NSMutableArray new], *details = [NSMutableArray new];
+    // Only 3.0.0 exports used the old prefix classifier. Other schema-3 exports
+    // must keep current app/system placement checks.
+    BOOL oldClassifier = [root[@"appVersion"] isEqual:@"3.0.0"];
+    for (NSString *category in categories) {
+        accepted[category] = @0;
+    }
     NSUInteger count = 0, cost = 0;
     for (NSString *category in categories) {
-        NSUInteger good = 0, bad = 0, index = 0;
+        NSUInteger bad = 0, index = 0;
         BOOL global = [category isEqual:@"globalRules"];
         for (id record in root[category]) {
             index++;
@@ -110,7 +116,12 @@ NSRuleImportResult *NSParseRulesJSON(NSData *data, NSError **error) {
                     reason = @"invalid identity or directional rule record";
                 } else {
                     key = record[@"identity"];
-                    if (NSIsAppleSystemIdentity(key) != [category isEqual:@"systemRules"]) {
+                    BOOL system = NSIsAppleSystemIdentity(key);
+                    BOOL previouslySystem = [key hasPrefix:@"com.apple."] || [key hasPrefix:@".com.apple."] ||
+                                            [key hasPrefix:@"Apple.com.apple."];
+                    BOOL oldPlacement =
+                        oldClassifier && [category isEqual:@"appRules"] && system && !previouslySystem;
+                    if (system != [category isEqual:@"systemRules"] && !oldPlacement) {
                         reason = @"identity is in the wrong app/system collection";
                     } else if (identities[key]) {
                         reason = @"duplicate identity";
@@ -136,11 +147,13 @@ NSRuleImportResult *NSParseRulesJSON(NSData *data, NSError **error) {
             } else {
                 identities[key] = appRule;
             }
-            good++;
+            NSString *reportedCategory = global                         ? category
+                                         : NSIsAppleSystemIdentity(key) ? @"systemRules"
+                                                                        : @"appRules";
+            accepted[reportedCategory] = @([accepted[reportedCategory] unsignedIntegerValue] + 1);
             count++;
             cost += entryCost;
         }
-        accepted[category] = @(good);
         rejected[category] = @(bad);
     }
     NSRuleImportResult *result = [NSRuleImportResult new];
@@ -389,6 +402,7 @@ NSData *NSRulesAndActivityJSON(NSPolicy *policy, NSArray<NSDictionary *> *events
         @"defaultRule" : document[@"default"],
         @"unidentifiedRule" : document[@"unattributed"],
         @"allowAppleSystemProcesses" : @([document[@"allowAppleSystemProcesses"] boolValue]),
+        @"blockAppleSystemTelemetry" : @([document[@"blockAppleSystemTelemetry"] boolValue]),
         @"appRules" : appRules,
         @"systemRules" : systemRules,
         @"globalRules" : globalRules,

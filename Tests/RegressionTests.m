@@ -86,8 +86,152 @@ static NSURL *StageExport(NSData *data, NSURL *container) {
     return url;
 }
 
+static void TestAppleSystemTransitions(void) {
+    NSDictionary *original = NSReadPolicy(NULL).document;
+    NSArray *telemetry = NSAppleSystemTelemetryIdentities();
+    CHECK(telemetry.count == 20 && [NSSet setWithArray:telemetry].count == 20);
+    NSString *savedIdentity = telemetry[0], *unsavedIdentity = telemetry[1];
+    NSDictionary *mixed = @{@"inbound" : @"block", @"outbound" : @"allow"};
+    NSMutableDictionary *upgrade = [[NSPolicy defaultDocument] mutableCopy];
+    CHECK(![upgrade[@"blockAppleSystemTelemetry"] boolValue] &&
+          ![upgrade[@"appleSystemTelemetryIntroduced"] boolValue]);
+    [upgrade removeObjectForKey:@"blockAppleSystemTelemetry"];
+    [upgrade removeObjectForKey:@"appleSystemTelemetryIntroduced"];
+    NSMutableDictionary *rules = [@{savedIdentity : mixed} mutableCopy];
+    for (NSUInteger index = 1; index < NSMaximumRules; index++) {
+        rules[[NSString stringWithFormat:@"capacity.%lu", (unsigned long)index]] = @{@"both" : @"block"};
+    }
+    upgrade[@"rules"] = rules;
+    upgrade[@"ruleDestinations"] = @{savedIdentity : @{@"domain" : @"saved.example", @"port" : @443}};
+    upgrade[@"askGenerations"] = @{savedIdentity : @"saved-generation"};
+    CHECK(NSWriteDocument(upgrade, NSPolicyFile, NULL));
+    NSPolicy *legacy = NSReadPolicy(NULL);
+    CHECK(legacy && ![legacy.document[@"blockAppleSystemTelemetry"] boolValue]);
+    CHECK(![legacy.document[@"appleSystemTelemetryIntroduced"] boolValue]);
+    NSMutableDictionary *missingParent = [upgrade mutableCopy];
+    [missingParent removeObjectForKey:@"allowAppleSystemProcesses"];
+    missingParent[@"blockAppleSystemTelemetry"] = @YES;
+    NSPolicy *withoutParent = [NSPolicy policyWithDocument:missingParent error:NULL];
+    CHECK(withoutParent && ![withoutParent.document[@"blockAppleSystemTelemetry"] boolValue]);
+    CHECK(![withoutParent automaticSystemActionForIdentity:savedIdentity]);
+    for (NSString *key in @[ @"blockAppleSystemTelemetry", @"appleSystemTelemetryIntroduced" ]) {
+        for (id invalid in @[ @0, @1, @"true", NSNull.null ]) {
+            NSMutableDictionary *bad = [upgrade mutableCopy];
+            bad[key] = invalid;
+            CHECK(![NSPolicy policyWithDocument:bad error:NULL]);
+        }
+    }
+    for (NSArray *state in @[
+             @[ @YES, @YES ], @[ @YES, @NO ], @[ @NO, @NO ], @[ @YES, @NO ], @[ @YES, @YES ], @[ @NO, @YES ]
+         ]) {
+        CHECK(NSUpdatePolicy(
+            ^BOOL(NSMutableDictionary *document, NSError **error) {
+                document[@"allowAppleSystemProcesses"] = state[0];
+                document[@"blockAppleSystemTelemetry"] = state[1];
+                if ([state[0] boolValue] && [state[1] boolValue]) {
+                    document[@"appleSystemTelemetryIntroduced"] = @YES;
+                }
+                return YES;
+            },
+            NULL));
+        NSInvalidatePolicyCache(); // A new reader must restore the same choices.
+        NSPolicy *policy = NSReadPolicy(NULL);
+        BOOL parent = [state[0] boolValue], block = parent && [state[1] boolValue];
+        CHECK([policy.document[@"rules"] isEqual:rules] && !policy.document[@"rules"][unsavedIdentity]);
+        CHECK([policy.document[@"ruleDestinations"] isEqual:upgrade[@"ruleDestinations"]]);
+        CHECK([policy.document[@"askGenerations"] isEqual:upgrade[@"askGenerations"]]);
+        CHECK([policy.document[@"appleSystemTelemetryIntroduced"] boolValue]);
+        CHECK([policy.document[@"blockAppleSystemTelemetry"] boolValue] == block);
+        for (NSNumber *direction in @[ @0, @1, @2 ]) {
+            NSFlowEvaluation saved = [policy evaluateIdentity:savedIdentity
+                                                    direction:direction.integerValue
+                                                  destination:@{}
+                                                       socket:NO];
+            NSFlowEvaluation unsaved = [policy evaluateIdentity:unsavedIdentity
+                                                      direction:direction.integerValue
+                                                    destination:@{}
+                                                         socket:NO];
+            NSFlowDisposition expected =
+                parent ? (block ? NSFlowDrop : NSFlowAllow)
+                       : (direction.integerValue == NSFlowDirectionInbound    ? NSFlowDrop
+                          : direction.integerValue == NSFlowDirectionOutbound ? NSFlowAllow
+                                                                              : NSFlowAsk);
+            CHECK(saved.disposition == expected);
+            CHECK(unsaved.disposition == (parent ? expected : NSFlowAsk));
+            CHECK((saved.reason == NSFlowReasonSystem) == parent);
+        }
+        NSDictionary *export =
+            [NSJSONSerialization JSONObjectWithData:NSRulesAndActivityJSON(policy, @[], @"3.0.1", NULL)
+                                            options:0
+                                              error:NULL];
+        CHECK([export[@"appRules"] count] + [export[@"systemRules"] count] == NSMaximumRules);
+        CHECK([export[@"systemRules"] count] == 1);
+        CHECK([export[@"blockAppleSystemTelemetry"] boolValue] == block);
+    }
+    NSMutableDictionary *empty = [[NSPolicy defaultDocument] mutableCopy];
+    empty[@"rules"] = [NSMutableDictionary new];
+    empty[@"allowAppleSystemProcesses"] = @NO;
+    empty[@"appleSystemTelemetryIntroduced"] = @YES;
+    CHECK(NSClearIdentityRules(empty, YES, @[], NULL).count == 0);
+    CHECK(![empty[@"appleSystemTelemetryIntroduced"] boolValue]);
+
+    // Both automatic actions settle every held direction. A global Allow still
+    // decides its own waiter from the peer captured when that flow was held.
+    for (NSNumber *block in @[ @NO, @YES ]) {
+        NSMutableDictionary *document = [[NSPolicy defaultDocument] mutableCopy];
+        document[@"allowAppleSystemProcesses"] = @NO;
+        CHECK(NSWriteDocument(document, NSPolicyFile, NULL));
+        NSPolicy *asking = NSReadPolicy(NULL);
+        NSPermissionQueue *queue = [NSPermissionQueue new];
+        [queue resolveWithPolicy:asking now:0];
+        __block NSUInteger finished = 0;
+        NSDictionary *request = nil;
+        for (NSNumber *direction in @[ @1, @2, @0 ]) {
+            NSDictionary *created = [queue
+                enqueueIdentity:savedIdentity
+                      direction:direction.integerValue
+                    destination:@{
+                        @"domain" : direction.integerValue == NSFlowDirectionOutbound ? @"override.example"
+                                                                                      : @"other.example"
+                    }
+                            now:1
+                           date:NSDate.date
+                     completion:^(BOOL allow) {
+                         CHECK(allow ==
+                               (!block.boolValue || direction.integerValue == NSFlowDirectionOutbound));
+                         finished++;
+                     }];
+            request = request ?: created;
+        }
+        CHECK(request &&
+              NSWriteDocument(Monitor(@[ request ], YES, NSEngineVersion, NSDate.date), NSMonitorFile, NULL));
+        CHECK(NSUpdatePolicy(
+            ^BOOL(NSMutableDictionary *current, NSError **error) {
+                current[@"allowAppleSystemProcesses"] = @YES;
+                current[@"blockAppleSystemTelemetry"] = block;
+                current[@"globalRules"] = @{
+                    NSFixtureGlobal(savedIdentity, @"override.example", @"", @"", @"any", @"allow") : @"allow"
+                };
+                return YES;
+            },
+            NULL));
+        NSPolicy *settled = NSReadPolicy(NULL);
+        CHECK(NSPermissionGenerationMatches(settled, request));
+        CHECK(![settled requiresPermissionForRequest:request]);
+        CHECK(NSShouldWithdrawPermissionRequestNotification(settled, request, YES));
+        CHECK(!NSAnswerPermissionRequestWithRule(request, @"allow-inbound", NULL));
+        CHECK([NSReadPolicy(NULL).document isEqual:settled.document]);
+        [queue resolveWithPolicy:settled now:2];
+        CHECK(finished == 3 && queue.waitingCount == 0 && queue.requests.count == 0);
+    }
+    CHECK(NSWriteDocument(original, NSPolicyFile, NULL));
+}
+
 static void TestRulesAndActivityExport(void) {
-    NSArray *systemIdentities = @[ @"com.apple.test", @".com.apple.test", @"Apple.com.apple.test" ];
+    NSArray *systemIdentities = @[
+        @"com.apple.test", @".com.apple.test", @"Apple.com.apple.test", @"ZL6BUSYGB3.com.apple.test",
+        @"prefixcom.apple.test"
+    ];
     CHECK(!NSIsAppleSystemIdentity(nil) && !NSIsAppleSystemIdentity(@"com.appleish.test"));
     NSMutableDictionary *rules = [@{@"test.app" : @"block-outbound"} mutableCopy];
     for (NSString *identity in systemIdentities) {
@@ -118,7 +262,7 @@ static void TestRulesAndActivityExport(void) {
         CHECK(parsed && !error && [parsed.identityRules isEqual:document[@"rules"]]);
         CHECK([parsed.globalRules isEqual:document[@"globalRules"]]);
         CHECK([parsed.acceptedCounts[@"appRules"] isEqual:@1] &&
-              [parsed.acceptedCounts[@"systemRules"] isEqual:@3]);
+              [parsed.acceptedCounts[@"systemRules"] isEqual:@(systemIdentities.count)]);
         CHECK(!export[@"ruleDestinations"]);
         CHECK([export[@"recentActivity"][0][@"time"] isEqual:@"1970-01-01T00:00:00Z"]);
         CHECK([export[@"recentActivity"][0][@"bytesOut"] isEqual:event[@"bytesOut"]]);
@@ -839,6 +983,8 @@ static void TestRuleImport(void) {
     envelope[@"unidentifiedRule"] = @"allow";
     envelope[@"filterSockets"] = @YES;
     envelope[@"allowAppleSystemProcesses"] = @YES;
+    envelope[@"blockAppleSystemTelemetry"] = @YES;
+    envelope[@"appleSystemTelemetryIntroduced"] = @NO;
     NSRuleImportResult *result = NSParseRulesJSON(RulesJSON(envelope), NULL);
     CHECK(result && result.identityRules.count == 2 && result.globalRules.count == 1);
     NSMutableDictionary *local = [[NSPolicy defaultDocument] mutableCopy];
@@ -846,6 +992,8 @@ static void TestRuleImport(void) {
     local[@"unattributed"] = @"ask";
     local[@"filterSockets"] = @NO;
     local[@"allowAppleSystemProcesses"] = @NO;
+    local[@"blockAppleSystemTelemetry"] = @NO;
+    local[@"appleSystemTelemetryIntroduced"] = @YES;
     local[@"rules"] = NSFixtureRules(@{@"old.app" : @"block", @"com.apple.old" : @"allow"});
     local[@"globalRules"] = @{NSFixtureGlobal(@[], @"old.example", @"", @"", @"any", @"block") : @"block"};
     local[@"ruleDestinations"] = @{@"old.app" : @{@"port" : @443}};
@@ -919,7 +1067,10 @@ static void TestRuleImport(void) {
     CHECK([saved.document[@"rules"] isEqual:result.identityRules] &&
           [saved.document[@"globalRules"] isEqual:result.globalRules]);
     CHECK(!saved.document[@"rules"][@"old.app"] && !saved.document[@"rules"][@"com.apple.old"]);
-    for (NSString *key in @[ @"default", @"unattributed", @"allowAppleSystemProcesses", @"filterSockets" ]) {
+    for (NSString *key in @[
+             @"default", @"unattributed", @"allowAppleSystemProcesses", @"filterSockets",
+             @"blockAppleSystemTelemetry", @"appleSystemTelemetryIntroduced"
+         ]) {
         CHECK([saved.document[key] isEqual:local[key]]);
     }
     for (NSString *key in
@@ -978,6 +1129,43 @@ static void TestRuleImport(void) {
     CHECK(!NSParseRulesJSON(RulesJSON(@[]), NULL));
     CHECK(!NSParseRulesJSON([NSMutableData dataWithLength:NSMaximumRuleTransferBytes + 1], NULL));
     CHECK([NSReadPolicy(NULL).document isEqual:before]);
+    // The classifier compatibility exception is limited to real 3.0.0 placement.
+    NSString *team = @"ZL6BUSYGB3.com.apple.example";
+    NSDictionary *mixed = @{@"inbound" : @"block", @"outbound" : @"allow"};
+    NSMutableDictionary *oldExport = [@{
+        @"schemaVersion" : @3,
+        @"appVersion" : @"3.0.0",
+        @"globalRules" : @[],
+        @"appRules" : @[
+            @{@"identity" : team, @"rule" : mixed},
+            @{@"identity" : @"normal.app",
+              @"rule" : @{@"both" : @"allow"}},
+            @{@"identity" : @".com.apple.alreadySystem", @"rule" : mixed}
+        ],
+        @"systemRules" : @[
+            @{@"identity" : team,
+              @"rule" : @{@"both" : @"block"}},
+            @{@"identity" : @"wrong.app", @"rule" : mixed}
+        ]
+    } mutableCopy];
+    NSRuleImportResult *compatible = NSParseRulesJSON(RulesJSON(oldExport), NULL);
+    CHECK([compatible.identityRules[team] isEqual:mixed]);
+    CHECK([compatible.acceptedCounts isEqual:@{@"globalRules" : @0, @"appRules" : @1, @"systemRules" : @1}]);
+    CHECK([compatible.rejectedCounts isEqual:@{@"globalRules" : @0, @"appRules" : @1, @"systemRules" : @2}]);
+    CHECK(NSReplaceRulesFromImport(compatible, NULL));
+    NSPolicy *migrated = NSReadPolicy(NULL);
+    CHECK([migrated.document[@"rules"][team] isEqual:mixed]);
+    CHECK([migrated.document[@"appleSystemTelemetryIntroduced"]
+        isEqual:before[@"appleSystemTelemetryIntroduced"]]);
+    NSData *currentExport = NSRulesAndActivityJSON(migrated, @[], @"3.0.1", NULL);
+    CHECK([NSParseRulesJSON(currentExport, NULL).identityRules isEqual:compatible.identityRules]);
+    for (NSString *version in @[ @"3.0.1", @"2.8.9", @"" ]) {
+        oldExport[@"appVersion"] = version;
+        NSRuleImportResult *strict = NSParseRulesJSON(RulesJSON(oldExport), NULL);
+        CHECK([strict.identityRules[team] isEqual:@{@"both" : @"block"}]);
+        CHECK([strict.rejectedCounts[@"appRules"] isEqual:@2]);
+    }
+    CHECK(NSWriteDocument(before, NSPolicyFile, NULL));
     // First valid entry wins, independent of verdict; indices/reasons are stable.
     envelope[@"globalRules"] = @[
         NSNull.null, @{@"condition" : NSGlobalRuleCondition(global), @"action" : @"block"},
@@ -1711,6 +1899,9 @@ static void TestSocketSettingsAndDestinations(void) {
         ^BOOL(NSMutableDictionary *current, NSError **error) {
             current[@"filterSockets"] = @NO;
             current[@"rules"] = @{@"reset.app" : NSAppRuleBySelecting(nil, @"block")};
+            current[@"allowAppleSystemProcesses"] = @YES;
+            current[@"blockAppleSystemTelemetry"] = @YES;
+            current[@"appleSystemTelemetryIntroduced"] = @YES;
             current[@"ruleDestinations"] = @{@"reset.app" : @{@"port" : @443}};
             current[@"globalRules"] =
                 @{NSFixtureGlobal(@[], @"reset.example", @"", @"", @"any", @"block") : @"block"};
@@ -1730,6 +1921,8 @@ static void TestSocketSettingsAndDestinations(void) {
     NSDictionary *reset = NSReadPolicy(NULL).document;
     CHECK([reset[@"filterSockets"] boolValue]);
     CHECK([reset[@"allowAppleSystemProcesses"] boolValue]);
+    CHECK(![reset[@"blockAppleSystemTelemetry"] boolValue]);
+    CHECK(![reset[@"appleSystemTelemetryIntroduced"] boolValue]);
     CHECK([reset[@"unattributed"] isEqual:@"allow"]);
     CHECK([reset[@"default"] isEqual:@"ask"]);
     CHECK([reset[@"rules"] count] == 0 && [reset[@"globalRules"] count] == 0);
@@ -1888,6 +2081,32 @@ static void TestLateNotifications(void) {
     [center finish:3 error:nil];
     CHECK([center.removed containsObject:((UNNotificationRequest *)center.requests[3]).identifier]);
     [old stop];
+    for (NSNumber *block in @[ @NO, @YES ]) {
+        NSMutableDictionary *document = [[NSPolicy defaultDocument] mutableCopy];
+        document[@"allowAppleSystemProcesses"] = @NO;
+        CHECK(NSWriteDocument(document, NSPolicyFile, NULL));
+        NSDictionary *telemetry = NSFixtureRequest(
+            @{@"token" : @"telemetry", @"identity" : @".com.apple.analyticsd", @"direction" : @"outbound"},
+            NSReadPolicy(NULL));
+        FakeNotificationCenter *lateCenter = [FakeNotificationCenter new];
+        NSPermissionNotifications *late = [[NSPermissionNotifications alloc] initWithCenter:lateCenter];
+        [late updateRequests:@[ telemetry ] policy:NSReadPolicy(NULL) retryRevision:nil];
+        CHECK(lateCenter.requests.count == 1);
+        CHECK(NSUpdatePolicy(
+            ^BOOL(NSMutableDictionary *current, NSError **error) {
+                current[@"allowAppleSystemProcesses"] = @YES;
+                current[@"blockAppleSystemTelemetry"] = block;
+                return YES;
+            },
+            NULL));
+        // Completion must consult current policy even before the next refresh.
+        [lateCenter finish:0 error:nil];
+        CHECK(
+            [lateCenter.removed containsObject:((UNNotificationRequest *)lateCenter.requests[0]).identifier]);
+        [late updateRequests:@[ telemetry ] policy:NSReadPolicy(NULL) retryRevision:nil];
+        CHECK(lateCenter.requests.count == 1 && late.deliveryIssue.length == 0);
+        [late stop];
+    }
 }
 static void TestUnidentifiedNotificationActions(void) {
     NSMutableDictionary *document = [[NSPolicy defaultDocument] mutableCopy];
@@ -2323,6 +2542,7 @@ int main(void) {
         NSSetTestContainer(root);
         CHECK([NSSharedURL(@"") isEqual:root]);
         TestPolicyAndCache();
+        TestAppleSystemTransitions();
         TestRulesAndActivityExport();
         TestStorageFailureAndRecovery();
         TestConcurrentMutations();

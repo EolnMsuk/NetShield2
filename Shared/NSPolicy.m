@@ -8,6 +8,36 @@
 #import "NSValidation.h"
 #import <CoreFoundation/CoreFoundation.h>
 
+NSArray<NSString *> *NSAppleSystemTelemetryIdentities(void) {
+    static NSArray<NSString *> *identities;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        identities = @[
+            @".com.apple.analyticsd",
+            @".com.apple.appleseed.fbahelperd",
+            @".com.apple.awdd",
+            @".com.apple.CrashReporter",
+            @".com.apple.diagnosticextensionsd",
+            @".com.apple.dprivacyd",
+            @".com.apple.geoanalyticsd",
+            @".com.apple.iosdiagnosticsd",
+            @".com.apple.metrickitd",
+            @".com.apple.osanalytics.osanalyticshelper",
+            @".com.apple.parsec-fbf",
+            @".com.apple.powerlogd",
+            @".com.apple.ReportCrash",
+            @".com.apple.ReportCrash.Root",
+            @".com.apple.rtcreportingd",
+            @".com.apple.SubmitDiagInfo",
+            @".com.apple.symptomsd",
+            @".com.apple.symptomsd-diag",
+            @".com.apple.UsageTrackingAgent",
+            @".com.apple.wifianalyticsd"
+        ];
+    });
+    return identities;
+}
+
 static NSString *NSAppActionForDirection(id value, NSFlowDirection direction) {
     NSDictionary *record = value; // policy construction has already canonicalized app records
     return record[@"both"]
@@ -32,6 +62,8 @@ static NSString *NSAppActionForDirection(id value, NSFlowDirection direction) {
         @"ruleSetEpoch" : NSUUID.UUID.UUIDString,
         @"globalRuleGeneration" : NSUUID.UUID.UUIDString,
         @"allowAppleSystemProcesses" : @YES,
+        @"blockAppleSystemTelemetry" : @NO,
+        @"appleSystemTelemetryIntroduced" : @NO,
         @"filterSockets" : @YES
     };
 }
@@ -49,9 +81,10 @@ static NSString *NSAppActionForDirection(id value, NSFlowDirection direction) {
     valid = valid &&
             (!d[@"unidentifiedAskGeneration"] || NSBoundedString(d[@"unidentifiedAskGeneration"], 128, YES));
     id appleAllowance = d[@"allowAppleSystemProcesses"];
-    valid = valid &&
-            (!appleAllowance || ([appleAllowance isKindOfClass:NSNumber.class] &&
-                                 CFGetTypeID((__bridge CFTypeRef)appleAllowance) == CFBooleanGetTypeID()));
+    valid = valid && (!appleAllowance || NSBoolean(appleAllowance));
+    for (NSString *key in @[ @"blockAppleSystemTelemetry", @"appleSystemTelemetryIntroduced" ]) {
+        valid = valid && (!d[key] || NSBoolean(d[key]));
+    }
     id sockets = d[@"filterSockets"];
     valid = valid && (!sockets || ([sockets isKindOfClass:NSNumber.class] &&
                                    CFGetTypeID((__bridge CFTypeRef)sockets) == CFBooleanGetTypeID()));
@@ -172,7 +205,8 @@ static NSString *NSAppActionForDirection(id value, NSFlowDirection direction) {
              @"schema", @"revision", @"default", @"unattributed", @"rules", @"globalRules",
              @"globalDomainAddresses", @"globalDomainExpirations", @"globalDomainLifetimes",
              @"globalRuleGeneration", @"ruleDestinations", @"askGenerations", @"ruleSetEpoch",
-             @"allowAppleSystemProcesses", @"filterSockets", @"unidentifiedAskGeneration"
+             @"allowAppleSystemProcesses", @"blockAppleSystemTelemetry", @"appleSystemTelemetryIntroduced",
+             @"filterSockets", @"unidentifiedAskGeneration"
          ]) {
         if (d[key]) {
             canonicalDocument[key] = d[key];
@@ -183,6 +217,10 @@ static NSString *NSAppActionForDirection(id value, NSFlowDirection direction) {
         appRules[identity] = NSAppRuleRecord(d[@"rules"][identity]);
     }
     canonicalDocument[@"rules"] = appRules;
+    canonicalDocument[@"blockAppleSystemTelemetry"] =
+        @([appleAllowance boolValue] && [d[@"blockAppleSystemTelemetry"] boolValue]);
+    canonicalDocument[@"appleSystemTelemetryIntroduced"] =
+        @([d[@"appleSystemTelemetryIntroduced"] boolValue]);
     // Preserve saved keys: canonical aliases can carry distinct direction coverage.
     canonicalDocument[@"globalRules"] = globalRules ?: @{};
     NSMutableDictionary *canonicalAddresses = [NSMutableDictionary new];
@@ -227,7 +265,16 @@ static NSString *NSAppActionForDirection(id value, NSFlowDirection direction) {
     return policy->_document ? policy : nil;
 }
 - (BOOL)automaticallyAllowsIdentity:(NSString *)identity {
-    return [self.document[@"allowAppleSystemProcesses"] boolValue] && NSIsAppleSystemIdentity(identity);
+    return [[self automaticSystemActionForIdentity:identity] isEqual:@"allow"];
+}
+- (NSString *)automaticSystemActionForIdentity:(NSString *)identity {
+    if (![self.document[@"allowAppleSystemProcesses"] boolValue] || !NSIsAppleSystemIdentity(identity)) {
+        return nil;
+    }
+    return [self.document[@"blockAppleSystemTelemetry"] boolValue] &&
+                   [NSAppleSystemTelemetryIdentities() containsObject:identity]
+               ? @"block"
+               : @"allow";
 }
 - (BOOL)requiresPermissionForIdentity:(NSString *)identity destination:(NSDictionary *)destination {
     return [self requiresPermissionForIdentity:identity
@@ -292,21 +339,9 @@ static NSString *NSAppActionForDirection(id value, NSFlowDirection direction) {
 - (BOOL)allowsIdentity:(NSString *)identity
              direction:(NSFlowDirection)direction
            destination:(NSDictionary *)destination {
-    NSString *globalAction = [self globalActionForIdentity:identity
-                                                 direction:direction
-                                               destination:destination];
-    if (!globalAction && [self automaticallyAllowsIdentity:identity]) {
-        return YES;
-    }
-    NSString *action = identity.length
-                           ? (NSAppActionForDirection(self.document[@"rules"][identity], direction)
-                                  ?: self.document[@"default"])
-                           : self.document[@"unattributed"];
-    action = globalAction ?: action;
-    if ([action isEqual:@"allow"]) {
-        return YES;
-    }
-    return NO;
+    return
+        [self evaluateIdentity:identity direction:direction destination:destination socket:NO].disposition ==
+        NSFlowAllow;
 }
 - (NSFlowEvaluation)evaluateIdentity:(NSString *)identity
                            direction:(NSFlowDirection)direction
@@ -320,8 +355,9 @@ static NSString *NSAppActionForDirection(id value, NSFlowDirection direction) {
     if (action) {
         return (NSFlowEvaluation){[action isEqual:@"allow"] ? NSFlowAllow : NSFlowDrop, NSFlowReasonGlobal};
     }
-    if ([self automaticallyAllowsIdentity:identity]) {
-        return (NSFlowEvaluation){NSFlowAllow, NSFlowReasonSystem};
+    action = [self automaticSystemActionForIdentity:identity];
+    if (action) {
+        return (NSFlowEvaluation){[action isEqual:@"allow"] ? NSFlowAllow : NSFlowDrop, NSFlowReasonSystem};
     }
     NSFlowDecisionReason reason = identity.length ? NSFlowReasonApp : NSFlowReasonUnidentified;
     action = identity.length ? NSAppActionForDirection(self.document[@"rules"][identity], direction)

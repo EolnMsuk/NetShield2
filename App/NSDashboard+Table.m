@@ -278,8 +278,7 @@ static UIImage *NSDashboardUpdateIcon(void) {
     return self.identities.count > 0;
 }
 - (BOOL)showsSystemRules {
-    return self.policy && ![self.policy.document[@"allowAppleSystemProcesses"] boolValue] &&
-           self.systemIdentities.count > 0;
+    return self.systemIdentities.count > 0;
 }
 - (BOOL)isRuleSectionHidden:(NSInteger)section {
     return (section == NSDashboardSectionRules && ![self showsAppRules]) ||
@@ -382,7 +381,7 @@ static UIImage *NSDashboardUpdateIcon(void) {
         self.traitCollection.preferredContentSizeCategory,
         [self.policy.document dictionaryWithValuesForKeys:@[
             @"rules", @"default", @"unattributed", @"filterSockets", @"allowAppleSystemProcesses",
-            @"ruleDestinations"
+            @"blockAppleSystemTelemetry", @"appleSystemTelemetryIntroduced", @"ruleDestinations"
         ]]
             ?: @{},
         globalRules,
@@ -526,7 +525,7 @@ static UIImage *NSDashboardUpdateIcon(void) {
 }
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     if (section == NSDashboardSectionFirewall) {
-        return 6;
+        return NSFirewallRowCount;
     }
     if (section == NSDashboardSectionRequests) {
         return [self.monitor[@"requests"] count];
@@ -596,7 +595,10 @@ static UIImage *NSDashboardUpdateIcon(void) {
 }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     if (section == NSDashboardSectionSystemRules) {
-        return [self showsSystemRules] ? @"Tap a system identity to change its rule" : nil;
+        return ![self showsSystemRules] ? nil
+               : [self.policy.document[@"allowAppleSystemProcesses"] boolValue]
+                   ? NSSystemRulesLockedMessage
+                   : @"Tap a system identity to change its rule";
     }
     if ((section == NSDashboardSectionAddGlobalRule && !self.globalRuleKeys.count) ||
         (section == NSDashboardSectionGlobalRules && self.globalRuleKeys.count)) {
@@ -867,15 +869,19 @@ static UIImage *NSDashboardUpdateIcon(void) {
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)path {
     UITableViewCell *cached = nil;
     if (path.section == NSDashboardSectionFirewall) {
-        if (path.row == 0) {
+        if (path.row == NSFirewallRowEnabled) {
             cached = self.firewallCell;
-        } else if (path.row == 2) {
+        } else if (path.row == NSFirewallRowAppleSystem) {
             cached = self.appleCell;
+        } else if (path.row == NSFirewallRowAppleTelemetry) {
+            cached = self.telemetryCell;
         }
     }
     UISwitch *cachedToggle =
         [cached.accessoryView isKindOfClass:UISwitch.class] ? (UISwitch *)cached.accessoryView : nil;
-    BOOL persistent = path.section == NSDashboardSectionFirewall && (path.row == 0 || path.row == 2);
+    BOOL persistent = path.section == NSDashboardSectionFirewall &&
+                      (path.row == NSFirewallRowEnabled || path.row == NSFirewallRowAppleSystem ||
+                       path.row == NSFirewallRowAppleTelemetry);
     BOOL global = path.section == NSDashboardSectionGlobalRules;
     NSString *reuse = persistent ? nil : global ? @"DashboardGlobalRule" : @"DashboardSubtitle";
     UITableViewCell *cell = cached ?: (reuse ? [tableView dequeueReusableCellWithIdentifier:reuse] : nil);
@@ -886,7 +892,7 @@ static UIImage *NSDashboardUpdateIcon(void) {
     }
     NSResetDashboardCell(cell);
     UIColor *rowTint = nil;
-    if (path.section == NSDashboardSectionFirewall && path.row == 0) {
+    if (path.section == NSDashboardSectionFirewall && path.row == NSFirewallRowEnabled) {
         cell.textLabel.text = @"Firewall";
         cell.detailTextLabel.text = @"Enable firewall and monitor";
         cell.imageView.image = [UIImage systemImageNamed:@"shield.lefthalf.filled"];
@@ -903,7 +909,7 @@ static UIImage *NSDashboardUpdateIcon(void) {
             forControlEvents:UIControlEventValueChanged];
         cell.accessoryView = toggle;
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
-    } else if (path.section == NSDashboardSectionFirewall && path.row == 3) {
+    } else if (path.section == NSDashboardSectionFirewall && path.row == NSFirewallRowStatus) {
         BOOL enabled = self.preferencesLoaded && self.savedEnabled;
         BOOL healthy =
             enabled && self.policy && self.displayedMonitorFresh && ![self.monitor[@"policyError"] length];
@@ -1000,8 +1006,8 @@ static UIImage *NSDashboardUpdateIcon(void) {
             }
         }
         cell.detailTextLabel.text = [details componentsJoinedByString:@"\n"];
-    } else if (path.section == NSDashboardSectionFirewall && path.row == 2) {
-        cell.textLabel.text = @"Allow all iOS system traffic";
+    } else if (path.section == NSDashboardSectionFirewall && path.row == NSFirewallRowAppleSystem) {
+        cell.textLabel.text = @"Allow iOS system traffic";
         cell.detailTextLabel.text = @"Allow Apple identities unless a global rule matches";
         UISwitch *toggle = cachedToggle ?: [UISwitch new];
         [toggle setOn:[self.policy.document[@"allowAppleSystemProcesses"] boolValue] animated:NO];
@@ -1013,7 +1019,23 @@ static UIImage *NSDashboardUpdateIcon(void) {
             forControlEvents:UIControlEventValueChanged];
         cell.accessoryView = toggle;
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
-    } else if (path.section == NSDashboardSectionFirewall && path.row == 1) {
+    } else if (path.section == NSDashboardSectionFirewall && path.row == NSFirewallRowAppleTelemetry) {
+        BOOL parent = [self.policy.document[@"allowAppleSystemProcesses"] boolValue];
+        cell.textLabel.text = @"Block iOS system telemetry";
+        cell.detailTextLabel.text = @"Block 20 telemetry processes unless a global rule matches";
+        cell.textLabel.textColor = parent ? UIColor.labelColor : UIColor.tertiaryLabelColor;
+        cell.detailTextLabel.textColor = parent ? UIColor.secondaryLabelColor : UIColor.tertiaryLabelColor;
+        UISwitch *toggle = cachedToggle ?: [UISwitch new];
+        [toggle setOn:[self.policy.document[@"blockAppleSystemTelemetry"] boolValue] animated:NO];
+        toggle.enabled = parent && self.policy != nil && !self.busy && !self.importPending;
+        toggle.accessibilityLabel = cell.textLabel.text;
+        [toggle removeTarget:self action:NULL forControlEvents:UIControlEventValueChanged];
+        [toggle addTarget:self
+                      action:@selector(appleSystemTelemetryChanged:)
+            forControlEvents:UIControlEventValueChanged];
+        cell.accessoryView = toggle;
+        cell.selectionStyle = UITableViewCellSelectionStyleNone;
+    } else if (path.section == NSDashboardSectionFirewall && path.row == NSFirewallRowSockets) {
         cell.textLabel.text = @"Filter System Sockets";
         cell.detailTextLabel.text = @"Required to filter all app network";
         UISwitch *toggle = cachedToggle ?: [UISwitch new];
@@ -1028,10 +1050,12 @@ static UIImage *NSDashboardUpdateIcon(void) {
         cell.accessoryView = toggle;
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
     } else if (path.section == NSDashboardSectionFirewall) {
-        cell.textLabel.text = path.row == 5 ? @"Default Rule" : @"Unidentified";
+        cell.textLabel.text = path.row == NSFirewallRowDefault ? @"Default Rule" : @"Unidentified";
         cell.detailTextLabel.text =
-            self.policy ? [self ruleTitle:self.policy.document[path.row == 5 ? @"default" : @"unattributed"]]
-                        : @"Policy unavailable";
+            self.policy
+                ? [self ruleTitle:self.policy.document[path.row == NSFirewallRowDefault ? @"default"
+                                                                                        : @"unattributed"]]
+                : @"Policy unavailable";
         if (!self.policy) {
             cell.accessoryType = UITableViewCellAccessoryNone;
         }
@@ -1080,14 +1104,16 @@ static UIImage *NSDashboardUpdateIcon(void) {
     } else if (path.section == NSDashboardSectionRules || path.section == NSDashboardSectionSystemRules) {
         NSString *identity = [self identitiesForSection:path.section][path.row];
         id rule = self.policy.document[@"rules"][identity];
-        rowTint = NSAppRuleColor(rule);
+        NSString *automatic = [self.policy automaticSystemActionForIdentity:identity];
+        rowTint = automatic ? NSRuleColor(automatic) : NSAppRuleColor(rule);
         cell.textLabel.text = NSIdentityDisplayName(identity);
         cell.detailTextLabel.text =
-            [self.policy automaticallyAllowsIdentity:identity]
+            automatic
                 ? [NSString
-                      stringWithFormat:@"Allowed by iOS setting unless a global rule matches. Saved rule: %@",
-                                       NSAppRuleSummary(self.policy.document[@"rules"][identity])]
-                : NSAppRuleSummary(self.policy.document[@"rules"][identity]);
+                      stringWithFormat:@"%@ by iOS setting unless a global rule matches. Saved rule: %@",
+                                       [automatic isEqual:@"block"] ? @"Blocked" : @"Allowed",
+                                       NSAppRuleSummary(rule)]
+                : NSAppRuleSummary(rule);
     } else if (path.section == NSDashboardSectionNotifications) {
         cell.textLabel.text = path.row == 0 ? @"Notification Settings" : @"Banners & Do Not Disturb";
         cell.detailTextLabel.text =
@@ -1162,11 +1188,14 @@ static UIImage *NSDashboardUpdateIcon(void) {
             path.row <= NSConfigurationRowImport ? UIColor.systemBlueColor : UIColor.systemRedColor;
     }
     NSConfigureDashboardBackground(cell, rowTint);
-    if (path.section == NSDashboardSectionFirewall && path.row == 0) {
+    if (path.section == NSDashboardSectionFirewall && path.row == NSFirewallRowEnabled) {
         self.firewallCell = cell;
     }
-    if (path.section == NSDashboardSectionFirewall && path.row == 2) {
+    if (path.section == NSDashboardSectionFirewall && path.row == NSFirewallRowAppleSystem) {
         self.appleCell = cell;
+    }
+    if (path.section == NSDashboardSectionFirewall && path.row == NSFirewallRowAppleTelemetry) {
+        self.telemetryCell = cell;
     }
     return cell;
 }
@@ -1217,9 +1246,9 @@ static UIImage *NSDashboardUpdateIcon(void) {
         }
         return;
     }
-    if (path.section == NSDashboardSectionFirewall && path.row == 3) {
+    if (path.section == NSDashboardSectionFirewall && path.row == NSFirewallRowStatus) {
         [self refreshSavedState];
-    } else if (path.section == NSDashboardSectionFirewall && path.row == 5) {
+    } else if (path.section == NSDashboardSectionFirewall && path.row == NSFirewallRowDefault) {
         [self chooseActionForIdentity:nil defaultKey:@"default"];
     } else if (path.section == NSDashboardSectionRequests && [self.monitor[@"requests"] count]) {
         [self presentRequest:self.monitor[@"requests"][path.row]];
@@ -1237,7 +1266,7 @@ static UIImage *NSDashboardUpdateIcon(void) {
         } else {
             [self showNotificationHelp];
         }
-    } else if (path.section == NSDashboardSectionFirewall && path.row == 4) {
+    } else if (path.section == NSDashboardSectionFirewall && path.row == NSFirewallRowUnidentified) {
         [self chooseActionForIdentity:nil defaultKey:@"unattributed"];
     } else if (path.section == NSDashboardSectionSupport) {
         if (path.row == 0) {

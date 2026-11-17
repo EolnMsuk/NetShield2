@@ -569,6 +569,9 @@ NSArray<NSString *> *NSClearIdentityRules(NSMutableDictionary *document, BOOL sy
         }
         [removed addObject:identity];
     }
+    if (system) {
+        document[@"appleSystemTelemetryIntroduced"] = @NO;
+    }
     return removed;
 }
 BOOL NSResetSharedState(BOOL legacyProviderMayBeRunning, NSError **error) {
