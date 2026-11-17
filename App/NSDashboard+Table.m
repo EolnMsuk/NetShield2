@@ -1039,6 +1039,15 @@ static UIImage *NSDashboardUpdateIcon(void) {
                 return attributes;
             };
             clear.configuration = configuration;
+            if (collapsible) {
+                // Keep Clear at its content width; the title takes the remaining space.
+                [clear setContentHuggingPriority:UILayoutPriorityDefaultHigh
+                                         forAxis:UILayoutConstraintAxisHorizontal];
+                [clear setContentCompressionResistancePriority:UILayoutPriorityRequired
+                                                       forAxis:UILayoutConstraintAxisHorizontal];
+                [title setContentHuggingPriority:UILayoutPriorityDefaultLow
+                                         forAxis:UILayoutConstraintAxisHorizontal];
+            }
             clear.tag = section;
             clear.accessibilityLabel =
                 globalRulesHeader ? @"Clear Global Rules" : [@"Clear " stringByAppendingString:heading];
