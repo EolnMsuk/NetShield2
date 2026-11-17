@@ -16,14 +16,14 @@ A customizable firewall & live network monitor with actionable notifications for
 - **Firewall:** Enables/disables the content filter and rules.
 - **Filter System Sockets:** When enabled, it allows filtering for all apps and processes (instead of just browsers).
 - **Allow iOS system traffic:** Allows known iOS system traffic without prompting the user.
-- **Block iOS system telemetry:** Blocks known iOS telemetrics & logging processes.
-- **Unidentified:** Allowed by default, set to blocked to prevent unknown processes from accessing network (not recommended).
-- **Default Rule:** Ask me by default, changing this to Allow or Block will prevent prompting / notifications and block or allow any new requests.
+- **Block iOS system telemetry:** Blocks known iOS telemetries & logging processes.
+- **Unidentified:** Allowed by default, set to Ask Me to prompt you unknown processes try to access network.
+- **Default Rule:** Ask Me will prompt the user for any new connection requests.
 - **Notifications:** Notification settings and instructions for banners and Do Not Disturb.
-- **Configuration:** Export Rules and Recent Activity, Reset Rules & History,  Settings, Check for Updates, GitHub Link, and Support Developer Links.
-- **Check for Updates:** Choose Check Now, Check at Launch, Check Daily (the default) or Disable Updates. Check Now always remains available.
-- **Global Rules:** use the Add Custom Rule button to add a global rule (direction, process, domain/ip, remote/local port, udp/tcp etc).
-- **App Rules / System Rules:** Tapping an unlocked checked rule clears it; clearing the last checkmark restores **Default Rule**.
+- **Configuration:** Export Rules and Recent Activity, Reset Rules & History, Check for Updates, GitHub Link, and Support Developer Links.
+- **Check for Updates:** Choose Check Now, Check at Launch, Check Daily (the default) or Disable Updates.
+- **Global Rules:** Use the Add Custom Rule button to add a global rule (direction, process, domain/ip, remote/local port, udp/tcp etc).
+- **App Rules / System Rules:** Lists current app / system rules, swipe to delete, tap to remove rules setting it back to default.
 - **Recent Activity:** The rolling 300-event record grouped by process, IP/domain, remote port, direction and allowed/blocked outcome.
 
 ## Known Issues
