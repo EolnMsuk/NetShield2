@@ -1,3 +1,10 @@
+# 3.0.2
+
+- Prefills custom-rule ports by connection direction from permission prompts and single Recent Activity connections: incoming keeps the local port and leaves the remote port blank; outgoing keeps the remote port and leaves the local port blank. Both fields remain editable.
+- Added collapse controls for System Rules, App Rules, and Recent Activity, retaining the activity search and section choices during dashboard refreshes.
+- Skips redundant `UISwitch setOn:animated:` calls during dashboard refreshes and identical scroll-offset restoration after reloads. HaptiX vibration behavior still requires on-device confirmation.
+- Adds direct touch-and-hold and supported 3D Touch actions: copy a Recent Activity connection, create a custom rule for the exact App/System process, or edit the selected Global Rule.
+
 # 3.0.1
 
 - Recognizes more iOS system processes.

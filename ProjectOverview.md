@@ -2,7 +2,7 @@
 
 ## Overview
 
-NetShield2 is a firewall and network monitor for jailbroken iOS 15–18 devices using rootless, RootHide, or rootful packages. Apple's Network Extension content filter evaluates the browser flows that iOS delivers and, with **Filter System Sockets** enabled, the socket flows it delivers.
+NetShield2 is a firewall, network monitor, and content filter for jailbroken iOS 15–18 devices using rootless, RootHide, or rootful packages.
 
 ## GitHub build and release
 
@@ -30,12 +30,12 @@ NetShield2/
 |   +-- NSConfigurationCoordinator.h   # Defines the shared filter configuration transaction API.
 |   +-- NSConfigurationCoordinator.m   # Serializes preference changes and tracks unfinished writes.
 |   +-- NSDashboard+Configuration.m    # Captures fallback readback state and handles firewall toggles, scope, and reset.
-|   +-- NSDashboard+Internal.h         # Names the seven FIREWALL rows and shares switch cells, lock text, state and private methods.
-|   +-- NSDashboard+Notifications.m    # Manages notification authorization and in-app permission requests.
-|   +-- NSDashboard+Table.m            # Renders system switches, effective System Rules, activity and guarded row/swipe actions.
+|   +-- NSDashboard+Internal.h         # Shares dashboard rows, cached switches, collapse/search state, captured press targets and copy feedback.
+|   +-- NSDashboard+Notifications.m    # Manages notification authorization and permission requests passed to the shared custom-rule draft builder.
+|   +-- NSDashboard+Table.m            # Renders collapsible sections, guards switch/scroll updates and resolves direct hold/pressure actions against visible row keys.
 |   +-- NSDashboard+Updates.m          # Schedules update checks and displays available releases.
 |   +-- NSDashboard.h                  # Declares the main dashboard controller.
-|   +-- NSDashboard.m                  # Commits system switches, reveals telemetry rows and guards edits, readbacks, imports and exports.
+|   +-- NSDashboard.m                  # Installs row presses, prepares direction-specific custom-rule drafts, handles Venmo warning returns and guards edits/readbacks/transfers.
 |   +-- NSFilterBootPolicy.h           # Declares boot fallback checks and migration helpers.
 |   +-- NSFilterBootPolicy.m           # Applies and verifies the stock-boot fallback setting.
 |   +-- NSFilterRemoval.h              # Declares verified filter removal and shared-state cleanup.

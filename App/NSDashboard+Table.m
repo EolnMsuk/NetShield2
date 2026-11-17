@@ -3,11 +3,65 @@
 #import "NSSectionTypography.h"
 #import "NSDashboard+Internal.h"
 #import "../Shared/NSActivity.h"
+#import <UIKit/UIGestureRecognizerSubclass.h>
 
-@interface NSDashboardGlobalRuleCell : UITableViewCell
+@interface NSDashboardRowCell : UITableViewCell
+@property(nonatomic, copy) id representedRowKey;
+@end
+@implementation NSDashboardRowCell
+- (void)prepareForReuse {
+    [super prepareForReuse];
+    self.representedRowKey = nil;
+    self.accessoryView = nil;
+}
+@end
+
+@interface NSDashboardGlobalRuleCell : NSDashboardRowCell
 @property(nonatomic, copy) NSString *ruleKey;
 @end
 @implementation NSDashboardGlobalRuleCell
+@end
+
+// A single continuous recognizer handles both inputs, so pressure followed by
+// the hold deadline cannot dispatch a second action for the same touch.
+@interface NSDashboardRowPressGesture : UILongPressGestureRecognizer
+@property(nonatomic) CGPoint touchOrigin;
+@property(nonatomic, weak) UITouch *trackedTouch;
+@end
+@implementation NSDashboardRowPressGesture
+- (void)recognizePressureFromTouch:(UITouch *)touch {
+    if (self.state == UIGestureRecognizerStatePossible && touch.type == UITouchTypeDirect &&
+        self.view.traitCollection.forceTouchCapability == UIForceTouchCapabilityAvailable &&
+        touch.maximumPossibleForce > 0 && touch.force / touch.maximumPossibleForce >= 0.75) {
+        self.state = UIGestureRecognizerStateBegan;
+    }
+}
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    if (self.trackedTouch || touches.count != 1) {
+        self.state = self.state == UIGestureRecognizerStatePossible ? UIGestureRecognizerStateFailed
+                                                                    : UIGestureRecognizerStateCancelled;
+        return;
+    }
+    self.trackedTouch = touches.anyObject;
+    self.touchOrigin = [touches.anyObject locationInView:self.view];
+    [super touchesBegan:touches withEvent:event];
+    [self recognizePressureFromTouch:touches.anyObject];
+}
+- (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    CGPoint point = [touches.anyObject locationInView:self.view];
+    CGFloat dx = point.x - self.touchOrigin.x, dy = point.y - self.touchOrigin.y;
+    if (dx * dx + dy * dy > self.allowableMovement * self.allowableMovement) {
+        self.state = self.state == UIGestureRecognizerStatePossible ? UIGestureRecognizerStateFailed
+                                                                    : UIGestureRecognizerStateCancelled;
+        return;
+    }
+    [super touchesMoved:touches withEvent:event];
+    [self recognizePressureFromTouch:touches.anyObject];
+}
+- (void)reset {
+    [super reset];
+    self.trackedTouch = nil;
+}
 @end
 
 @interface NSFirewallFooter : UITableViewHeaderFooterView
@@ -53,6 +107,9 @@
 @end
 
 static void NSResetDashboardCell(UITableViewCell *cell) {
+    if ([cell isKindOfClass:NSDashboardRowCell.class]) {
+        ((NSDashboardRowCell *)cell).representedRowKey = nil;
+    }
     if ([cell isKindOfClass:NSDashboardGlobalRuleCell.class]) {
         ((NSDashboardGlobalRuleCell *)cell).ruleKey = nil;
     }
@@ -211,9 +268,10 @@ static UIImage *NSDashboardUpdateIcon(void) {
     return self;
 }
 - (void)layoutSubviews {
-    UITableViewCell *cell = [self.table cellForRowAtIndexPath:[NSIndexPath indexPathForRow:0
-                                                                                 inSection:self.section]];
-    cell = cell ?: self.table.visibleCells.firstObject;
+    UITableViewCell *cell =
+        [self.table numberOfRowsInSection:self.section]
+            ? [self.table cellForRowAtIndexPath:[NSIndexPath indexPathForRow:0 inSection:self.section]]
+            : nil;
     CGRect group =
         cell ? [cell convertRect:cell.bounds toView:self]
              : [self.table convertRect:UIEdgeInsetsInsetRect(self.table.bounds, self.table.layoutMargins)
@@ -267,12 +325,174 @@ static UIImage *NSDashboardUpdateIcon(void) {
     [self searchBar:self.activitySearchBar textDidChange:@""];
 }
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldReceiveTouch:(UITouch *)touch {
+    if (gestureRecognizer == self.rowPressGesture) {
+        self.rowPressPath = nil;
+        self.rowPressKey = nil;
+        self.rowPressCell = nil;
+        self.rowPressDispatched = NO;
+        if (![self canRecognizeRowPress] || touch.type != UITouchTypeDirect) {
+            return NO;
+        }
+        NSIndexPath *path = [self.tableView indexPathForRowAtPoint:[touch locationInView:self.tableView]];
+        id key = [self rowPressActionKeyAtIndexPath:path];
+        if (!key) {
+            return NO;
+        }
+        UITableViewCell *cell = [self.tableView cellForRowAtIndexPath:path];
+        if (![touch.view isDescendantOfView:cell]) {
+            return NO;
+        }
+        for (UIView *view = touch.view; view && view != cell; view = view.superview) {
+            if ([view isKindOfClass:UIControl.class]) {
+                return NO;
+            }
+        }
+        self.rowPressPath = path;
+        self.rowPressKey = key;
+        self.rowPressCell = cell;
+        return YES;
+    }
     if (self.navigationController.topViewController == self && !self.presentedViewController &&
         ![touch.view isDescendantOfView:self.activitySearchBar.searchTextField]) {
         // Observe the touch without competing with rows, switches, or scrolling.
         [self dismissActivityKeyboard];
     }
     return NO;
+}
+- (void)installRowPressGesture {
+    if (self.rowPressGesture) {
+        return;
+    }
+    self.rowPressGesture = [[NSDashboardRowPressGesture alloc] initWithTarget:self
+                                                                       action:@selector(rowPressed:)];
+    self.rowPressGesture.delegate = self;
+    self.rowPressGesture.minimumPressDuration = 0.5;
+    self.rowPressGesture.allowableMovement = 10;
+    self.rowPressGesture.numberOfTouchesRequired = 1;
+    self.rowPressGesture.cancelsTouchesInView = YES;
+    [self.tableView addGestureRecognizer:self.rowPressGesture];
+}
+- (void)cancelRowPress {
+    self.rowPressGesture.enabled = NO;
+    self.rowPressGesture.enabled = YES;
+    self.rowPressPath = nil;
+    self.rowPressKey = nil;
+    self.rowPressCell = nil;
+}
+- (BOOL)canRecognizeRowPress {
+    return self.navigationController.topViewController == self && self.view.window &&
+           !self.presentedViewController && !self.isBeingDismissed && !self.busy && !self.importPending &&
+           !self.tableView.editing && !self.tableView.dragging && !self.tableView.decelerating;
+}
+- (id)rowPressActionKeyAtIndexPath:(NSIndexPath *)path {
+    if (!path || [self isSectionCollapsed:path.section]) {
+        return nil;
+    }
+    id key = nil;
+    if (path.section == NSDashboardSectionActivity &&
+        (NSUInteger)path.row < self.filteredActivityGroups.count) {
+        key = self.filteredActivityGroups[path.row][@"groupKey"];
+    } else if ((path.section == NSDashboardSectionRules || path.section == NSDashboardSectionSystemRules) &&
+               self.policy && (NSUInteger)path.row < [self identitiesForSection:path.section].count) {
+        key = [self identitiesForSection:path.section][path.row];
+    } else if (path.section == NSDashboardSectionGlobalRules && !self.globalRulesAwaitingReadback) {
+        NSString *original = [self representedGlobalRuleKeyAtIndexPath:path];
+        key = self.policy.document[@"globalRules"][original ?: @""] ? original : nil;
+    }
+    UITableViewCell *cell = [self.tableView cellForRowAtIndexPath:path];
+    return [cell isKindOfClass:NSDashboardRowCell.class] &&
+                   [key isEqual:((NSDashboardRowCell *)cell).representedRowKey]
+               ? key
+               : nil;
+}
+- (void)rowPressed:(UILongPressGestureRecognizer *)gesture {
+    if (gesture.state != UIGestureRecognizerStateBegan || self.rowPressDispatched) {
+        return;
+    }
+    NSIndexPath *path = self.rowPressPath;
+    id key = self.rowPressKey;
+    NSIndexPath *current = [self.tableView indexPathForRowAtPoint:[gesture locationInView:self.tableView]];
+    if (![self canRecognizeRowPress] || !path || ![path isEqual:current] ||
+        [self.tableView cellForRowAtIndexPath:path] != self.rowPressCell ||
+        ![self.tableView.indexPathsForVisibleRows containsObject:path] ||
+        ![key isEqual:[self rowPressActionKeyAtIndexPath:path]]) {
+        [self cancelRowPress];
+        return;
+    }
+    self.rowPressDispatched = YES;
+    self.pendingGlobalRuleSelectionPath = nil;
+    self.pendingGlobalRuleSelectionKey = nil;
+    [self.tableView deselectRowAtIndexPath:path animated:NO];
+    [self clearActivityCopyFeedback];
+    if (path.section == NSDashboardSectionActivity) {
+        UIPasteboard.generalPasteboard.string =
+            NSActivityClipboardLine(self.filteredActivityGroups[path.row]);
+        [self showActivityCopyFeedbackAtPath:path];
+    } else if (path.section == NSDashboardSectionGlobalRules) {
+        [self editGlobalRule:key];
+    } else {
+        [self addCustomRuleForIdentity:key connection:nil];
+    }
+}
+- (void)clearActivityCopyFeedback {
+    [self.activityCopyFeedbackTimer invalidate];
+    self.activityCopyFeedbackTimer = nil;
+    if (self.activityCopyFeedbackCell.accessoryView == self.activityCopyFeedbackLabel) {
+        self.activityCopyFeedbackCell.accessoryView = nil;
+    }
+    self.activityCopyFeedbackCell = nil;
+    self.activityCopyFeedbackLabel = nil;
+}
+- (void)showActivityCopyFeedbackAtPath:(NSIndexPath *)path {
+    [self clearActivityCopyFeedback];
+    UITableViewCell *cell = [self.tableView cellForRowAtIndexPath:path];
+    UILabel *label = [UILabel new];
+    label.text = @"Copied";
+    label.font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1];
+    label.adjustsFontForContentSizeCategory = YES;
+    label.textColor = UIColor.secondaryLabelColor;
+    [label sizeToFit];
+    cell.accessoryView = label;
+    self.activityCopyFeedbackCell = cell;
+    self.activityCopyFeedbackLabel = label;
+    UIAccessibilityPostNotification(UIAccessibilityAnnouncementNotification, @"Copied to clipboard");
+    __weak typeof(self) weakSelf = self;
+    self.activityCopyFeedbackTimer =
+        [NSTimer scheduledTimerWithTimeInterval:1
+                                        repeats:NO
+                                          block:^(NSTimer *timer) {
+                                              [weakSelf clearActivityCopyFeedback];
+                                          }];
+    [NSRunLoop.mainRunLoop addTimer:self.activityCopyFeedbackTimer forMode:NSRunLoopCommonModes];
+}
+- (BOOL)isCollapsibleSection:(NSInteger)section {
+    return section == NSDashboardSectionSystemRules || section == NSDashboardSectionRules ||
+           section == NSDashboardSectionActivity;
+}
+- (BOOL)isSectionCollapsed:(NSInteger)section {
+    return [self isCollapsibleSection:section] && [self.collapsedSections containsIndex:section];
+}
+- (void)sectionTitleTapped:(UIButton *)sender {
+    NSInteger section = sender.tag;
+    if (![self isCollapsibleSection:section] || self.tableView.editing || self.tableView.dragging ||
+        self.tableView.decelerating) {
+        return;
+    }
+    [UIView performWithoutAnimation:^{
+        BOOL collapsed = [self isSectionCollapsed:section];
+        self.sectionScrollAnchor = @(section);
+        self.sectionScrollAnchorDistance =
+            [self.tableView rectForHeaderInSection:section].origin.y - self.tableView.contentOffset.y;
+        if (!collapsed && section == NSDashboardSectionActivity) {
+            [self dismissActivityKeyboard];
+        }
+        if (collapsed) {
+            [self.collapsedSections removeIndex:section];
+        } else {
+            [self.collapsedSections addIndex:section];
+        }
+        [self refreshTableKeepingPosition];
+    }];
 }
 - (BOOL)showsAppRules {
     return self.identities.count > 0;
@@ -377,7 +597,9 @@ static UIImage *NSDashboardUpdateIcon(void) {
     BOOL on = scope       ? sockets
               : telemetry ? parent && [self.policy.document[@"blockAppleSystemTelemetry"] boolValue]
                           : parent;
-    [toggle setOn:on animated:NO];
+    if (toggle.isOn != on) {
+        [toggle setOn:on animated:NO];
+    }
     toggle.enabled = self.policy != nil && !self.busy && !self.importPending &&
                      (scope       ? self.preferencesLoaded && self.configurationReady
                       : telemetry ? parent
@@ -447,6 +669,7 @@ static UIImage *NSDashboardUpdateIcon(void) {
         self.identities ?: @[],
         self.systemIdentities ?: @[],
         self.activityQuery ?: @"",
+        [self.collapsedSections copy] ?: [NSIndexSet indexSet],
         NSUpdateCheckMode(NSUserDefaults.standardUserDefaults),
         @(self.clearingSection)
     ];
@@ -454,6 +677,9 @@ static UIImage *NSDashboardUpdateIcon(void) {
         return;
     }
     __block CGPoint offset = self.tableView.contentOffset;
+    NSNumber *sectionAnchor = self.sectionScrollAnchor;
+    CGFloat sectionDistance = self.sectionScrollAnchorDistance;
+    self.sectionScrollAnchor = nil;
     BOOL atTop = offset.y <= -self.tableView.adjustedContentInset.top + 1;
     NSMutableArray *anchors = [NSMutableArray new];
     for (NSIndexPath *path in self.tableView.indexPathsForVisibleRows) {
@@ -483,7 +709,7 @@ static UIImage *NSDashboardUpdateIcon(void) {
             return NSActivityMatchesQuery(connection, self.activityQuery);
         }]];
     UITextField *searchField = self.activitySearchBar.searchTextField;
-    BOOL searching = searchField.isFirstResponder;
+    BOOL searching = ![self isSectionCollapsed:NSDashboardSectionActivity] && searchField.isFirstResponder;
     UITextRange *selection = searchField.selectedTextRange;
     NSInteger selectionStart = selection ? [searchField offsetFromPosition:searchField.beginningOfDocument
                                                                 toPosition:selection.start]
@@ -512,9 +738,11 @@ static UIImage *NSDashboardUpdateIcon(void) {
         [visibleFooter setFooterText:footer];
     }
     [UIView performWithoutAnimation:^{
+        [self cancelRowPress];
+        [self clearActivityCopyFeedback];
         [self.tableView reloadData];
         [self.tableView layoutIfNeeded];
-        if (searching) {
+        if (searching && [searchField isDescendantOfView:self.tableView]) {
             [searchField becomeFirstResponder];
             UITextPosition *start = [searchField positionFromPosition:searchField.beginningOfDocument
                                                                offset:selectionStart];
@@ -524,7 +752,10 @@ static UIImage *NSDashboardUpdateIcon(void) {
                 searchField.selectedTextRange = [searchField textRangeFromPosition:start toPosition:end];
             }
         }
-        if (!atTop) {
+        if (sectionAnchor) {
+            offset.y =
+                [self.tableView rectForHeaderInSection:sectionAnchor.integerValue].origin.y - sectionDistance;
+        } else if (!atTop) {
             for (NSArray *anchor in anchors) {
                 NSInteger section = [anchor[0] integerValue];
                 NSUInteger row = [rows[section] indexOfObject:anchor[1]];
@@ -541,9 +772,11 @@ static UIImage *NSDashboardUpdateIcon(void) {
         CGFloat minimum = -self.tableView.adjustedContentInset.top;
         CGFloat maximum = MAX(minimum, self.tableView.contentSize.height - self.tableView.bounds.size.height +
                                            self.tableView.adjustedContentInset.bottom);
-        [self.tableView
-            setContentOffset:CGPointMake(offset.x, atTop ? minimum : MIN(maximum, MAX(minimum, offset.y)))
-                    animated:NO];
+        CGPoint target =
+            CGPointMake(offset.x, atTop && !sectionAnchor ? minimum : MIN(maximum, MAX(minimum, offset.y)));
+        if (!CGPointEqualToPoint(target, self.tableView.contentOffset)) {
+            [self.tableView setContentOffset:target animated:NO];
+        }
         // Restoring row anchors after filtering must not hide the active search.
         [self keepActivitySearchVisible];
     }];
@@ -552,6 +785,9 @@ static UIImage *NSDashboardUpdateIcon(void) {
     return NSDashboardSectionCount;
 }
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
+    if ([self isSectionCollapsed:section]) {
+        return 0;
+    }
     if (section == NSDashboardSectionFirewall) {
         return NSFirewallRowCount;
     }
@@ -622,6 +858,9 @@ static UIImage *NSDashboardUpdateIcon(void) {
                : nil;
 }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
+    if ([self isSectionCollapsed:section]) {
+        return nil;
+    }
     if (section == NSDashboardSectionSystemRules) {
         return ![self showsSystemRules] ? nil
                : NSAppleSystemTrafficEnabled(self.policy.document)
@@ -702,31 +941,63 @@ static UIImage *NSDashboardUpdateIcon(void) {
     BOOL globalRulesHeader = section == NSDashboardSectionGlobalRules && self.globalRuleKeys.count;
     if (heading.length || globalRulesHeader) {
         NSUInteger count = [self itemCountForClearSection:section];
-        BOOL hasItems = count > 0;
+        BOOL collapsed = [self isSectionCollapsed:section];
+        BOOL collapsible = [self isCollapsibleSection:section];
+        BOOL hasItems = count > 0 && !collapsed;
         BOOL canClear = hasItems && !self.busy && !self.importPending && !self.clearingSection &&
                         (section == NSDashboardSectionActivity || self.policy != nil);
         if (section == NSDashboardSectionActivity && self.activityHeader) {
-            if (self.activityHeaderHasClear == hasItems) {
+            if (self.activityHeaderHasClear == hasItems && self.activityHeaderCollapsed == collapsed) {
                 self.activityClearButton.enabled = canClear;
                 return self.activityHeader;
             }
             self.activityHeader = nil;
             self.activityClearButton = nil;
+            [self.activitySearchBar removeFromSuperview];
         }
         NSDashboardSectionHeader *header = [NSDashboardSectionHeader new];
         header.insetsLayoutMarginsFromSafeArea = NO;
         header.table = tableView;
         header.section = section;
         header.directionalLayoutMargins = NSDirectionalEdgeInsetsMake(12, 20, 8, 0);
-        UILabel *title = [UILabel new];
+        UIView *title = nil;
+        if (collapsible) {
+            UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
+            UIButtonConfiguration *configuration = [UIButtonConfiguration plainButtonConfiguration];
+            configuration.title = heading;
+            configuration.image = [UIImage systemImageNamed:collapsed ? @"chevron.forward" : @"chevron.down"];
+            configuration.imagePadding = 6;
+            configuration.contentInsets = NSDirectionalEdgeInsetsZero;
+            configuration.baseForegroundColor = UIColor.secondaryLabelColor;
+            configuration.titleTextAttributesTransformer = ^NSDictionary *(NSDictionary *incoming) {
+                NSMutableDictionary *attributes = [incoming mutableCopy];
+                attributes[NSFontAttributeName] = NSSectionTitleFont();
+                return attributes;
+            };
+            button.configuration = configuration;
+            button.titleLabel.numberOfLines = 0;
+            button.titleLabel.adjustsFontForContentSizeCategory = YES;
+            button.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeading;
+            button.tag = section;
+            button.accessibilityLabel = heading;
+            button.accessibilityValue = collapsed ? @"Collapsed" : @"Expanded";
+            button.accessibilityTraits |= UIAccessibilityTraitHeader;
+            [button addTarget:self
+                          action:@selector(sectionTitleTapped:)
+                forControlEvents:UIControlEventTouchUpInside];
+            [button.heightAnchor constraintGreaterThanOrEqualToConstant:44].active = YES;
+            title = button;
+        } else {
+            UILabel *label = [UILabel new];
+            label.text = heading;
+            label.font = NSSectionTitleFont();
+            label.adjustsFontForContentSizeCategory = YES;
+            label.textColor = UIColor.secondaryLabelColor;
+            label.numberOfLines = 0;
+            label.accessibilityTraits |= UIAccessibilityTraitHeader;
+            title = label;
+        }
         title.translatesAutoresizingMaskIntoConstraints = NO;
-        title.text = [self tableView:tableView titleForHeaderInSection:section];
-        title.font = [[UIFontMetrics metricsForTextStyle:UIFontTextStyleBody]
-            scaledFontForFont:[UIFont systemFontOfSize:16]];
-        title.adjustsFontForContentSizeCategory = YES;
-        title.textColor = UIColor.secondaryLabelColor;
-        title.numberOfLines = 0;
-        title.accessibilityTraits |= UIAccessibilityTraitHeader;
         [header addSubview:title];
         UILayoutGuide *margins = header.layoutMarginsGuide;
         if (!scoped) {
@@ -769,7 +1040,7 @@ static UIImage *NSDashboardUpdateIcon(void) {
             clear.configuration = configuration;
             clear.tag = section;
             clear.accessibilityLabel =
-                globalRulesHeader ? @"Clear Global Rules" : [@"Clear " stringByAppendingString:title.text];
+                globalRulesHeader ? @"Clear Global Rules" : [@"Clear " stringByAppendingString:heading];
             clear.enabled = canClear;
             [clear addTarget:self
                           action:@selector(clearSectionTapped:)
@@ -796,7 +1067,12 @@ static UIImage *NSDashboardUpdateIcon(void) {
         if (section == NSDashboardSectionActivity) {
             self.activityHeader = header;
             self.activityHeaderHasClear = hasItems;
+            self.activityHeaderCollapsed = collapsed;
             self.activityClearButton = clear;
+            if (collapsed) {
+                [title.bottomAnchor constraintEqualToAnchor:margins.bottomAnchor].active = YES;
+                return header;
+            }
             if (!self.activitySearchBar) {
                 self.activitySearchBar = [NSActivitySearchBar new];
                 self.activitySearchBar.searchBarStyle = UISearchBarStyleMinimal;
@@ -877,6 +1153,9 @@ static UIImage *NSDashboardUpdateIcon(void) {
     return [self isRuleSectionHidden:section] ? CGFLOAT_MIN : UITableViewAutomaticDimension;
 }
 - (CGFloat)tableView:(UITableView *)tableView heightForFooterInSection:(NSInteger)section {
+    if ([self isSectionCollapsed:section]) {
+        return CGFLOAT_MIN;
+    }
     if ((section == NSDashboardSectionFirewall && ![self firewallFooterText].length) ||
         (section == NSDashboardSectionRequests && ![self.monitor[@"requests"] count])) {
         return CGFLOAT_MIN;
@@ -917,8 +1196,11 @@ static UIImage *NSDashboardUpdateIcon(void) {
     UITableViewCell *cell = cached ?: (reuse ? [tableView dequeueReusableCellWithIdentifier:reuse] : nil);
     if (!cell) {
         cell = [(global ? [NSDashboardGlobalRuleCell alloc]
-                        : [UITableViewCell alloc]) initWithStyle:UITableViewCellStyleSubtitle
-                                                 reuseIdentifier:reuse];
+                        : [NSDashboardRowCell alloc]) initWithStyle:UITableViewCellStyleSubtitle
+                                                    reuseIdentifier:reuse];
+    }
+    if (cell == self.activityCopyFeedbackCell) {
+        [self clearActivityCopyFeedback];
     }
     NSResetDashboardCell(cell);
     UIColor *rowTint = nil;
@@ -927,7 +1209,9 @@ static UIImage *NSDashboardUpdateIcon(void) {
         cell.detailTextLabel.text = @"Enable firewall and monitor";
         cell.imageView.image = [UIImage systemImageNamed:@"shield.lefthalf.filled"];
         UISwitch *toggle = cachedToggle ?: [UISwitch new];
-        toggle.on = self.savedEnabled;
+        if (toggle.isOn != self.savedEnabled) {
+            [toggle setOn:self.savedEnabled animated:NO];
+        }
         toggle.hidden = !self.hasSavedPreferences;
         toggle.enabled = self.preferencesLoaded && self.configurationReady &&
                          (self.savedEnabled || self.policy != nil || self.policyMissing) && !self.busy &&
@@ -1114,6 +1398,7 @@ static UIImage *NSDashboardUpdateIcon(void) {
         NSString *rule = key ? self.displayedGlobalRules[key] : nil;
         if (key && rule) {
             ((NSDashboardGlobalRuleCell *)cell).ruleKey = key;
+            ((NSDashboardRowCell *)cell).representedRowKey = key;
             rowTint = NSRuleColor(rule);
             cell.textLabel.text = [self globalRuleTitle:key];
             cell.detailTextLabel.text = [self ruleTitle:rule];
@@ -1123,6 +1408,7 @@ static UIImage *NSDashboardUpdateIcon(void) {
         }
     } else if (path.section == NSDashboardSectionRules || path.section == NSDashboardSectionSystemRules) {
         NSString *identity = [self identitiesForSection:path.section][path.row];
+        ((NSDashboardRowCell *)cell).representedRowKey = identity;
         id rule = self.policy.document[@"rules"][identity];
         NSString *automatic = [self.policy automaticSystemActionForIdentity:identity];
         rowTint = automatic ? NSRuleColor(automatic) : NSAppRuleColor(rule);
@@ -1150,6 +1436,7 @@ static UIImage *NSDashboardUpdateIcon(void) {
             cell.textLabel.text = self.activityGroups.count ? @"No matching activity" : @"No activity yet";
         } else {
             NSDictionary *event = events[path.row];
+            ((NSDashboardRowCell *)cell).representedRowKey = event[@"groupKey"];
             BOOL allowed = [event[@"action"] isEqual:@"allow"];
             BOOL blocked = [event[@"action"] isEqual:@"block"];
             NSString *action =
@@ -1222,6 +1509,13 @@ static UIImage *NSDashboardUpdateIcon(void) {
     }
     return cell;
 }
+- (void)tableView:(UITableView *)tableView
+    didEndDisplayingCell:(UITableViewCell *)cell
+       forRowAtIndexPath:(NSIndexPath *)path {
+    if (cell == self.activityCopyFeedbackCell) {
+        [self clearActivityCopyFeedback];
+    }
+}
 - (BOOL)tableView:(UITableView *)tableView shouldHighlightRowAtIndexPath:(NSIndexPath *)path {
     BOOL global = path.section == NSDashboardSectionGlobalRules;
     self.pendingGlobalRuleSelectionPath = global ? path : nil;
@@ -1232,6 +1526,10 @@ static UIImage *NSDashboardUpdateIcon(void) {
     return !global || self.pendingGlobalRuleSelectionKey != nil;
 }
 - (NSIndexPath *)tableView:(UITableView *)tableView willSelectRowAtIndexPath:(NSIndexPath *)path {
+    if (self.rowPressGesture.state == UIGestureRecognizerStateBegan ||
+        self.rowPressGesture.state == UIGestureRecognizerStateChanged) {
+        return nil;
+    }
     if (path.section == NSDashboardSectionGlobalRules) {
         // Accessibility selection may arrive without a preceding highlight.
         if (![self.pendingGlobalRuleSelectionPath isEqual:path]) {

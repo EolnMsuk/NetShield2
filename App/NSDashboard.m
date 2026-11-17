@@ -107,6 +107,8 @@ static BOOL NSSystemRuleEditAllowed(NSDictionary *document, BOOL system, NSError
 - (void)presentViewController:(UIViewController *)viewControllerToPresent
                      animated:(BOOL)animated
                    completion:(void (^)(void))completion {
+    [self cancelRowPress];
+    [self clearActivityCopyFeedback];
     if ([viewControllerToPresent isKindOfClass:UIAlertController.class]) {
         UIAlertController *alert = (UIAlertController *)viewControllerToPresent;
         alert.view.tintColor = UIColor.systemBlueColor;
@@ -119,6 +121,7 @@ static BOOL NSSystemRuleEditAllowed(NSDictionary *document, BOOL system, NSError
     self.navigationController.navigationBar.prefersLargeTitles = YES;
     self.deferredRequests = [NSMutableSet new];
     self.submittedOnce = [NSMutableDictionary new];
+    self.collapsedSections = [NSMutableIndexSet new];
     self.navigationItem.rightBarButtonItem =
         [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemRefresh
                                                       target:self
@@ -126,6 +129,7 @@ static BOOL NSSystemRuleEditAllowed(NSDictionary *document, BOOL system, NSError
     self.tableView.rowHeight = UITableViewAutomaticDimension;
     self.tableView.estimatedRowHeight = 64;
     self.tableView.keyboardDismissMode = UIScrollViewKeyboardDismissModeOnDrag;
+    [self installRowPressGesture];
     UITapGestureRecognizer *outside =
         [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(dismissActivityKeyboard)];
     outside.delegate = self;
@@ -186,6 +190,7 @@ static BOOL NSSystemRuleEditAllowed(NSDictionary *document, BOOL system, NSError
 - (void)dealloc {
     [NSNotificationCenter.defaultCenter removeObserver:self];
     [self.timer invalidate];
+    [self.activityCopyFeedbackTimer invalidate];
     [self.updateTask cancel];
 }
 - (void)viewWillAppear:(BOOL)animated {
@@ -211,6 +216,8 @@ static BOOL NSSystemRuleEditAllowed(NSDictionary *document, BOOL system, NSError
 }
 - (void)viewWillDisappear:(BOOL)animated {
     [super viewWillDisappear:animated];
+    [self cancelRowPress];
+    [self clearActivityCopyFeedback];
     [self dismissActivityKeyboard];
     [self.navigationController.navigationBar removeGestureRecognizer:self.navigationKeyboardDismissGesture];
 }
@@ -965,9 +972,17 @@ static BOOL NSSystemRuleEditAllowed(NSDictionary *document, BOOL system, NSError
         NSAppRuleSelections(self.policy.document[@"rules"][identity ?: @""]).firstObject ?: @"allow";
     NSDictionary *destination = @{};
     if (connection && [connection[@"connections"] unsignedIntegerValue] <= 1) {
-        destination = NSCanonicalConnectionDestination(connection[@"destination"] ?: @{});
+        NSMutableDictionary *draftDestination =
+            [NSCanonicalConnectionDestination(connection[@"destination"] ?: @{}) mutableCopy];
         BOOL incoming = [connection[@"direction"] isEqual:@"inbound"];
         BOOL outgoing = [connection[@"direction"] isEqual:@"outbound"];
+        // Prune only the editor draft; recorded and automatically saved endpoints stay intact.
+        if (incoming) {
+            [draftDestination removeObjectForKey:@"port"];
+        } else if (outgoing) {
+            [draftDestination removeObjectForKey:@"localPort"];
+        }
+        destination = draftDestination;
         BOOL blocked = [@[ @"block", @"permission-block" ] containsObject:connection[@"action"] ?: @""];
         action = incoming   ? (blocked ? @"block-inbound" : @"allow-inbound")
                  : outgoing ? (blocked ? @"block-outbound" : @"allow-outbound")
@@ -1155,6 +1170,9 @@ static BOOL NSSystemRuleEditAllowed(NSDictionary *document, BOOL system, NSError
     [self refreshTableKeepingPosition];
 }
 - (void)openSupportURL:(NSURL *)url {
+    [self openSupportURL:url warningCancelled:nil];
+}
+- (void)openSupportURL:(NSURL *)url warningCancelled:(void (^)(void))warningCancelled {
     void (^presentOrOpen)(void) = ^{
         if (![NEFilterManager sharedManager].enabled) {
             [UIApplication.sharedApplication openURL:url options:@{} completionHandler:nil];
@@ -1173,9 +1191,47 @@ static BOOL NSSystemRuleEditAllowed(NSDictionary *document, BOOL system, NSError
                                                                                       options:@{}
                                                                             completionHandler:nil];
                                                  }]];
-        [notice addAction:[UIAlertAction actionWithTitle:@"Cancel"
-                                                   style:UIAlertActionStyleCancel
-                                                 handler:nil]];
+        __weak UIAlertController *weakNotice = notice;
+        [notice
+            addAction:
+                [UIAlertAction
+                    actionWithTitle:@"Cancel"
+                              style:UIAlertActionStyleCancel
+                            handler:^(UIAlertAction *action) {
+                                if (!warningCancelled) {
+                                    return;
+                                }
+                                void (^afterDismissal)(void) = ^{
+                                    dispatch_async(dispatch_get_main_queue(), ^{
+                                        if (self.navigationController.topViewController == self &&
+                                            self.view.window && !self.presentedViewController &&
+                                            !self.isBeingDismissed) {
+                                            warningCancelled();
+                                        }
+                                    });
+                                };
+                                // UIAlertController starts its own dismissal after the action.
+                                dispatch_async(dispatch_get_main_queue(), ^{
+                                    UIAlertController *warning = weakNotice;
+                                    id<UIViewControllerTransitionCoordinator> transition =
+                                        warning.transitionCoordinator;
+                                    if (transition &&
+                                        [transition
+                                            animateAlongsideTransition:nil
+                                                            completion:^(
+                                                                id<UIViewControllerTransitionCoordinatorContext>
+                                                                    context) {
+                                                                afterDismissal();
+                                                            }]) {
+                                        return;
+                                    }
+                                    if (warning.presentingViewController) {
+                                        [warning dismissViewControllerAnimated:YES completion:afterDismissal];
+                                    } else {
+                                        afterDismissal();
+                                    }
+                                });
+                            }]];
         [self presentViewController:notice animated:YES completion:nil];
     };
     if (self.presentedViewController) {
@@ -1194,7 +1250,11 @@ static BOOL NSSystemRuleEditAllowed(NSDictionary *document, BOOL system, NSError
                       actionWithTitle:@"Venmo"
                                 style:UIAlertActionStyleDefault
                               handler:^(UIAlertAction *action) {
-                                  [self openSupportURL:[NSURL URLWithString:@"https://venmo.com/u/EolnMsuk"]];
+                                  __weak typeof(self) weakSelf = self;
+                                  [self openSupportURL:[NSURL URLWithString:@"https://venmo.com/u/EolnMsuk"]
+                                      warningCancelled:^{
+                                          [weakSelf supportDeveloper];
+                                      }];
                               }]];
     [alert addAction:[UIAlertAction
                          actionWithTitle:@"Crypto"

@@ -62,7 +62,19 @@ typedef NS_ENUM(NSInteger, NSFirewallRow) {
 @property(nonatomic, strong) UISearchBar *activitySearchBar;
 @property(nonatomic, strong) UIView *activityHeader;
 @property(nonatomic) BOOL activityHeaderHasClear;
+@property(nonatomic) BOOL activityHeaderCollapsed;
+@property(nonatomic, strong) NSMutableIndexSet *collapsedSections;
+@property(nonatomic, strong) NSNumber *sectionScrollAnchor;
+@property(nonatomic) CGFloat sectionScrollAnchorDistance;
 @property(nonatomic, strong) UITapGestureRecognizer *navigationKeyboardDismissGesture;
+@property(nonatomic, strong) UILongPressGestureRecognizer *rowPressGesture;
+@property(nonatomic, copy) NSIndexPath *rowPressPath;
+@property(nonatomic, copy) id rowPressKey;
+@property(nonatomic, weak) UITableViewCell *rowPressCell;
+@property(nonatomic) BOOL rowPressDispatched;
+@property(nonatomic, strong) NSTimer *activityCopyFeedbackTimer;
+@property(nonatomic, weak) UITableViewCell *activityCopyFeedbackCell;
+@property(nonatomic, strong) UILabel *activityCopyFeedbackLabel;
 @property(nonatomic, weak) UIButton *activityClearButton;
 @property(nonatomic) BOOL clearingSection;
 @property(nonatomic, copy) NSArray<NSString *> *identities;
@@ -188,6 +200,9 @@ typedef NS_ENUM(NSInteger, NSFirewallRow) {
 - (void)activityKeyboardFrameDidChange:(NSNotification *)notification;
 - (void)dismissActivityKeyboard;
 - (void)clearActivitySearch;
+- (void)installRowPressGesture;
+- (void)cancelRowPress;
+- (void)clearActivityCopyFeedback;
 - (void)refreshTableKeepingPosition;
 - (NSString *)firewallFooterText;
 @end
