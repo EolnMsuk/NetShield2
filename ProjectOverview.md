@@ -13,8 +13,6 @@ NetShield2 is a firewall and network monitor for jailbroken iOS 15–18 devices 
 | RootHide | `roothide` | `iphoneos-arm64e` | `Applications/NetShield2.app` |
 | rootful | empty string | `iphoneos-arm` | `Applications/NetShield2.app` |
 
-`control` supplies the package version and the generated bundle marketing version for the app and both providers, currently `3.0.0`. `NSEngineVersion` in `Shared/NSConstants.h` supplies the separate generated bundle build version. Source Info.plist templates omit both generated version fields. The packaging and source validators share helpers. `prepare_package.py` imports `sync_version.py`. `validate.py`, `test_packaging.py`, and `release_manifest.py` use both. The mocked draft test imports `prepare_draft.cjs`.
-
 ## Build and CI inputs
 
 ```text
