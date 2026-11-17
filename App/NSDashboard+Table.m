@@ -5,6 +5,19 @@
 #import "../Shared/NSActivity.h"
 #import <UIKit/UIGestureRecognizerSubclass.h>
 
+static NSString *NSDashboardCollapsedPreferenceKey(NSInteger section) {
+    switch (section) {
+    case NSDashboardSectionSystemRules:
+        return NSDashboardSystemRulesCollapsedKey;
+    case NSDashboardSectionRules:
+        return NSDashboardAppRulesCollapsedKey;
+    case NSDashboardSectionActivity:
+        return NSDashboardRecentActivityCollapsedKey;
+    default:
+        return nil;
+    }
+}
+
 @interface NSDashboardRowCell : UITableViewCell
 @property(nonatomic, copy) id representedRowKey;
 @end
@@ -465,17 +478,26 @@ static UIImage *NSDashboardUpdateIcon(void) {
                                           }];
     [NSRunLoop.mainRunLoop addTimer:self.activityCopyFeedbackTimer forMode:NSRunLoopCommonModes];
 }
+- (void)restoreCollapsedSections {
+    self.collapsedSections = [NSMutableIndexSet new];
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    for (NSInteger section = 0; section < NSDashboardSectionCount; section++) {
+        NSString *key = NSDashboardCollapsedPreferenceKey(section);
+        if (key && NSDashboardSectionCollapsed(defaults, key)) {
+            [self.collapsedSections addIndex:section];
+        }
+    }
+}
 - (BOOL)isCollapsibleSection:(NSInteger)section {
-    return section == NSDashboardSectionSystemRules || section == NSDashboardSectionRules ||
-           section == NSDashboardSectionActivity;
+    return NSDashboardCollapsedPreferenceKey(section) != nil;
 }
 - (BOOL)isSectionCollapsed:(NSInteger)section {
     return [self isCollapsibleSection:section] && [self.collapsedSections containsIndex:section];
 }
 - (void)sectionTitleTapped:(UIButton *)sender {
     NSInteger section = sender.tag;
-    if (![self isCollapsibleSection:section] || self.tableView.editing || self.tableView.dragging ||
-        self.tableView.decelerating) {
+    NSString *key = NSDashboardCollapsedPreferenceKey(section);
+    if (!key || self.tableView.editing || self.tableView.dragging || self.tableView.decelerating) {
         return;
     }
     [UIView performWithoutAnimation:^{
@@ -491,6 +513,7 @@ static UIImage *NSDashboardUpdateIcon(void) {
         } else {
             [self.collapsedSections addIndex:section];
         }
+        [NSUserDefaults.standardUserDefaults setBool:!collapsed forKey:key];
         [self refreshTableKeepingPosition];
     }];
 }

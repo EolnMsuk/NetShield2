@@ -1,9 +1,13 @@
-# 3.0.2
-
 ### Users coming from 2.8.8 or lower must reset / clear any existing global rules before updating (or just uninstall first).
 
+# 3.0.3
+
+- System Rules, App Rules, and Recent Activity now remember whether they are expanded or collapsed after you close and reopen NetShield2.
+
+# 3.0.2
+
 - Tap System Rules, App Rules, or Recent Activity to collapse or expand each section. Your search and section choices are kept during dashboard refreshes.
-- Custom rules opened from permission prompts or a single Recent Activity connection now fill in the local port, other port starts blank.
+- Custom rules opened from permission prompts or a single Recent Activity connection now prefill the local port for incoming connections or the remote port for outgoing connections, leaving the other port blank.
 - Touch and hold a connection to copy its details, an App/System rule to create a custom rule for that process, or a Global Rule to edit it.
 - Reduced unnecessary switch and scroll updates during dashboard refreshes.
 

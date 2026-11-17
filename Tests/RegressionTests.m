@@ -2073,6 +2073,33 @@ static void TestSocketSettingsAndDestinations(void) {
 static void TestAppPreferences(void) {
     NSString *domain = [@"NetShield2.Tests." stringByAppendingString:NSUUID.UUID.UUIDString];
     NSUserDefaults *defaults = [[NSUserDefaults alloc] initWithSuiteName:domain];
+    NSArray<NSString *> *sectionKeys = @[
+        NSDashboardSystemRulesCollapsedKey, NSDashboardAppRulesCollapsedKey,
+        NSDashboardRecentActivityCollapsedKey
+    ];
+    for (NSString *key in sectionKeys) {
+        CHECK(!NSDashboardSectionCollapsed(defaults, key));
+    }
+    [defaults setBool:YES forKey:NSDashboardSystemRulesCollapsedKey];
+    [defaults setBool:NO forKey:NSDashboardAppRulesCollapsedKey];
+    [defaults setBool:YES forKey:NSDashboardRecentActivityCollapsedKey];
+    NSUserDefaults *sectionReloaded = [[NSUserDefaults alloc] initWithSuiteName:domain];
+    CHECK(NSDashboardSectionCollapsed(sectionReloaded, NSDashboardSystemRulesCollapsedKey));
+    CHECK(!NSDashboardSectionCollapsed(sectionReloaded, NSDashboardAppRulesCollapsedKey));
+    CHECK(NSDashboardSectionCollapsed(sectionReloaded, NSDashboardRecentActivityCollapsedKey));
+    [sectionReloaded setBool:NO forKey:NSDashboardSystemRulesCollapsedKey];
+    sectionReloaded = [[NSUserDefaults alloc] initWithSuiteName:domain];
+    CHECK(!NSDashboardSectionCollapsed(sectionReloaded, NSDashboardSystemRulesCollapsedKey));
+    CHECK(!NSDashboardSectionCollapsed(sectionReloaded, NSDashboardAppRulesCollapsedKey));
+    CHECK(NSDashboardSectionCollapsed(sectionReloaded, NSDashboardRecentActivityCollapsedKey));
+    for (NSString *key in sectionKeys) {
+        for (id invalid in @[ @"YES", @0, @1, @2, @[], @{}, NSDate.date ]) {
+            [defaults setObject:invalid forKey:key];
+            CHECK(!NSDashboardSectionCollapsed(defaults, key));
+        }
+        [defaults setBool:YES forKey:key];
+        CHECK(NSDashboardSectionCollapsed(defaults, key));
+    }
     NSDate *now = [NSDate dateWithTimeIntervalSince1970:1000000];
     CHECK([NSUpdateCheckMode(defaults) isEqual:NSUpdateCheckDaily]);
     CHECK(NSAutomaticUpdateCheckDue(defaults, now));
@@ -2099,6 +2126,10 @@ static void TestAppPreferences(void) {
     NSResetAppPreferences(defaults, domain);
     CHECK([defaults persistentDomainForName:domain].count == 0);
     NSUserDefaults *reloaded = [[NSUserDefaults alloc] initWithSuiteName:domain];
+    for (NSString *key in sectionKeys) {
+        CHECK(!NSDashboardSectionCollapsed(defaults, key));
+        CHECK(!NSDashboardSectionCollapsed(reloaded, key));
+    }
     CHECK(![reloaded objectForKey:@"hiddenRuleIdentities"]);
     CHECK(![reloaded objectForKey:NSUpdateCheckLastAttemptKey]);
     CHECK(![reloaded objectForKey:@"NSBootPolicyAutomaticAttempts"]);

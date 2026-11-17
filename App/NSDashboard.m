@@ -121,7 +121,7 @@ static BOOL NSSystemRuleEditAllowed(NSDictionary *document, BOOL system, NSError
     self.navigationController.navigationBar.prefersLargeTitles = YES;
     self.deferredRequests = [NSMutableSet new];
     self.submittedOnce = [NSMutableDictionary new];
-    self.collapsedSections = [NSMutableIndexSet new];
+    [self restoreCollapsedSections];
     self.navigationItem.rightBarButtonItem =
         [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemRefresh
                                                       target:self

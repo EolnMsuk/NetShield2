@@ -12,30 +12,30 @@ NetShield2 is a firewall, network monitor, and content filter for jailbroken iOS
 | RootHide | `roothide` | `iphoneos-arm64e` | `Applications/NetShield2.app` |
 | rootful | empty string | `iphoneos-arm` | `Applications/NetShield2.app` |
 
-## Build and CI inputs
+## Project file map
 
 ```text
 NetShield2/
 +-- .clang-format                      # Sets the Objective-C formatting rules used by CI.
 +-- .github/
 |   +-- workflows/
-|       +-- build.yml                  # Builds all three packages, runs checks, and stages draft releases.
+|       +-- build.yml                  # Checks/builds all three variants; main-branch pushes prepare verified draft releases.
 +-- App/
 |   +-- Entitlements.plist             # Declares the app's signing entitlements.
 |   +-- Makefile                       # Defines the app target, sources, frameworks, and signing options.
 |   +-- NSAppDelegate.h                # Declares the app lifecycle and notification delegate.
-|   +-- NSAppDelegate.m                # Launches the dashboard and handles notification responses.
-|   +-- NSAppStorage.h                 # Declares the app's shared storage queue.
-|   +-- NSAppStorage.m                 # Creates the serial queue for dashboard storage work.
-|   +-- NSConfigurationCoordinator.h   # Defines the shared filter configuration transaction API.
-|   +-- NSConfigurationCoordinator.m   # Serializes preference changes and tracks unfinished writes.
-|   +-- NSDashboard+Configuration.m    # Captures fallback readback state and handles firewall toggles, scope, and reset.
-|   +-- NSDashboard+Internal.h         # Shares dashboard rows, cached switches, collapse/search state, captured press targets and copy feedback.
+|   +-- NSAppDelegate.m                # Registers/resumes configuration execution, launches the dashboard, and handles notification responses.
+|   +-- NSAppStorage.h                 # Declares the serial storage queue and UIKit configuration execution registration/resumption.
+|   +-- NSAppStorage.m                 # Creates the storage queue and supplies bounded UIKit background execution for configuration work.
+|   +-- NSConfigurationCoordinator.h   # Declares configuration transactions, save receipts, recovery states, and bounded local mutation access.
+|   +-- NSConfigurationCoordinator.m   # Serializes preference operations with save receipts, durable reservations/pending records, recovery, and local execution budgets.
+|   +-- NSDashboard+Configuration.m    # Manages filter configuration/upgrades and fallback verification; successful shared/app resets restore expanded sections.
+|   +-- NSDashboard+Internal.h         # Shares dashboard rows/caches, collapse/search and gesture state, copy feedback, and the restoration helper used by launch/reset.
 |   +-- NSDashboard+Notifications.m    # Manages notification authorization and permission requests passed to the shared custom-rule draft builder.
-|   +-- NSDashboard+Table.m            # Renders collapsible sections, guards switch/scroll updates and resolves direct hold/pressure actions against visible row keys.
+|   +-- NSDashboard+Table.m            # Maps section preference keys, restores/saves collapse choices, renders searchable/collapsible headers, and guards table/scroll refreshes and row press actions.
 |   +-- NSDashboard+Updates.m          # Schedules update checks and displays available releases.
 |   +-- NSDashboard.h                  # Declares the main dashboard controller.
-|   +-- NSDashboard.m                  # Installs row presses, prepares direction-specific custom-rule drafts, handles Venmo warning returns and guards edits/readbacks/transfers.
+|   +-- NSDashboard.m                  # Owns dashboard lifecycle, restores section choices at launch, snapshots storage, guards rule edits/transfers, and builds direction-specific custom-rule drafts.
 |   +-- NSFilterBootPolicy.h           # Declares boot fallback checks and migration helpers.
 |   +-- NSFilterBootPolicy.m           # Applies and verifies the stock-boot fallback setting.
 |   +-- NSFilterRemoval.h              # Declares verified filter removal and shared-state cleanup.
@@ -79,15 +79,15 @@ NetShield2/
 +-- Makefile                           # Builds all three targets and runs the Debian packaging hooks.
 +-- Shared/
 |   +-- NSActivity.h                   # Groups activity and shares connection-sheet, search, and clipboard details.
-|   +-- NSAppPreferences.h             # Defines update-check preferences and app preference reset helpers.
+|   +-- NSAppPreferences.h             # Defines validated section preferences with expanded defaults, update-check preferences, and whole-domain app reset helpers.
 |   +-- NSBootSession.h                # Looks up the current system boot identity when available.
-|   +-- NSBoundedFile.h                # Declares bounded file reads, writes, and removal.
-|   +-- NSBoundedFile.m                # Checks file descriptors and performs bounded I/O and atomic writes.
+|   +-- NSBoundedFile.h                # Declares pinned app-group directories, checked descriptors, and bounded file reads/writes/removal.
+|   +-- NSBoundedFile.m                # Validates paths/descriptors and performs bounded I/O, atomic writes, and safe removal.
 |   +-- NSConstants.h                  # Defines engine/build and schema versions, limits, and shared filenames.
 |   +-- NSDNSCache.h                   # Checks DNS answer expiry and merges results into policy.
 |   +-- NSDestination.h                # Validates destinations and formats hosts before direction/protocol in connection details.
 |   +-- NSExport.h                     # Declares immutable import results, current JSON parsing and export staging.
-|   +-- NSExport.m                     # Transfers explicit raw rules, supports 3.0.0 classifier placement and reports accepted/rejected counts.
+|   +-- NSExport.m                     # Imports rules with 3.0.0 classifier compatibility/counts, exports raw rules/activity, and manages bounded export staging.
 |   +-- NSFlowDestination.h            # Extracts hosts, ports, and protocol from iOS filter flows.
 |   +-- NSGlobalRule.h                 # Declares global-condition parsing, canonical keys, overlap validation, and matching.
 |   +-- NSGlobalRule.m                 # Parses CIDRs and port ranges, compiles conditions, rejects overlaps, and matches raw identities and endpoints.
@@ -95,7 +95,7 @@ NetShield2/
 |   +-- NSMonitorSchema.h              # Declares validation for shared monitor snapshots.
 |   +-- NSMonitorSchema.m              # Validates monitor fields, activity records, and request entries.
 |   +-- NSNotificationPolicy.h         # Determines when to withdraw stale permission notifications.
-|   +-- NSNotifications.h              # Defines permission actions and withdraws banners for either automatic system action.
+|   +-- NSNotifications.h              # Registers/validates direction-aware permission actions and withdraws banners for automatic system actions.
 |   +-- NSPermissionQueue.h            # Declares the queue for flows waiting on user decisions.
 |   +-- NSPermissionQueue.m            # Settles held flows with shared evaluation of captured directions/peers and handles timeouts.
 |   +-- NSPermissionRequest.h          # Defines canonical request fingerprints, scope, and presentation checks.
@@ -109,29 +109,29 @@ NetShield2/
 |   +-- NSReleaseVersion.h             # Validates release versions and compares their numeric parts.
 |   +-- NSRuleChoices.h                # Defines rule choices and directional selection behavior.
 |   +-- NSStore.h                      # Declares shared policy, monitoring, and cleanup operations.
-|   +-- NSStore.m                      # Commits policy transactions, checks current requests, imports rules atomically and clears presentation state.
-|   +-- NSConfigurationRecord.h        # Defines record admission, immutable tokens, and execution hooks.
-|   +-- NSConfigurationRecord.m        # Validates records and bounds physical locking.
+|   +-- NSStore.m                      # Manages shared policy/monitor/request storage, policy transactions, atomic rule imports, and request presentation validation; section choices stay in app defaults.
+|   +-- NSConfigurationRecord.h        # Declares configuration record admission, revocable access tokens, and local execution budget hooks.
+|   +-- NSConfigurationRecord.m        # Validates durable records/reservations and queued access, enforcing execution budgets around short physical locks.
 |   +-- NSStoreLock.h                  # Declares the shared filesystem lock.
 |   +-- NSStoreLock.m                  # Acquires and releases locks across the app and providers.
 |   +-- NSValidation.h                 # Validates stored strings, Boolean values, and unsigned integers.
 +-- Tests/
-|   +-- BootPolicyTests.m              # Tests boot fallback settings, preference readback, and recovery.
-|   +-- ConfigurationTests.m           # Tests preference transaction timeouts and pending writes.
-|   +-- HardeningTests.m               # Tests decision parity across system states, identities/endpoints, globals, bounded I/O, DNS and queues.
-|   +-- RecoveryTests.m                # Tests DNS recovery, notification retries, and activity clearing.
-|   +-- RegressionTests.m              # Tests switch restoration at capacity, transfers, held requests, late banners and existing rule/storage behavior.
+|   +-- BootPolicyTests.m              # Tests boot fallback, verified restarts/removal, authorization, migration, and external ownership/recovery.
+|   +-- ConfigurationTests.m           # Tests save receipts/timeouts, durable recovery/reservations, and local execution budgets.
+|   +-- HardeningTests.m               # Tests decision parity, bounded storage/queues/release bodies, DNS lifetimes, and activity generations/counters.
+|   +-- RecoveryTests.m                # Tests destination safety, DNS recovery, notification retries/orphans, directional rule storage, and activity/rule clearing.
+|   +-- RegressionTests.m              # Tests rules/storage/transfers, requests/notifications, switch restoration, and app preference persistence/defaults/reset.
 |   +-- RespringTests.m                # Tests respring launch and fallback with a mock launcher.
 |   +-- RuleFixtures.h                 # Builds current-schema rule, DNS lifetime, and permission-request test fixtures.
-+-- changelog.md                       # Supplies newest-first history for the Sileo Changelog tab and GitHub draft release.
++-- changelog.md                       # Source history manually mirrored into depiction.json; CI extracts the matching version entry for draft notes.
 +-- control                            # Defines the Debian package ID, version, and dependencies.
-+-- depiction.json                     # Defines the Sileo Details and Changelog tabs with the existing header/screenshots.
++-- depiction.json                     # Defines Sileo Details/header/screenshots and manually mirrored Changelog markdown; minVersion is the depiction schema.
 +-- layout/
 |   +-- DEBIAN/
 |       +-- postinst                   # Registers the app after install and schedules a respring.
 |       +-- prerm                      # Verifies filter cleanup before package removal.
 +-- scripts/
-    +-- bundle_metadata.mk             # Generates each bundle's versioned Info.plist before signing.
+    +-- bundle_metadata.mk             # Installs metadata from control/NSEngineVersion into each build bundle before signing.
     +-- check_entitlements.py          # Compares signed entitlements against the source declarations.
     +-- check_format.py                # Checks Objective-C formatting with clang-format.
     +-- check_macho.py                 # Checks Mach-O metadata and verifies embedded signature hashes.
@@ -139,8 +139,8 @@ NetShield2/
     +-- prepare_draft.cjs              # Stages and verifies package assets on a GitHub draft release.
     +-- prepare_package.py             # Prepares staged maintainer scripts for each jailbreak layout.
     +-- release_manifest.py            # Records package hashes, source revision, and toolchain versions.
-    +-- sync_version.py                # Reads the package version and generates build metadata.
-    +-- test.py                        # Compiles and runs native Objective-C regressions on macOS.
+    +-- sync_version.py                # Reads marketing versions from control and build versions from NSEngineVersion; generates output plists and CI metadata.
+    +-- test.py                        # Compiles/runs shared, configuration, and provider regressions on macOS, then isolated respring tests; excludes UIKit.
     +-- test_macho.py                  # Tests Mach-O validation with synthetic binaries and tampering.
     +-- test_packaging.py              # Tests metadata generation, package layouts, and install scripts.
     +-- test_prepare_draft.cjs         # Tests draft staging and retries with mocked GitHub calls.
@@ -155,5 +155,7 @@ NetShield2/
 | --- | --- |
 | `README.md` | User guide and hosted web depiction destination. |
 | `LICENSE` | Project license. |
+| `ProjectOverview.md` | Project file map, jailbreak package layouts, and supporting-file responsibilities. |
+| `.theos-toolchain/` | Optional local SDK, clang resources, and Python syntax/format tools; excluded from shipped runtime components. |
 | `scripts/check_objc.py` | Optional syntax-only iOS check using the local `.theos-toolchain` SDK and libclang. |
 | `scripts/test_uninstall.py` | Standalone uninstall and deferred-respring fixtures using mock tools. |

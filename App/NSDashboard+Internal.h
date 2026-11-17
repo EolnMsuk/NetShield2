@@ -203,6 +203,7 @@ typedef NS_ENUM(NSInteger, NSFirewallRow) {
 - (void)installRowPressGesture;
 - (void)cancelRowPress;
 - (void)clearActivityCopyFeedback;
+- (void)restoreCollapsedSections;
 - (void)refreshTableKeepingPosition;
 - (NSString *)firewallFooterText;
 @end

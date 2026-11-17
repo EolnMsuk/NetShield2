@@ -1,4 +1,14 @@
 #import <Foundation/Foundation.h>
+#import "NSValidation.h"
+
+static NSString *const NSDashboardSystemRulesCollapsedKey = @"dashboardSystemRulesCollapsed";
+static NSString *const NSDashboardAppRulesCollapsedKey = @"dashboardAppRulesCollapsed";
+static NSString *const NSDashboardRecentActivityCollapsedKey = @"dashboardRecentActivityCollapsed";
+
+static inline BOOL NSDashboardSectionCollapsed(NSUserDefaults *defaults, NSString *key) {
+    id value = [defaults objectForKey:key];
+    return NSBoolean(value) && [value boolValue];
+}
 
 static NSString *const NSUpdateCheckModeKey = @"updateCheckMode";
 static NSString *const NSUpdateCheckLastAttemptKey = @"updateCheckLastAttempt";

@@ -564,6 +564,8 @@ static NSDictionary *NSSavedFilterFingerprint(NEFilterManager *manager) {
             self.identities = @[];
             self.systemIdentities = @[];
             NSResetAppPreferences(NSUserDefaults.standardUserDefaults, NSBundle.mainBundle.bundleIdentifier);
+            [self restoreCollapsedSections];
+            self.sectionScrollAnchor = nil;
             [self.configuration finish];
             self.configuration = nil;
             self.busy = NO;
