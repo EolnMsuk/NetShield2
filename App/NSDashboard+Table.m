@@ -967,7 +967,7 @@ static UIImage *NSDashboardUpdateIcon(void) {
             configuration.title = heading;
             configuration.image = [UIImage systemImageNamed:collapsed ? @"chevron.forward" : @"chevron.down"];
             configuration.imagePadding = 6;
-            configuration.contentInsets = NSDirectionalEdgeInsetsZero;
+            configuration.contentInsets = NSDirectionalEdgeInsetsMake(0, 8, 0, 8);
             configuration.baseForegroundColor = UIColor.secondaryLabelColor;
             configuration.titleTextAttributesTransformer = ^NSDictionary *(NSDictionary *incoming) {
                 NSMutableDictionary *attributes = [incoming mutableCopy];
@@ -1000,6 +1000,7 @@ static UIImage *NSDashboardUpdateIcon(void) {
         title.translatesAutoresizingMaskIntoConstraints = NO;
         [header addSubview:title];
         UILayoutGuide *margins = header.layoutMarginsGuide;
+        UILayoutGuide *titleEdges = collapsible ? header.cardLayoutGuide : margins;
         if (!scoped) {
             [NSLayoutConstraint activateConstraints:@[
                 [title.leadingAnchor constraintEqualToAnchor:margins.leadingAnchor],
@@ -1046,9 +1047,13 @@ static UIImage *NSDashboardUpdateIcon(void) {
                           action:@selector(clearSectionTapped:)
                 forControlEvents:UIControlEventTouchUpInside];
             [header addSubview:clear];
+            // Fill the title bar up to Clear while keeping their tap targets separate.
+            NSLayoutConstraint *titleTrailing =
+                collapsible ? [title.trailingAnchor constraintEqualToAnchor:clear.leadingAnchor constant:-12]
+                            : [title.trailingAnchor constraintLessThanOrEqualToAnchor:clear.leadingAnchor
+                                                                             constant:-12];
             [NSLayoutConstraint activateConstraints:@[
-                [title.leadingAnchor constraintEqualToAnchor:margins.leadingAnchor],
-                [title.trailingAnchor constraintLessThanOrEqualToAnchor:clear.leadingAnchor constant:-12],
+                [title.leadingAnchor constraintEqualToAnchor:titleEdges.leadingAnchor], titleTrailing,
                 [title.topAnchor constraintGreaterThanOrEqualToAnchor:margins.topAnchor],
 
                 [clear.trailingAnchor constraintEqualToAnchor:margins.trailingAnchor],
@@ -1059,8 +1064,8 @@ static UIImage *NSDashboardUpdateIcon(void) {
             ]];
         } else {
             [NSLayoutConstraint activateConstraints:@[
-                [title.leadingAnchor constraintEqualToAnchor:margins.leadingAnchor],
-                [title.trailingAnchor constraintEqualToAnchor:margins.trailingAnchor],
+                [title.leadingAnchor constraintEqualToAnchor:titleEdges.leadingAnchor],
+                [title.trailingAnchor constraintEqualToAnchor:titleEdges.trailingAnchor],
                 [title.topAnchor constraintEqualToAnchor:margins.topAnchor]
             ]];
         }
