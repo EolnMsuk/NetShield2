@@ -213,6 +213,24 @@ static UIImage *NSDashboardGitHubIcon(void) {
     return icon;
 }
 
+static UIImage *NSDashboardRedditIcon(void) {
+    static UIImage *icon;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        UIImage *logo = [UIImage imageNamed:@"Reddit"];
+        if (!logo) {
+            return;
+        }
+        CGRect bounds = CGRectMake(0, 0, 24, 24);
+        UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithBounds:bounds];
+        UIImage *rendered = [renderer imageWithActions:^(UIGraphicsImageRendererContext *context) {
+            [logo drawInRect:bounds];
+        }];
+        icon = [rendered imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
+    });
+    return icon;
+}
+
 static UIImage *NSDashboardUpdateIcon(void) {
     static UIImage *icon;
     static dispatch_once_t once;
@@ -836,7 +854,7 @@ static UIImage *NSDashboardUpdateIcon(void) {
         return NSConfigurationRowCount;
     }
     if (section == NSDashboardSectionSupport) {
-        return 3;
+        return NSSupportRowCount;
     }
     return MAX((NSUInteger)1, self.filteredActivityGroups.count);
 }
@@ -1163,8 +1181,15 @@ static UIImage *NSDashboardUpdateIcon(void) {
     label.adjustsFontForContentSizeCategory = YES;
     label.textColor = UIColor.secondaryLabelColor;
     NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
-    label.text = [NSString stringWithFormat:@"NetShield2 v%@ by EolnMsuk (%@ %@)", version,
-                                            UIDevice.currentDevice.systemVersion, @NS_JAILBREAK_TYPE];
+    NSString *packageType = @NS_JAILBREAK_TYPE;
+    NSDictionary<NSString *, NSString *> *packageTypeNames = @{
+        @"rootless" : @"Rootless",
+        @"roothide" : @"RootHide",
+        @"rootful" : @"Rootful"
+    };
+    NSString *displayPackageType = packageTypeNames[packageType] ?: packageType;
+    label.text = [NSString stringWithFormat:@"NetShield2 v%@ (iOS %@ %@)", version,
+                                            UIDevice.currentDevice.systemVersion, displayPackageType];
     [header addSubview:label];
     UILayoutGuide *margins = header.layoutMarginsGuide;
     [NSLayoutConstraint activateConstraints:@[
@@ -1501,23 +1526,27 @@ static UIImage *NSDashboardUpdateIcon(void) {
                     event[@"hostCount"] ?: @1, NSDestinationSummary(event[@"destination"])];
         }
     } else if (path.section == NSDashboardSectionSupport) {
-        cell.textLabel.text = @[ @"Check for Updates", @"GitHub Link", @"Donate" ][path.row];
-        if (path.row == 0) {
+        cell.textLabel.text = @[ @"Check for Updates", @"GitHub Link", @"Reddit Link", @"Donate" ][path.row];
+        cell.detailTextLabel.text = @[
+            [self updateCheckSubtitle], @"Source code, releases and issues", @"EolnMsuk4334 on Reddit",
+            @"Choose Venmo or Crypto"
+        ][path.row];
+        cell.textLabel.textColor =
+            path.row == NSSupportRowDonate ? UIColor.systemGreenColor : UIColor.systemBlueColor;
+        if (path.row == NSSupportRowUpdates) {
             cell.imageView.image = NSDashboardUpdateIcon();
-        } else if (path.row == 2) {
+        } else if (path.row == NSSupportRowGitHub) {
+            cell.imageView.image = NSDashboardGitHubIcon();
+        } else if (path.row == NSSupportRowReddit) {
+            cell.imageView.image = NSDashboardRedditIcon();
+        } else if (path.row == NSSupportRowDonate) {
             UIImageSymbolConfiguration *configuration =
                 [UIImageSymbolConfiguration configurationWithPointSize:22];
             UIImage *coin = [UIImage systemImageNamed:@"dollarsign.circle.fill"
                                     withConfiguration:configuration];
             cell.imageView.image = [coin imageWithTintColor:UIColor.systemOrangeColor
                                               renderingMode:UIImageRenderingModeAlwaysOriginal];
-        } else {
-            cell.imageView.image = NSDashboardGitHubIcon();
         }
-        cell.detailTextLabel.text =
-            @[ [self updateCheckSubtitle], @"Source code, releases and issues",
-               @"Choose Venmo or Crypto" ][path.row];
-        cell.textLabel.textColor = UIColor.systemBlueColor;
     } else {
         cell.textLabel.text = @[
             @"Export Rules and Recent Activity", @"Import Rules", @"Reset Settings",
@@ -1627,11 +1656,13 @@ static UIImage *NSDashboardUpdateIcon(void) {
     } else if (path.section == NSDashboardSectionFirewall && path.row == NSFirewallRowUnidentified) {
         [self chooseActionForIdentity:nil defaultKey:@"unattributed"];
     } else if (path.section == NSDashboardSectionSupport) {
-        if (path.row == 0) {
+        if (path.row == NSSupportRowUpdates) {
             [self presentUpdateOptions];
-        } else if (path.row == 1) {
+        } else if (path.row == NSSupportRowGitHub) {
             [self openSupportURL:[NSURL URLWithString:@"https://github.com/EolnMsuk/NetShield2/"]];
-        } else if (path.row == 2) {
+        } else if (path.row == NSSupportRowReddit) {
+            [self openSupportURL:[NSURL URLWithString:@"https://www.reddit.com/user/EolnMsuk4334/"]];
+        } else if (path.row == NSSupportRowDonate) {
             [self supportDeveloper];
         }
     } else if (path.section == NSDashboardSectionAdvanced) {

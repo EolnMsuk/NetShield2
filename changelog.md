@@ -1,8 +1,15 @@
 ### Users coming from 2.8.8 or lower must reset / clear any existing global rules before updating (or just uninstall first).
 
+# 3.0.4
+
+- Added Reddit Link below GitHub Link in Support to open the developer’s Reddit profile.
+- Changed the Donate label from blue to green.
+- Updated the dashboard footer to show the app version, iOS version, and package type (Rootless, RootHide, or Rootful), and removed the author byline.
+
 # 3.0.3
 
 - System Rules, App Rules, and Recent Activity now remember whether they are expanded or collapsed after you close and reopen NetShield2.
+- All collapsible sections start expanded on a clean install and after Reset Settings or Remove Filter & Settings.
 
 # 3.0.2
 

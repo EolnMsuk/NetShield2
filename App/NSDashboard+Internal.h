@@ -50,6 +50,14 @@ typedef NS_ENUM(NSInteger, NSFirewallRow) {
     NSFirewallRowCount,
 };
 
+typedef NS_ENUM(NSInteger, NSSupportRow) {
+    NSSupportRowUpdates,
+    NSSupportRowGitHub,
+    NSSupportRowReddit,
+    NSSupportRowDonate,
+    NSSupportRowCount,
+};
+
 @interface NSDashboard () <UISearchBarDelegate, UIGestureRecognizerDelegate, UIDocumentPickerDelegate>
 @property(nonatomic, strong) NSPolicy *policy;
 @property(nonatomic, copy) NSString *policyReadError;
