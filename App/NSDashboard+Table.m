@@ -1182,11 +1182,8 @@ static UIImage *NSDashboardUpdateIcon(void) {
     label.textColor = UIColor.secondaryLabelColor;
     NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
     NSString *packageType = @NS_JAILBREAK_TYPE;
-    NSDictionary<NSString *, NSString *> *packageTypeNames = @{
-        @"rootless" : @"Rootless",
-        @"roothide" : @"RootHide",
-        @"rootful" : @"Rootful"
-    };
+    NSDictionary<NSString *, NSString *> *packageTypeNames =
+        @{@"rootless" : @"Rootless", @"roothide" : @"RootHide", @"rootful" : @"Rootful"};
     NSString *displayPackageType = packageTypeNames[packageType] ?: packageType;
     label.text = [NSString stringWithFormat:@"NetShield2 v%@ (iOS %@ %@)", version,
                                             UIDevice.currentDevice.systemVersion, displayPackageType];
