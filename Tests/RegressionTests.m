@@ -2074,21 +2074,24 @@ static void TestAppPreferences(void) {
     NSString *domain = [@"NetShield2.Tests." stringByAppendingString:NSUUID.UUID.UUIDString];
     NSUserDefaults *defaults = [[NSUserDefaults alloc] initWithSuiteName:domain];
     NSArray<NSString *> *sectionKeys = @[
-        NSDashboardSystemRulesCollapsedKey, NSDashboardAppRulesCollapsedKey,
-        NSDashboardRecentActivityCollapsedKey
+        NSDashboardGlobalRulesCollapsedKey, NSDashboardSystemRulesCollapsedKey,
+        NSDashboardAppRulesCollapsedKey, NSDashboardRecentActivityCollapsedKey
     ];
     for (NSString *key in sectionKeys) {
         CHECK(!NSDashboardSectionCollapsed(defaults, key));
     }
+    [defaults setBool:YES forKey:NSDashboardGlobalRulesCollapsedKey];
     [defaults setBool:YES forKey:NSDashboardSystemRulesCollapsedKey];
     [defaults setBool:NO forKey:NSDashboardAppRulesCollapsedKey];
     [defaults setBool:YES forKey:NSDashboardRecentActivityCollapsedKey];
     NSUserDefaults *sectionReloaded = [[NSUserDefaults alloc] initWithSuiteName:domain];
+    CHECK(NSDashboardSectionCollapsed(sectionReloaded, NSDashboardGlobalRulesCollapsedKey));
     CHECK(NSDashboardSectionCollapsed(sectionReloaded, NSDashboardSystemRulesCollapsedKey));
     CHECK(!NSDashboardSectionCollapsed(sectionReloaded, NSDashboardAppRulesCollapsedKey));
     CHECK(NSDashboardSectionCollapsed(sectionReloaded, NSDashboardRecentActivityCollapsedKey));
     [sectionReloaded setBool:NO forKey:NSDashboardSystemRulesCollapsedKey];
     sectionReloaded = [[NSUserDefaults alloc] initWithSuiteName:domain];
+    CHECK(NSDashboardSectionCollapsed(sectionReloaded, NSDashboardGlobalRulesCollapsedKey));
     CHECK(!NSDashboardSectionCollapsed(sectionReloaded, NSDashboardSystemRulesCollapsedKey));
     CHECK(!NSDashboardSectionCollapsed(sectionReloaded, NSDashboardAppRulesCollapsedKey));
     CHECK(NSDashboardSectionCollapsed(sectionReloaded, NSDashboardRecentActivityCollapsedKey));

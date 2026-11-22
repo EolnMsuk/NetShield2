@@ -80,9 +80,8 @@ typedef NS_ENUM(NSInteger, NSSupportRow) {
 @property(nonatomic, copy) id rowPressKey;
 @property(nonatomic, weak) UITableViewCell *rowPressCell;
 @property(nonatomic) BOOL rowPressDispatched;
-@property(nonatomic, strong) NSTimer *activityCopyFeedbackTimer;
-@property(nonatomic, weak) UITableViewCell *activityCopyFeedbackCell;
-@property(nonatomic, strong) UILabel *activityCopyFeedbackLabel;
+@property(nonatomic, strong) NSTimer *clipboardFeedbackTimer;
+@property(nonatomic, strong) UIView *clipboardFeedbackView;
 @property(nonatomic, weak) UIButton *activityClearButton;
 @property(nonatomic) BOOL clearingSection;
 @property(nonatomic, copy) NSArray<NSString *> *identities;
@@ -171,7 +170,7 @@ typedef NS_ENUM(NSInteger, NSSupportRow) {
 - (void)importRules;
 - (void)editGlobalRule:(NSString *)original;
 - (NSString *)globalRuleTitle:(NSString *)key;
-- (NSString *)globalRuleTitle:(NSString *)key fullAppNames:(BOOL)fullAppNames;
+- (NSString *)globalRuleClipboardText:(NSString *)key action:(NSString *)action;
 - (NSString *)ruleTitle:(NSString *)rule;
 - (void)firewallChanged:(UISwitch *)sender;
 - (void)appleSystemProcessesChanged:(UISwitch *)sender;
@@ -210,7 +209,7 @@ typedef NS_ENUM(NSInteger, NSSupportRow) {
 - (void)clearActivitySearch;
 - (void)installRowPressGesture;
 - (void)cancelRowPress;
-- (void)clearActivityCopyFeedback;
+- (void)clearCopyFeedback;
 - (void)restoreCollapsedSections;
 - (void)refreshTableKeepingPosition;
 - (NSString *)firewallFooterText;

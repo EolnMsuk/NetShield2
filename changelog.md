@@ -1,5 +1,15 @@
 ### Users coming from 2.8.8 or lower must reset / clear any existing global rules before updating (or just uninstall first).
 
+# 3.0.5
+
+- Tap Global Rules to collapse or expand its rules and Add a Custom Rule option. Your choice is remembered after reopening NetShield2.
+- Empty rule sections now keep their titles visible. Clear appears beside a section title only when the section is expanded and has entries.
+- Touch and hold System Rules, App Rules, or Recent Activity to copy the entire section, with a brief confirmation.
+- Touch and hold a Global Rule to copy its details. Tap it to edit as before.
+- Touch and hold a recent connection to open a custom rule with its process, domain or IP, protocol, and the correct incoming or outgoing port. This also works with grouped connections.
+- Custom rules opened from network permission prompts now use the domain alone when available, falling back to the IP when needed.
+- Centered the app version, iOS version, and package type above Check for Updates.
+
 # 3.0.4
 
 - Added Reddit Link below GitHub Link in Support to open the developer’s Reddit profile.

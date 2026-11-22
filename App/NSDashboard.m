@@ -108,7 +108,7 @@ static BOOL NSSystemRuleEditAllowed(NSDictionary *document, BOOL system, NSError
                      animated:(BOOL)animated
                    completion:(void (^)(void))completion {
     [self cancelRowPress];
-    [self clearActivityCopyFeedback];
+    [self clearCopyFeedback];
     if ([viewControllerToPresent isKindOfClass:UIAlertController.class]) {
         UIAlertController *alert = (UIAlertController *)viewControllerToPresent;
         alert.view.tintColor = UIColor.systemBlueColor;
@@ -190,7 +190,8 @@ static BOOL NSSystemRuleEditAllowed(NSDictionary *document, BOOL system, NSError
 - (void)dealloc {
     [NSNotificationCenter.defaultCenter removeObserver:self];
     [self.timer invalidate];
-    [self.activityCopyFeedbackTimer invalidate];
+    [self.clipboardFeedbackTimer invalidate];
+    [self.clipboardFeedbackView removeFromSuperview];
     [self.updateTask cancel];
 }
 - (void)viewWillAppear:(BOOL)animated {
@@ -217,7 +218,7 @@ static BOOL NSSystemRuleEditAllowed(NSDictionary *document, BOOL system, NSError
 - (void)viewWillDisappear:(BOOL)animated {
     [super viewWillDisappear:animated];
     [self cancelRowPress];
-    [self clearActivityCopyFeedback];
+    [self clearCopyFeedback];
     [self dismissActivityKeyboard];
     [self.navigationController.navigationBar removeGestureRecognizer:self.navigationKeyboardDismissGesture];
 }
@@ -940,53 +941,76 @@ static BOOL NSSystemRuleEditAllowed(NSDictionary *document, BOOL system, NSError
     [alert addActionWithTitle:(!key && !connection) ? @"Done" : @"Cancel" rule:nil handler:nil];
     [self presentViewController:alert animated:YES completion:nil];
 }
-- (NSString *)globalRuleTitle:(NSString *)key {
-    return [self globalRuleTitle:key fullAppNames:NO];
-}
-- (NSString *)globalRuleTitle:(NSString *)key fullAppNames:(BOOL)fullAppNames {
-    NSDictionary *condition = NSGlobalRuleCondition(key);
-    NSMutableArray *names = [NSMutableArray new];
+- (NSString *)globalRuleConditionText:(NSDictionary *)condition forClipboard:(BOOL)forClipboard {
+    NSMutableArray<NSString *> *names = [NSMutableArray new];
     for (NSString *identity in condition[@"identities"]) {
-        [names addObject:fullAppNames || [identity isEqual:@".com"] ? NSIdentityFullDisplayName(identity)
-                                                                    : NSIdentityDisplayName(identity)];
+        NSString *name = forClipboard || [identity isEqual:@".com"] ? NSIdentityFullDisplayName(identity)
+                                                                    : NSIdentityDisplayName(identity);
+        [names addObject:name.length ? name : identity];
     }
-    NSMutableArray *labels =
+    NSMutableArray<NSString *> *labels =
         [NSMutableArray arrayWithObjects:names.count ? [names componentsJoinedByString:@", "] : @"All apps",
                                          [condition[@"destinations"] count]
                                              ? NSGlobalDestinationsText(condition[@"destinations"])
                                              : @"All domains / IPs",
                                          nil];
-    if ([condition[@"remotePorts"] count]) {
-        [labels addObject:[@"Remote: " stringByAppendingString:NSGlobalPortsText(condition[@"remotePorts"])]];
+    NSArray *remotePorts = condition[@"remotePorts"];
+    if (remotePorts.count || forClipboard) {
+        NSString *ports = remotePorts.count ? NSGlobalPortsText(remotePorts) : @"Any port";
+        [labels addObject:[@"Remote: " stringByAppendingString:ports]];
     }
-    if ([condition[@"localPorts"] count]) {
-        [labels addObject:[@"Local: " stringByAppendingString:NSGlobalPortsText(condition[@"localPorts"])]];
+    NSArray *localPorts = condition[@"localPorts"];
+    if (localPorts.count || forClipboard) {
+        NSString *ports = localPorts.count ? NSGlobalPortsText(localPorts) : @"Any port";
+        [labels addObject:[@"Local: " stringByAppendingString:ports]];
     }
     NSArray *protocols = condition[@"protocols"];
-    [labels addObject:protocols.count ? [[protocols componentsJoinedByString:@" & "] uppercaseString]
-                                      : @"Any protocol"];
+    NSString *protocolText =
+        protocols.count ? [protocols componentsJoinedByString:forClipboard ? @", " : @" & "].uppercaseString
+                        : @"Any protocol";
+    [labels addObject:forClipboard ? [@"Protocol: " stringByAppendingString:protocolText] : protocolText];
     return [labels componentsJoinedByString:@"\n"];
+}
+- (NSString *)globalRuleTitle:(NSString *)key {
+    return [self globalRuleConditionText:NSGlobalRuleCondition(key) forClipboard:NO];
+}
+- (NSString *)globalRuleClipboardText:(NSString *)key action:(NSString *)action {
+    NSDictionary *condition = NSGlobalRuleCondition(key);
+    NSString *direction = [condition[@"direction"] isEqual:@"both"]
+                              ? @"Incoming and outgoing"
+                              : [condition[@"direction"] capitalizedString];
+    return [NSString stringWithFormat:@"Global Rule\n%@\nAction: %@\nDirection: %@\nResolve domains: %@",
+                                      [self globalRuleConditionText:condition forClipboard:YES],
+                                      [self ruleTitle:action], direction,
+                                      [condition[@"resolveDomains"] boolValue] ? @"Yes" : @"No"];
 }
 - (void)addCustomRuleForIdentity:(NSString *)identity connection:(NSDictionary *)connection {
     NSString *action =
         NSAppRuleSelections(self.policy.document[@"rules"][identity ?: @""]).firstObject ?: @"allow";
     NSDictionary *destination = @{};
-    if (connection && [connection[@"connections"] unsignedIntegerValue] <= 1) {
+    if (connection) {
+        NSDictionary *peer = connection[@"destination"];
         NSMutableDictionary *draftDestination =
-            [NSCanonicalConnectionDestination(connection[@"destination"] ?: @{}) mutableCopy];
+            [NSCanonicalConnectionDestination([peer isKindOfClass:NSDictionary.class] ? peer : @{})
+                mutableCopy];
         BOOL incoming = [connection[@"direction"] isEqual:@"inbound"];
         BOOL outgoing = [connection[@"direction"] isEqual:@"outbound"];
-        // Prune only the editor draft; recorded and automatically saved endpoints stay intact.
+        // Use the preferred endpoint and the directional port in the editor draft.
+        if (draftDestination[@"domain"]) {
+            [draftDestination removeObjectForKey:@"address"];
+        }
         if (incoming) {
             [draftDestination removeObjectForKey:@"port"];
         } else if (outgoing) {
             [draftDestination removeObjectForKey:@"localPort"];
         }
         destination = draftDestination;
-        BOOL blocked = [@[ @"block", @"permission-block" ] containsObject:connection[@"action"] ?: @""];
-        action = incoming   ? (blocked ? @"block-inbound" : @"allow-inbound")
-                 : outgoing ? (blocked ? @"block-outbound" : @"allow-outbound")
-                            : (blocked ? @"block" : @"allow");
+        if ([connection[@"connections"] unsignedIntegerValue] <= 1) {
+            BOOL blocked = [@[ @"block", @"permission-block" ] containsObject:connection[@"action"] ?: @""];
+            action = incoming   ? (blocked ? @"block-inbound" : @"allow-inbound")
+                     : outgoing ? (blocked ? @"block-outbound" : @"allow-outbound")
+                                : (blocked ? @"block" : @"allow");
+        }
     }
     NSString *initialKey =
         NSExactGlobalRuleKey(identity.length ? @[ identity ] : @[], destination, NSGlobalCoverage(action));

@@ -5,8 +5,14 @@
 #import "../Shared/NSActivity.h"
 #import <UIKit/UIGestureRecognizerSubclass.h>
 
-static NSString *NSDashboardCollapsedPreferenceKey(NSInteger section) {
-    switch (section) {
+static NSInteger NSDashboardCollapseOwner(NSInteger section) {
+    return section == NSDashboardSectionGlobalRules ? NSDashboardSectionAddGlobalRule : section;
+}
+
+static NSString *NSDashboardCollapsedPreferenceKey(NSInteger owner) {
+    switch (owner) {
+    case NSDashboardSectionAddGlobalRule:
+        return NSDashboardGlobalRulesCollapsedKey;
     case NSDashboardSectionSystemRules:
         return NSDashboardSystemRulesCollapsedKey;
     case NSDashboardSectionRules:
@@ -16,6 +22,28 @@ static NSString *NSDashboardCollapsedPreferenceKey(NSInteger section) {
     default:
         return nil;
     }
+}
+
+static NSString *NSDashboardCopyableSectionName(NSInteger section) {
+    switch (section) {
+    case NSDashboardSectionSystemRules:
+        return @"System Rules";
+    case NSDashboardSectionRules:
+        return @"App Rules";
+    case NSDashboardSectionActivity:
+        return @"Recent Activity";
+    default:
+        return nil;
+    }
+}
+
+static NSString *NSDashboardAppRuleSummary(id rule, NSString *automatic) {
+    NSString *summary = NSAppRuleSummary(rule);
+    if (!automatic) {
+        return summary;
+    }
+    return [NSString stringWithFormat:@"%@ by iOS setting unless a global rule matches. Saved rule: %@",
+                                      [automatic isEqual:@"block"] ? @"Blocked" : @"Allowed", summary];
 }
 
 @interface NSDashboardRowCell : UITableViewCell
@@ -383,6 +411,11 @@ static UIImage *NSDashboardUpdateIcon(void) {
         self.rowPressCell = cell;
         return YES;
     }
+    if ([gestureRecognizer isKindOfClass:UILongPressGestureRecognizer.class] &&
+        [gestureRecognizer.view isKindOfClass:UIButton.class] &&
+        NSDashboardCopyableSectionName(gestureRecognizer.view.tag)) {
+        return [self canRecognizeDashboardPress];
+    }
     if (self.navigationController.topViewController == self && !self.presentedViewController &&
         ![touch.view isDescendantOfView:self.activitySearchBar.searchTextField]) {
         // Observe the touch without competing with rows, switches, or scrolling.
@@ -410,10 +443,13 @@ static UIImage *NSDashboardUpdateIcon(void) {
     self.rowPressKey = nil;
     self.rowPressCell = nil;
 }
-- (BOOL)canRecognizeRowPress {
+- (BOOL)canRecognizeDashboardPress {
     return self.navigationController.topViewController == self && self.view.window &&
-           !self.presentedViewController && !self.isBeingDismissed && !self.busy && !self.importPending &&
-           !self.tableView.editing && !self.tableView.dragging && !self.tableView.decelerating;
+           !self.presentedViewController && !self.isBeingDismissed && !self.tableView.editing &&
+           !self.tableView.dragging && !self.tableView.decelerating;
+}
+- (BOOL)canRecognizeRowPress {
+    return [self canRecognizeDashboardPress] && !self.busy && !self.importPending;
 }
 - (id)rowPressActionKeyAtIndexPath:(NSIndexPath *)path {
     if (!path || [self isSectionCollapsed:path.section]) {
@@ -454,47 +490,102 @@ static UIImage *NSDashboardUpdateIcon(void) {
     self.pendingGlobalRuleSelectionPath = nil;
     self.pendingGlobalRuleSelectionKey = nil;
     [self.tableView deselectRowAtIndexPath:path animated:NO];
-    [self clearActivityCopyFeedback];
     if (path.section == NSDashboardSectionActivity) {
-        UIPasteboard.generalPasteboard.string =
-            NSActivityClipboardLine(self.filteredActivityGroups[path.row]);
-        [self showActivityCopyFeedbackAtPath:path];
+        NSDictionary *connection = self.filteredActivityGroups[path.row];
+        [self addCustomRuleForIdentity:connection[@"identity"] connection:connection];
     } else if (path.section == NSDashboardSectionGlobalRules) {
-        [self editGlobalRule:key];
+        NSString *action = self.displayedGlobalRules[key];
+        UIPasteboard.generalPasteboard.string = [self globalRuleClipboardText:key action:action];
+        [self showCopyFeedback:@"Rule copied"];
     } else {
         [self addCustomRuleForIdentity:key connection:nil];
     }
 }
-- (void)clearActivityCopyFeedback {
-    [self.activityCopyFeedbackTimer invalidate];
-    self.activityCopyFeedbackTimer = nil;
-    if (self.activityCopyFeedbackCell.accessoryView == self.activityCopyFeedbackLabel) {
-        self.activityCopyFeedbackCell.accessoryView = nil;
+- (void)sectionTitlePressed:(UILongPressGestureRecognizer *)gesture {
+    if (gesture.state == UIGestureRecognizerStateBegan && [gesture.view isDescendantOfView:self.tableView]) {
+        [self copySection:gesture.view.tag];
     }
-    self.activityCopyFeedbackCell = nil;
-    self.activityCopyFeedbackLabel = nil;
 }
-- (void)showActivityCopyFeedbackAtPath:(NSIndexPath *)path {
-    [self clearActivityCopyFeedback];
-    UITableViewCell *cell = [self.tableView cellForRowAtIndexPath:path];
+- (BOOL)copySection:(NSInteger)section {
+    NSString *name = NSDashboardCopyableSectionName(section);
+    if (!name || ![self canRecognizeDashboardPress]) {
+        return NO;
+    }
+    NSMutableArray<NSString *> *lines = [NSMutableArray arrayWithObject:name];
+    if (section == NSDashboardSectionActivity) {
+        NSArray<NSDictionary *> *groups = [self.activityGroups copy];
+        for (NSDictionary *group in groups) {
+            [lines addObject:NSActivityClipboardLine(group)];
+        }
+    } else {
+        NSArray<NSString *> *identities = [[self identitiesForSection:section] copy];
+        NSPolicy *policy = self.policy;
+        NSDictionary *rules = policy.document[@"rules"];
+        for (NSString *identity in identities) {
+            NSString *fullName = NSIdentityFullDisplayName(identity);
+            NSString *summary = NSDashboardAppRuleSummary(rules[identity],
+                                                          [policy automaticSystemActionForIdentity:identity]);
+            [lines addObject:[NSString
+                                 stringWithFormat:@"%@: %@", fullName.length ? fullName : identity, summary]];
+        }
+    }
+    if (lines.count == 1) {
+        [self showCopyFeedback:[NSString stringWithFormat:@"No %@ to copy", name]];
+    } else {
+        UIPasteboard.generalPasteboard.string = [lines componentsJoinedByString:@"\n"];
+        [self showCopyFeedback:[name stringByAppendingString:@" copied"]];
+    }
+    return YES;
+}
+- (void)clearCopyFeedback {
+    [self.clipboardFeedbackTimer invalidate];
+    self.clipboardFeedbackTimer = nil;
+    [self.clipboardFeedbackView removeFromSuperview];
+    self.clipboardFeedbackView = nil;
+}
+- (void)showCopyFeedback:(NSString *)message {
+    [self clearCopyFeedback];
+    UIView *feedback = [UIView new];
+    feedback.translatesAutoresizingMaskIntoConstraints = NO;
+    feedback.userInteractionEnabled = NO;
+    feedback.accessibilityElementsHidden = YES;
+    feedback.backgroundColor = UIColor.labelColor;
+    feedback.layer.cornerRadius = 8;
+    feedback.directionalLayoutMargins = NSDirectionalEdgeInsetsMake(8, 12, 8, 12);
     UILabel *label = [UILabel new];
-    label.text = @"Copied";
+    label.translatesAutoresizingMaskIntoConstraints = NO;
+    label.text = message;
     label.font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1];
     label.adjustsFontForContentSizeCategory = YES;
-    label.textColor = UIColor.secondaryLabelColor;
-    [label sizeToFit];
-    cell.accessoryView = label;
-    self.activityCopyFeedbackCell = cell;
-    self.activityCopyFeedbackLabel = label;
-    UIAccessibilityPostNotification(UIAccessibilityAnnouncementNotification, @"Copied to clipboard");
+    label.textColor = UIColor.systemBackgroundColor;
+    label.textAlignment = NSTextAlignmentCenter;
+    label.numberOfLines = 0;
+    [feedback addSubview:label];
+
+    // Keep feedback in the visible navigation area across table reloads and scrolling.
+    UINavigationController *navigation = self.navigationController;
+    [navigation.view addSubview:feedback];
+    UILayoutGuide *safeArea = navigation.view.safeAreaLayoutGuide;
+    UILayoutGuide *margins = feedback.layoutMarginsGuide;
+    [NSLayoutConstraint activateConstraints:@[
+        [feedback.centerXAnchor constraintEqualToAnchor:safeArea.centerXAnchor],
+        [feedback.leadingAnchor constraintGreaterThanOrEqualToAnchor:safeArea.leadingAnchor constant:12],
+        [feedback.trailingAnchor constraintLessThanOrEqualToAnchor:safeArea.trailingAnchor constant:-12],
+        [feedback.topAnchor constraintEqualToAnchor:navigation.navigationBar.bottomAnchor constant:8],
+        [label.leadingAnchor constraintEqualToAnchor:margins.leadingAnchor],
+        [label.trailingAnchor constraintEqualToAnchor:margins.trailingAnchor],
+        [label.topAnchor constraintEqualToAnchor:margins.topAnchor],
+        [label.bottomAnchor constraintEqualToAnchor:margins.bottomAnchor]
+    ]];
+    self.clipboardFeedbackView = feedback;
+    UIAccessibilityPostNotification(UIAccessibilityAnnouncementNotification, message);
     __weak typeof(self) weakSelf = self;
-    self.activityCopyFeedbackTimer =
-        [NSTimer scheduledTimerWithTimeInterval:1
-                                        repeats:NO
-                                          block:^(NSTimer *timer) {
-                                              [weakSelf clearActivityCopyFeedback];
-                                          }];
-    [NSRunLoop.mainRunLoop addTimer:self.activityCopyFeedbackTimer forMode:NSRunLoopCommonModes];
+    self.clipboardFeedbackTimer = [NSTimer timerWithTimeInterval:1.5
+                                                         repeats:NO
+                                                           block:^(NSTimer *timer) {
+                                                               [weakSelf clearCopyFeedback];
+                                                           }];
+    [NSRunLoop.mainRunLoop addTimer:self.clipboardFeedbackTimer forMode:NSRunLoopCommonModes];
 }
 - (void)restoreCollapsedSections {
     self.collapsedSections = [NSMutableIndexSet new];
@@ -506,15 +597,13 @@ static UIImage *NSDashboardUpdateIcon(void) {
         }
     }
 }
-- (BOOL)isCollapsibleSection:(NSInteger)section {
-    return NSDashboardCollapsedPreferenceKey(section) != nil;
-}
 - (BOOL)isSectionCollapsed:(NSInteger)section {
-    return [self isCollapsibleSection:section] && [self.collapsedSections containsIndex:section];
+    return [self.collapsedSections containsIndex:NSDashboardCollapseOwner(section)];
 }
 - (void)sectionTitleTapped:(UIButton *)sender {
     NSInteger section = sender.tag;
-    NSString *key = NSDashboardCollapsedPreferenceKey(section);
+    NSInteger owner = NSDashboardCollapseOwner(section);
+    NSString *key = NSDashboardCollapsedPreferenceKey(owner);
     if (!key || self.tableView.editing || self.tableView.dragging || self.tableView.decelerating) {
         return;
     }
@@ -527,23 +616,13 @@ static UIImage *NSDashboardUpdateIcon(void) {
             [self dismissActivityKeyboard];
         }
         if (collapsed) {
-            [self.collapsedSections removeIndex:section];
+            [self.collapsedSections removeIndex:owner];
         } else {
-            [self.collapsedSections addIndex:section];
+            [self.collapsedSections addIndex:owner];
         }
         [NSUserDefaults.standardUserDefaults setBool:!collapsed forKey:key];
         [self refreshTableKeepingPosition];
     }];
-}
-- (BOOL)showsAppRules {
-    return self.identities.count > 0;
-}
-- (BOOL)showsSystemRules {
-    return self.systemIdentities.count > 0;
-}
-- (BOOL)isRuleSectionHidden:(NSInteger)section {
-    return (section == NSDashboardSectionRules && ![self showsAppRules]) ||
-           (section == NSDashboardSectionSystemRules && ![self showsSystemRules]);
 }
 - (NSArray<NSString *> *)identitiesForSection:(NSInteger)section {
     return section == NSDashboardSectionSystemRules ? self.systemIdentities : self.identities;
@@ -780,7 +859,6 @@ static UIImage *NSDashboardUpdateIcon(void) {
     }
     [UIView performWithoutAnimation:^{
         [self cancelRowPress];
-        [self clearActivityCopyFeedback];
         [self.tableView reloadData];
         [self.tableView layoutIfNeeded];
         if (searching && [searchField isDescendantOfView:self.tableView]) {
@@ -835,11 +913,8 @@ static UIImage *NSDashboardUpdateIcon(void) {
     if (section == NSDashboardSectionRequests) {
         return [self.monitor[@"requests"] count];
     }
-    if (section == NSDashboardSectionRules) {
-        return self.identities.count;
-    }
-    if (section == NSDashboardSectionSystemRules) {
-        return [self showsSystemRules] ? self.systemIdentities.count : 0;
+    if (section == NSDashboardSectionRules || section == NSDashboardSectionSystemRules) {
+        return [self identitiesForSection:section].count;
     }
     if (section == NSDashboardSectionNotifications) {
         return 2;
@@ -859,13 +934,8 @@ static UIImage *NSDashboardUpdateIcon(void) {
     return MAX((NSUInteger)1, self.filteredActivityGroups.count);
 }
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
-    if (section == NSDashboardSectionRequests && ![self.monitor[@"requests"] count]) {
-        return nil;
-    }
-    if (section == NSDashboardSectionGlobalRules && !self.globalRuleKeys.count) {
-        return nil;
-    }
-    if ([self isRuleSectionHidden:section]) {
+    if (section == NSDashboardSectionGlobalRules ||
+        (section == NSDashboardSectionRequests && ![self.monitor[@"requests"] count])) {
         return nil;
     }
     return @[
@@ -903,7 +973,7 @@ static UIImage *NSDashboardUpdateIcon(void) {
         return nil;
     }
     if (section == NSDashboardSectionSystemRules) {
-        return ![self showsSystemRules] ? nil
+        return !self.systemIdentities.count ? nil
                : NSAppleSystemTrafficEnabled(self.policy.document)
                    ? NSSystemRulesLockedMessage
                    : @"Tap a system identity to change its rule";
@@ -925,7 +995,7 @@ static UIImage *NSDashboardUpdateIcon(void) {
                                           self.monitor[@"evictedRequestCount"] ?: @0];
     }
     if (section == NSDashboardSectionRules) {
-        return [self showsAppRules] ? @"Tap an app identity to change its rule" : nil;
+        return self.identities.count ? @"Tap an app identity to change its rule" : nil;
     }
     if (section == NSDashboardSectionActivity) {
         return @"Up to 300 recorded events";
@@ -973,17 +1043,13 @@ static UIImage *NSDashboardUpdateIcon(void) {
     [self flushDeferredTablePresentation];
 }
 - (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section {
-    if ([self isRuleSectionHidden:section]) {
-        return nil;
-    }
-    BOOL scoped = section == NSDashboardSectionActivity || section == NSDashboardSectionRules ||
-                  section == NSDashboardSectionGlobalRules || section == NSDashboardSectionSystemRules;
     NSString *heading = [self tableView:tableView titleForHeaderInSection:section];
-    BOOL globalRulesHeader = section == NSDashboardSectionGlobalRules && self.globalRuleKeys.count;
-    if (heading.length || globalRulesHeader) {
-        NSUInteger count = [self itemCountForClearSection:section];
+    if (heading.length) {
+        NSInteger clearSection =
+            section == NSDashboardSectionAddGlobalRule ? NSDashboardSectionGlobalRules : section;
+        NSUInteger count = [self itemCountForClearSection:clearSection];
         BOOL collapsed = [self isSectionCollapsed:section];
-        BOOL collapsible = [self isCollapsibleSection:section];
+        BOOL collapsible = NSDashboardCollapsedPreferenceKey(section) != nil;
         BOOL hasItems = count > 0 && !collapsed;
         BOOL canClear = hasItems && !self.busy && !self.importPending && !self.clearingSection &&
                         (section == NSDashboardSectionActivity || self.policy != nil);
@@ -1027,6 +1093,22 @@ static UIImage *NSDashboardUpdateIcon(void) {
                           action:@selector(sectionTitleTapped:)
                 forControlEvents:UIControlEventTouchUpInside];
             [button.heightAnchor constraintGreaterThanOrEqualToConstant:44].active = YES;
+            NSString *copyName = NSDashboardCopyableSectionName(section);
+            if (copyName) {
+                UILongPressGestureRecognizer *press =
+                    [[UILongPressGestureRecognizer alloc] initWithTarget:self
+                                                                  action:@selector(sectionTitlePressed:)];
+                press.delegate = self;
+                press.cancelsTouchesInView = YES;
+                [button addGestureRecognizer:press];
+                __weak typeof(self) weakSelf = self;
+                UIAccessibilityCustomAction *copyAction = [[UIAccessibilityCustomAction alloc]
+                     initWithName:[@"Copy " stringByAppendingString:copyName]
+                    actionHandler:^BOOL(UIAccessibilityCustomAction *action) {
+                        return [weakSelf copySection:section];
+                    }];
+                button.accessibilityCustomActions = @[ copyAction ];
+            }
             title = button;
         } else {
             UILabel *label = [UILabel new];
@@ -1041,8 +1123,7 @@ static UIImage *NSDashboardUpdateIcon(void) {
         title.translatesAutoresizingMaskIntoConstraints = NO;
         [header addSubview:title];
         UILayoutGuide *margins = header.layoutMarginsGuide;
-        UILayoutGuide *titleEdges = collapsible ? header.cardLayoutGuide : margins;
-        if (!scoped) {
+        if (!collapsible) {
             [NSLayoutConstraint activateConstraints:@[
                 [title.leadingAnchor constraintEqualToAnchor:margins.leadingAnchor],
                 [title.trailingAnchor constraintEqualToAnchor:margins.trailingAnchor],
@@ -1051,6 +1132,7 @@ static UIImage *NSDashboardUpdateIcon(void) {
             ]];
             return header;
         }
+        UILayoutGuide *titleEdges = header.cardLayoutGuide;
         UIButton *clear = nil;
         if (hasItems) {
             clear = [NSDashboardClearButton buttonWithType:UIButtonTypeSystem];
@@ -1080,30 +1162,26 @@ static UIImage *NSDashboardUpdateIcon(void) {
                 return attributes;
             };
             clear.configuration = configuration;
-            if (collapsible) {
-                // Keep Clear at its content width; the title takes the remaining space.
-                [clear setContentHuggingPriority:UILayoutPriorityDefaultHigh
-                                         forAxis:UILayoutConstraintAxisHorizontal];
-                [clear setContentCompressionResistancePriority:UILayoutPriorityRequired
-                                                       forAxis:UILayoutConstraintAxisHorizontal];
-                [title setContentHuggingPriority:UILayoutPriorityDefaultLow
-                                         forAxis:UILayoutConstraintAxisHorizontal];
-            }
-            clear.tag = section;
-            clear.accessibilityLabel =
-                globalRulesHeader ? @"Clear Global Rules" : [@"Clear " stringByAppendingString:heading];
+            // Keep Clear at its content width. The title takes the remaining space.
+            [clear setContentHuggingPriority:UILayoutPriorityDefaultHigh
+                                     forAxis:UILayoutConstraintAxisHorizontal];
+            [clear setContentCompressionResistancePriority:UILayoutPriorityRequired
+                                                   forAxis:UILayoutConstraintAxisHorizontal];
+            [title setContentHuggingPriority:UILayoutPriorityDefaultLow
+                                     forAxis:UILayoutConstraintAxisHorizontal];
+            clear.tag = clearSection;
+            clear.accessibilityLabel = clearSection == NSDashboardSectionGlobalRules
+                                           ? @"Clear Global Rules"
+                                           : [@"Clear " stringByAppendingString:heading];
             clear.enabled = canClear;
             [clear addTarget:self
                           action:@selector(clearSectionTapped:)
                 forControlEvents:UIControlEventTouchUpInside];
             [header addSubview:clear];
             // Fill the title bar up to Clear while keeping their tap targets separate.
-            NSLayoutConstraint *titleTrailing =
-                collapsible ? [title.trailingAnchor constraintEqualToAnchor:clear.leadingAnchor constant:-12]
-                            : [title.trailingAnchor constraintLessThanOrEqualToAnchor:clear.leadingAnchor
-                                                                             constant:-12];
             [NSLayoutConstraint activateConstraints:@[
-                [title.leadingAnchor constraintEqualToAnchor:titleEdges.leadingAnchor], titleTrailing,
+                [title.leadingAnchor constraintEqualToAnchor:titleEdges.leadingAnchor],
+                [title.trailingAnchor constraintEqualToAnchor:clear.leadingAnchor constant:-12],
                 [title.topAnchor constraintGreaterThanOrEqualToAnchor:margins.topAnchor],
 
                 [clear.trailingAnchor constraintEqualToAnchor:margins.trailingAnchor],
@@ -1177,6 +1255,7 @@ static UIImage *NSDashboardUpdateIcon(void) {
     UILabel *label = [UILabel new];
     label.translatesAutoresizingMaskIntoConstraints = NO;
     label.numberOfLines = 0;
+    label.textAlignment = NSTextAlignmentCenter;
     label.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
     label.adjustsFontForContentSizeCategory = YES;
     label.textColor = UIColor.secondaryLabelColor;
@@ -1203,13 +1282,11 @@ static UIImage *NSDashboardUpdateIcon(void) {
     NSStyleSectionHeader(view);
 }
 - (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section {
-    if (section == NSDashboardSectionRequests && ![self.monitor[@"requests"] count]) {
+    if (section == NSDashboardSectionGlobalRules ||
+        (section == NSDashboardSectionRequests && ![self.monitor[@"requests"] count])) {
         return CGFLOAT_MIN;
     }
-    if (section == NSDashboardSectionGlobalRules) {
-        return self.globalRuleKeys.count ? UITableViewAutomaticDimension : CGFLOAT_MIN;
-    }
-    return [self isRuleSectionHidden:section] ? CGFLOAT_MIN : UITableViewAutomaticDimension;
+    return UITableViewAutomaticDimension;
 }
 - (CGFloat)tableView:(UITableView *)tableView heightForFooterInSection:(NSInteger)section {
     if ([self isSectionCollapsed:section]) {
@@ -1230,7 +1307,11 @@ static UIImage *NSDashboardUpdateIcon(void) {
     if (section == NSDashboardSectionAdvanced) {
         return CGFLOAT_MIN;
     }
-    return [self isRuleSectionHidden:section] ? CGFLOAT_MIN : UITableViewAutomaticDimension;
+    if ((section == NSDashboardSectionRules || section == NSDashboardSectionSystemRules) &&
+        ![self identitiesForSection:section].count) {
+        return CGFLOAT_MIN;
+    }
+    return UITableViewAutomaticDimension;
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)path {
     UITableViewCell *cached = nil;
@@ -1257,9 +1338,6 @@ static UIImage *NSDashboardUpdateIcon(void) {
         cell = [(global ? [NSDashboardGlobalRuleCell alloc]
                         : [NSDashboardRowCell alloc]) initWithStyle:UITableViewCellStyleSubtitle
                                                     reuseIdentifier:reuse];
-    }
-    if (cell == self.activityCopyFeedbackCell) {
-        [self clearActivityCopyFeedback];
     }
     NSResetDashboardCell(cell);
     UIColor *rowTint = nil;
@@ -1472,13 +1550,7 @@ static UIImage *NSDashboardUpdateIcon(void) {
         NSString *automatic = [self.policy automaticSystemActionForIdentity:identity];
         rowTint = automatic ? NSRuleColor(automatic) : NSAppRuleColor(rule);
         cell.textLabel.text = NSIdentityDisplayName(identity);
-        cell.detailTextLabel.text =
-            automatic
-                ? [NSString
-                      stringWithFormat:@"%@ by iOS setting unless a global rule matches. Saved rule: %@",
-                                       [automatic isEqual:@"block"] ? @"Blocked" : @"Allowed",
-                                       NSAppRuleSummary(rule)]
-                : NSAppRuleSummary(rule);
+        cell.detailTextLabel.text = NSDashboardAppRuleSummary(rule, automatic);
     } else if (path.section == NSDashboardSectionNotifications) {
         cell.textLabel.text = path.row == 0 ? @"Notification Settings" : @"Banners & Do Not Disturb";
         cell.detailTextLabel.text =
@@ -1571,13 +1643,6 @@ static UIImage *NSDashboardUpdateIcon(void) {
         self.telemetryCell = cell;
     }
     return cell;
-}
-- (void)tableView:(UITableView *)tableView
-    didEndDisplayingCell:(UITableViewCell *)cell
-       forRowAtIndexPath:(NSIndexPath *)path {
-    if (cell == self.activityCopyFeedbackCell) {
-        [self clearActivityCopyFeedback];
-    }
 }
 - (BOOL)tableView:(UITableView *)tableView shouldHighlightRowAtIndexPath:(NSIndexPath *)path {
     BOOL global = path.section == NSDashboardSectionGlobalRules;
