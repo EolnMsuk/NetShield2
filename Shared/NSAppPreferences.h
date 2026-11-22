@@ -1,6 +1,7 @@
 #import <Foundation/Foundation.h>
 #import "NSValidation.h"
 
+static NSString *const NSDashboardGlobalRulesCollapsedKey = @"dashboardGlobalRulesCollapsed";
 static NSString *const NSDashboardSystemRulesCollapsedKey = @"dashboardSystemRulesCollapsed";
 static NSString *const NSDashboardAppRulesCollapsedKey = @"dashboardAppRulesCollapsed";
 static NSString *const NSDashboardRecentActivityCollapsedKey = @"dashboardRecentActivityCollapsed";
