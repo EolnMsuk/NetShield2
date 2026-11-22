@@ -143,7 +143,6 @@ NetShield2/
 |   +-- 7SS.PNG
 |   +-- 8SS.PNG
 |   +-- 9SS.PNG
-|   +-- GitHubLogo.png                 # Copy of the GitHub artwork in App/Resources/GitHubLogo.png.
 |   +-- SS.PNG                         # Additional screenshot.
 +-- scripts/
     +-- bundle_metadata.mk             # Runs sync_version.py to generate bundle Info.plist files before signing.
