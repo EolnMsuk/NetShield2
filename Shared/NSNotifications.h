@@ -58,7 +58,7 @@ static inline void NSRemoveAutomaticallyManagedNotifications(void) {
             NSMutableArray *identifiers = [NSMutableArray new];
             for (UNNotificationRequest *request in requests) {
                 if (NSIsPermissionCategory(request.content.categoryIdentifier) &&
-                    [policy automaticSystemActionForIdentity:request.content.userInfo[@"identity"]]) {
+                    [policy automaticActionForIdentity:request.content.userInfo[@"identity"]]) {
                     [identifiers addObject:request.identifier];
                 }
             }
@@ -72,7 +72,7 @@ static inline void NSRemoveAutomaticallyManagedNotifications(void) {
         for (UNNotification *notification in notifications) {
             UNNotificationRequest *request = notification.request;
             if (NSIsPermissionCategory(request.content.categoryIdentifier) &&
-                [policy automaticSystemActionForIdentity:request.content.userInfo[@"identity"]]) {
+                [policy automaticActionForIdentity:request.content.userInfo[@"identity"]]) {
                 [identifiers addObject:request.identifier];
             }
         }

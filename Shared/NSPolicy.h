@@ -10,6 +10,10 @@ static inline BOOL NSAppleSystemTrafficEnabled(NSDictionary *_Nullable document)
     return (!document[@"filterSockets"] || [document[@"filterSockets"] boolValue]) &&
            [document[@"allowAppleSystemProcesses"] boolValue];
 }
+static inline BOOL NSThirdPartyTrafficEnabled(NSDictionary *_Nullable document) {
+    return (!document[@"filterSockets"] || [document[@"filterSockets"] boolValue]) &&
+           [document[@"allowThirdPartyProcesses"] boolValue];
+}
 FOUNDATION_EXPORT NSArray<NSString *> *NSAppleSystemTelemetryIdentities(void);
 
 typedef NS_ENUM(NSInteger, NSFlowDirection) {
@@ -31,7 +35,8 @@ typedef NS_ENUM(NSInteger, NSFlowDecisionReason) {
     NSFlowReasonApp,
     NSFlowReasonDefault,
     NSFlowReasonUnidentified,
-    NSFlowReasonEndpoints
+    NSFlowReasonEndpoints,
+    NSFlowReasonThirdParty
 };
 typedef struct {
     NSFlowDisposition disposition;
@@ -47,7 +52,9 @@ typedef struct {
                            direction:(NSFlowDirection)direction
                          destination:(NSDictionary *)destination
                               socket:(BOOL)socket;
+// Setting overrides only; evaluateIdentity: still gives destination-aware Global Rules priority.
 - (BOOL)automaticallyAllowsIdentity:(nullable NSString *)identity;
+- (nullable NSString *)automaticActionForIdentity:(nullable NSString *)identity;
 - (nullable NSString *)automaticSystemActionForIdentity:(nullable NSString *)identity;
 - (BOOL)allowsIdentity:(nullable NSString *)identity direction:(NSFlowDirection)direction;
 - (BOOL)requiresPermissionForIdentity:(nullable NSString *)identity;

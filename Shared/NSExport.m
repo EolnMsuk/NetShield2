@@ -402,6 +402,7 @@ NSData *NSRulesAndActivityJSON(NSPolicy *policy, NSArray<NSDictionary *> *events
         @"defaultRule" : document[@"default"],
         @"unidentifiedRule" : document[@"unattributed"],
         @"allowAppleSystemProcesses" : @([document[@"allowAppleSystemProcesses"] boolValue]),
+        @"allowThirdPartyProcesses" : @(NSThirdPartyTrafficEnabled(document)),
         @"blockAppleSystemTelemetry" : @([document[@"blockAppleSystemTelemetry"] boolValue]),
         @"appRules" : appRules,
         @"systemRules" : systemRules,

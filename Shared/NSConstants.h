@@ -1,7 +1,7 @@
 #import <Foundation/Foundation.h>
 
 enum {
-    NSEngineVersion = 20054,
+    NSEngineVersion = 20055,
     NSSchemaVersion = 5,
     NSMonitorSchemaVersion = 3,
     NSExportSchemaVersion = 3,

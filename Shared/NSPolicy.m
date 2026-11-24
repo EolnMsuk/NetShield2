@@ -61,6 +61,7 @@ static NSString *NSAppActionForDirection(id value, NSFlowDirection direction) {
         @"ruleSetEpoch" : NSUUID.UUID.UUIDString,
         @"globalRuleGeneration" : NSUUID.UUID.UUIDString,
         @"allowAppleSystemProcesses" : @YES,
+        @"allowThirdPartyProcesses" : @NO,
         @"blockAppleSystemTelemetry" : @NO,
         @"appleSystemTelemetryIntroduced" : @NO,
         @"filterSockets" : @YES
@@ -81,7 +82,8 @@ static NSString *NSAppActionForDirection(id value, NSFlowDirection direction) {
             (!d[@"unidentifiedAskGeneration"] || NSBoundedString(d[@"unidentifiedAskGeneration"], 128, YES));
     id appleAllowance = d[@"allowAppleSystemProcesses"];
     valid = valid && (!appleAllowance || NSBoolean(appleAllowance));
-    for (NSString *key in @[ @"blockAppleSystemTelemetry", @"appleSystemTelemetryIntroduced" ]) {
+    for (NSString *key in
+         @[ @"blockAppleSystemTelemetry", @"appleSystemTelemetryIntroduced", @"allowThirdPartyProcesses" ]) {
         valid = valid && (!d[key] || NSBoolean(d[key]));
     }
     id sockets = d[@"filterSockets"];
@@ -204,7 +206,7 @@ static NSString *NSAppActionForDirection(id value, NSFlowDirection direction) {
              @"globalDomainAddresses", @"globalDomainExpirations", @"globalDomainLifetimes",
              @"globalRuleGeneration", @"ruleDestinations", @"askGenerations", @"ruleSetEpoch",
              @"allowAppleSystemProcesses", @"blockAppleSystemTelemetry", @"appleSystemTelemetryIntroduced",
-             @"filterSockets", @"unidentifiedAskGeneration"
+             @"filterSockets", @"allowThirdPartyProcesses", @"unidentifiedAskGeneration"
          ]) {
         if (d[key]) {
             canonicalDocument[key] = d[key];
@@ -219,6 +221,8 @@ static NSString *NSAppActionForDirection(id value, NSFlowDirection direction) {
     canonicalDocument[@"filterSockets"] = sockets ?: @YES;
     canonicalDocument[@"allowAppleSystemProcesses"] =
         NSAppleSystemTrafficEnabled(canonicalDocument) ? @YES : @NO;
+    canonicalDocument[@"allowThirdPartyProcesses"] =
+        NSThirdPartyTrafficEnabled(canonicalDocument) ? @YES : @NO;
     canonicalDocument[@"blockAppleSystemTelemetry"] =
         NSAppleSystemTrafficEnabled(canonicalDocument) && [d[@"blockAppleSystemTelemetry"] boolValue] ? @YES
                                                                                                       : @NO;
@@ -263,7 +267,17 @@ static NSString *NSAppActionForDirection(id value, NSFlowDirection direction) {
     return policy->_document ? policy : nil;
 }
 - (BOOL)automaticallyAllowsIdentity:(NSString *)identity {
-    return [[self automaticSystemActionForIdentity:identity] isEqual:@"allow"];
+    return [[self automaticActionForIdentity:identity] isEqual:@"allow"];
+}
+- (NSString *)automaticActionForIdentity:(NSString *)identity {
+    NSString *systemAction = [self automaticSystemActionForIdentity:identity];
+    if (systemAction) {
+        return systemAction;
+    }
+    return [identity isKindOfClass:NSString.class] && identity.length && !NSIsAppleSystemIdentity(identity) &&
+                   NSThirdPartyTrafficEnabled(self.document)
+               ? @"allow"
+               : nil;
 }
 - (NSString *)automaticSystemActionForIdentity:(NSString *)identity {
     if (!NSAppleSystemTrafficEnabled(self.document) || !NSIsAppleSystemIdentity(identity)) {
@@ -353,9 +367,11 @@ static NSString *NSAppActionForDirection(id value, NSFlowDirection direction) {
     if (action) {
         return (NSFlowEvaluation){[action isEqual:@"allow"] ? NSFlowAllow : NSFlowDrop, NSFlowReasonGlobal};
     }
-    action = [self automaticSystemActionForIdentity:identity];
+    action = [self automaticActionForIdentity:identity];
     if (action) {
-        return (NSFlowEvaluation){[action isEqual:@"allow"] ? NSFlowAllow : NSFlowDrop, NSFlowReasonSystem};
+        return (NSFlowEvaluation){[action isEqual:@"allow"] ? NSFlowAllow : NSFlowDrop,
+                                  NSIsAppleSystemIdentity(identity) ? NSFlowReasonSystem
+                                                                    : NSFlowReasonThirdParty};
     }
     NSFlowDecisionReason reason = identity.length ? NSFlowReasonApp : NSFlowReasonUnidentified;
     action = identity.length ? NSAppActionForDirection(self.document[@"rules"][identity], direction)
