@@ -1470,7 +1470,7 @@ static UIImage *NSDashboardUpdateIcon(void) {
         cell.detailTextLabel.text = [details componentsJoinedByString:@"\n"];
     } else if (path.section == NSDashboardSectionFirewall && path.row == NSFirewallRowAppleSystem) {
         cell.textLabel.text = @"Allow iOS system traffic";
-        cell.detailTextLabel.text = @"Allow Apple identities unless a global rule matches";
+        cell.detailTextLabel.text = @"Allow Apple identities";
         UISwitch *toggle = cachedToggle ?: [UISwitch new];
         [toggle removeTarget:self action:NULL forControlEvents:UIControlEventValueChanged];
         [toggle addTarget:self
@@ -1481,7 +1481,7 @@ static UIImage *NSDashboardUpdateIcon(void) {
         [self refreshFirewallSwitchCell:cell row:NSFirewallRowAppleSystem];
     } else if (path.section == NSDashboardSectionFirewall && path.row == NSFirewallRowAppleTelemetry) {
         cell.textLabel.text = @"Block iOS system telemetry";
-        cell.detailTextLabel.text = @"Block 20 telemetry processes unless a global rule matches";
+        cell.detailTextLabel.text = @"Block 20 telemetry processes";
         UISwitch *toggle = cachedToggle ?: [UISwitch new];
         [toggle removeTarget:self action:NULL forControlEvents:UIControlEventValueChanged];
         [toggle addTarget:self
@@ -1492,7 +1492,7 @@ static UIImage *NSDashboardUpdateIcon(void) {
         [self refreshFirewallSwitchCell:cell row:NSFirewallRowAppleTelemetry];
     } else if (path.section == NSDashboardSectionFirewall && path.row == NSFirewallRowThirdParty) {
         cell.textLabel.text = @"Allow third-party traffic";
-        cell.detailTextLabel.text = @"Allow 3rd party apps internet access";
+        cell.detailTextLabel.text = @"Allow 3rd party app identities";
         UISwitch *toggle = cachedToggle ?: [UISwitch new];
         [toggle removeTarget:self action:NULL forControlEvents:UIControlEventValueChanged];
         [toggle addTarget:self
