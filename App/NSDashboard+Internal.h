@@ -13,6 +13,7 @@
 #import "NSAppStorage.h"
 
 FOUNDATION_EXPORT NSString *const NSSystemRulesLockedMessage;
+FOUNDATION_EXPORT NSString *const NSAppRulesLockedMessage;
 
 typedef NS_ENUM(NSInteger, NSConfigurationOperation) {
     NSConfigurationDisable,
@@ -44,6 +45,7 @@ typedef NS_ENUM(NSInteger, NSFirewallRow) {
     NSFirewallRowSockets,
     NSFirewallRowAppleSystem,
     NSFirewallRowAppleTelemetry,
+    NSFirewallRowThirdParty,
     NSFirewallRowStatus,
     NSFirewallRowUnidentified,
     NSFirewallRowDefault,
@@ -118,6 +120,7 @@ typedef NS_ENUM(NSInteger, NSSupportRow) {
 @property(nonatomic, strong) UITableViewCell *socketCell;
 @property(nonatomic, strong) UITableViewCell *appleCell;
 @property(nonatomic, strong) UITableViewCell *telemetryCell;
+@property(nonatomic, strong) UITableViewCell *thirdPartyCell;
 @property(nonatomic, copy) NSArray *displayedRows;
 @property(nonatomic, copy) NSArray *displaySignature;
 @property(nonatomic, strong) NSMutableDictionary *rowHeights;
@@ -175,7 +178,8 @@ typedef NS_ENUM(NSInteger, NSSupportRow) {
 - (void)firewallChanged:(UISwitch *)sender;
 - (void)appleSystemProcessesChanged:(UISwitch *)sender;
 - (void)appleSystemTelemetryChanged:(UISwitch *)sender;
-- (void)showSystemRulesLocked;
+- (void)thirdPartyProcessesChanged:(UISwitch *)sender;
+- (void)showRulesLockedForSystem:(BOOL)system;
 - (void)openSupportURL:(NSURL *)url;
 - (void)supportDeveloper;
 - (void)showNotificationHelp;

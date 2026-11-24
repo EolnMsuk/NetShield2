@@ -119,8 +119,11 @@
     BOOL once = [request[@"mode"] isEqual:@"once"];
     dispatch_async(NSAppStorageQueue(), ^{
         NSError *error = nil;
-        BOOL automatic = [NSReadPolicy(NULL) automaticSystemActionForIdentity:request[@"identity"]] != nil;
+        BOOL automatic = [NSReadPolicy(NULL) automaticActionForIdentity:request[@"identity"]] != nil;
         BOOL saved = !automatic && NSAnswerPermissionRequestWithRule(request, rule, &error);
+        // The setting may commit after the precheck but before the store rejects a late response.
+        automatic =
+            automatic || (!saved && [NSReadPolicy(NULL) automaticActionForIdentity:request[@"identity"]]);
         NSDictionary *destination =
             saved && !unidentified ? NSReadPolicy(NULL).document[@"ruleDestinations"][request[@"identity"]]
                                    : nil;

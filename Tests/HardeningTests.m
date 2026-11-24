@@ -399,7 +399,9 @@ static void TestDecisionParity(void) {
         @"com.apple.analyticsd", @".com.apple.Analyticsd", @"prefix.com.apple.analyticsd"
     ];
     NSArray *identities = [[NSAppleSystemTelemetryIdentities() arrayByAddingObjectsFromArray:ordinarySystem]
-        arrayByAddingObjectsFromArray:@[ @"com.appleish.example", @".com.Apple.analyticsd", @"app", @"" ]];
+        arrayByAddingObjectsFromArray:@[
+            @"com.appleish.example", @".com.Apple.analyticsd", @"networkd", @"app", @""
+        ]];
     NSArray *destinations = @[
         @{}, @{@"protocol" : @"tcp"},
         @{@"protocol" : @"udp",
@@ -411,85 +413,108 @@ static void TestDecisionParity(void) {
           @"localPort" : @1},
         peer
     ];
-    for (NSArray *state in @[
-             @[ @NO, @NO, @NO ], @[ @NO, @NO, @YES ], @[ @NO, @YES, @NO ], @[ @NO, @YES, @YES ],
-             @[ @YES, @NO, @NO ], @[ @YES, @NO, @YES ], @[ @YES, @YES, @NO ], @[ @YES, @YES, @YES ]
-         ]) {
-        NSMutableDictionary *document = [[NSPolicy defaultDocument] mutableCopy];
-        document[@"filterSockets"] = state[0];
-        document[@"allowAppleSystemProcesses"] = state[1];
-        document[@"blockAppleSystemTelemetry"] = state[2];
-        document[@"unattributed"] = @"block";
-        NSPolicy *policy = [NSPolicy policyWithDocument:document error:NULL];
-        EXPECT(policy);
-        for (NSString *identity in identities) {
-            BOOL system = [state[0] boolValue] && [state[1] boolValue] && NSIsAppleSystemIdentity(identity);
-            BOOL blocked = system && [state[2] boolValue] &&
-                           [NSAppleSystemTelemetryIdentities() containsObject:identity];
-            NSFlowDisposition expected = !identity.length ? NSFlowDrop
-                                         : system         ? (blocked ? NSFlowDrop : NSFlowAllow)
-                                                          : NSFlowAsk;
-            for (NSNumber *direction in @[ @0, @1, @2, @-1, @99 ]) {
-                for (NSDictionary *destination in destinations) {
-                    for (NSNumber *socket in @[ @NO, @YES ]) {
-                        NSFlowEvaluation decision = [policy evaluateIdentity:identity
-                                                                   direction:direction.integerValue
-                                                                 destination:destination
-                                                                      socket:socket.boolValue];
-                        EXPECT(decision.disposition == expected);
-                        EXPECT((decision.reason == NSFlowReasonSystem) == system);
-                        EXPECT([policy allowsIdentity:identity
-                                            direction:direction.integerValue
-                                          destination:destination] == (expected == NSFlowAllow));
-                        EXPECT([policy requiresPermissionForIdentity:identity
+    for (NSNumber *thirdParty in @[ @NO, @YES ]) {
+        for (NSArray *state in @[
+                 @[ @NO, @NO, @NO ], @[ @NO, @NO, @YES ], @[ @NO, @YES, @NO ], @[ @NO, @YES, @YES ],
+                 @[ @YES, @NO, @NO ], @[ @YES, @NO, @YES ], @[ @YES, @YES, @NO ], @[ @YES, @YES, @YES ]
+             ]) {
+            NSMutableDictionary *document = [[NSPolicy defaultDocument] mutableCopy];
+            document[@"filterSockets"] = state[0];
+            document[@"allowAppleSystemProcesses"] = state[1];
+            document[@"blockAppleSystemTelemetry"] = state[2];
+            document[@"allowThirdPartyProcesses"] = thirdParty;
+            document[@"unattributed"] = @"block";
+            NSPolicy *policy = [NSPolicy policyWithDocument:document error:NULL];
+            EXPECT(policy);
+            for (NSString *identity in identities) {
+                BOOL system =
+                    [state[0] boolValue] && [state[1] boolValue] && NSIsAppleSystemIdentity(identity);
+                BOOL blocked = system && [state[2] boolValue] &&
+                               [NSAppleSystemTelemetryIdentities() containsObject:identity];
+                BOOL third = [state[0] boolValue] && thirdParty.boolValue && identity.length &&
+                             !NSIsAppleSystemIdentity(identity);
+                NSFlowDisposition expected = !identity.length ? NSFlowDrop
+                                             : system         ? (blocked ? NSFlowDrop : NSFlowAllow)
+                                             : third          ? NSFlowAllow
+                                                              : NSFlowAsk;
+                for (NSNumber *direction in @[ @0, @1, @2, @-1, @99 ]) {
+                    for (NSDictionary *destination in destinations) {
+                        for (NSNumber *socket in @[ @NO, @YES ]) {
+                            NSFlowEvaluation decision = [policy evaluateIdentity:identity
+                                                                       direction:direction.integerValue
+                                                                     destination:destination
+                                                                          socket:socket.boolValue];
+                            EXPECT(decision.disposition == expected);
+                            EXPECT((decision.reason == NSFlowReasonSystem) == system);
+                            EXPECT((decision.reason == NSFlowReasonThirdParty) == third);
+                            EXPECT([policy allowsIdentity:identity
+                                                direction:direction.integerValue
+                                              destination:destination] == (expected == NSFlowAllow));
+                            EXPECT([policy
+                                       requiresPermissionForIdentity:identity
                                                            direction:direction.integerValue
                                                          destination:destination] == (expected == NSFlowAsk));
+                        }
                     }
                 }
             }
+            EXPECT([policy evaluateIdentity:nil direction:NSFlowDirectionUnknown destination:@{} socket:NO]
+                       .disposition == NSFlowDrop);
+            EXPECT(![policy automaticActionForIdentity:nil] && ![policy automaticActionForIdentity:@""]);
+            for (id invalid in @[ @123, NSNull.null, @[], @{} ]) {
+                EXPECT(![policy automaticActionForIdentity:invalid]);
+                EXPECT(![policy automaticallyAllowsIdentity:invalid]);
+            }
         }
-        EXPECT([policy evaluateIdentity:nil direction:NSFlowDirectionUnknown destination:@{} socket:NO]
-                   .disposition == NSFlowDrop);
     }
     for (NSArray *state in
          @[ @[ @NO, @"allow" ], @[ @NO, @"block" ], @[ @YES, @"allow" ], @[ @YES, @"block" ] ]) {
         NSNumber *sockets = state[0];
         NSString *action = state[1];
-        NSString *identity =
-            [action isEqual:@"allow"] ? @".com.apple.ReportCrash.Root" : @"prefixcom.apple.example";
-        NSMutableDictionary *document = [[NSPolicy defaultDocument] mutableCopy];
-        document[@"filterSockets"] = sockets;
-        document[@"blockAppleSystemTelemetry"] = @YES;
-        document[@"globalRules"] =
-            @{NSFixtureGlobal(identity, @"192.0.2.1", @"443", @"1234", @"tcp", action) : action};
-        NSPolicy *policy = [NSPolicy policyWithDocument:document error:NULL];
-        EXPECT(policy);
-        for (NSNumber *direction in @[ @0, @1, @2 ]) {
-            NSFlowEvaluation matched = [policy evaluateIdentity:identity
-                                                      direction:direction.integerValue
-                                                    destination:peer
-                                                         socket:YES];
-            EXPECT(matched.reason == NSFlowReasonGlobal);
-            EXPECT(matched.disposition == ([action isEqual:@"allow"] ? NSFlowAllow : NSFlowDrop));
-            EXPECT([policy allowsIdentity:identity direction:direction.integerValue
-                              destination:peer] == (matched.disposition == NSFlowAllow));
-            NSFlowEvaluation browser = [policy evaluateIdentity:identity
-                                                      direction:direction.integerValue
-                                                    destination:peer
-                                                         socket:NO];
-            EXPECT(browser.reason == matched.reason && browser.disposition == matched.disposition);
-            NSFlowEvaluation deferred = [policy evaluateIdentity:identity
-                                                       direction:direction.integerValue
-                                                     destination:@{@"protocol" : @"tcp"}
-                                                          socket:YES];
-            EXPECT(deferred.disposition == NSFlowNeedsEndpoints && deferred.reason == NSFlowReasonEndpoints);
-            NSFlowEvaluation available = [policy evaluateIdentity:identity
-                                                        direction:direction.integerValue
-                                                      destination:@{@"protocol" : @"tcp"}
-                                                           socket:NO];
-            EXPECT(available.reason == (sockets.boolValue ? NSFlowReasonSystem : NSFlowReasonDefault));
-            EXPECT(available.disposition ==
-                   (sockets.boolValue ? ([action isEqual:@"allow"] ? NSFlowDrop : NSFlowAllow) : NSFlowAsk));
+        for (NSString *identity in @[
+                 [action isEqual:@"allow"] ? @".com.apple.ReportCrash.Root" : @"prefixcom.apple.example",
+                 @"third.app"
+             ]) {
+            NSMutableDictionary *document = [[NSPolicy defaultDocument] mutableCopy];
+            document[@"filterSockets"] = sockets;
+            document[@"blockAppleSystemTelemetry"] = @YES;
+            document[@"allowThirdPartyProcesses"] = @YES;
+            document[@"globalRules"] =
+                @{NSFixtureGlobal(identity, @"192.0.2.1", @"443", @"1234", @"tcp", action) : action};
+            NSPolicy *policy = [NSPolicy policyWithDocument:document error:NULL];
+            EXPECT(policy);
+            for (NSNumber *direction in @[ @0, @1, @2 ]) {
+                NSFlowEvaluation matched = [policy evaluateIdentity:identity
+                                                          direction:direction.integerValue
+                                                        destination:peer
+                                                             socket:YES];
+                EXPECT(matched.reason == NSFlowReasonGlobal);
+                EXPECT(matched.disposition == ([action isEqual:@"allow"] ? NSFlowAllow : NSFlowDrop));
+                EXPECT([policy allowsIdentity:identity direction:direction.integerValue
+                                  destination:peer] == (matched.disposition == NSFlowAllow));
+                NSFlowEvaluation browser = [policy evaluateIdentity:identity
+                                                          direction:direction.integerValue
+                                                        destination:peer
+                                                             socket:NO];
+                EXPECT(browser.reason == matched.reason && browser.disposition == matched.disposition);
+                NSFlowEvaluation deferred = [policy evaluateIdentity:identity
+                                                           direction:direction.integerValue
+                                                         destination:@{@"protocol" : @"tcp"}
+                                                              socket:YES];
+                EXPECT(deferred.disposition == NSFlowNeedsEndpoints &&
+                       deferred.reason == NSFlowReasonEndpoints);
+                NSFlowEvaluation available = [policy evaluateIdentity:identity
+                                                            direction:direction.integerValue
+                                                          destination:@{@"protocol" : @"tcp"}
+                                                               socket:NO];
+                BOOL system = NSIsAppleSystemIdentity(identity);
+                EXPECT(available.reason == (sockets.boolValue
+                                                ? (system ? NSFlowReasonSystem : NSFlowReasonThirdParty)
+                                                : NSFlowReasonDefault));
+                EXPECT(available.disposition ==
+                       (sockets.boolValue ? (system && [action isEqual:@"allow"] ? NSFlowDrop : NSFlowAllow)
+                                          : NSFlowAsk));
+            }
         }
     }
 }

@@ -37,13 +37,14 @@ static NSString *NSDashboardCopyableSectionName(NSInteger section) {
     }
 }
 
-static NSString *NSDashboardAppRuleSummary(id rule, NSString *automatic) {
+static NSString *NSDashboardAppRuleSummary(id rule, NSString *automatic, BOOL system) {
     NSString *summary = NSAppRuleSummary(rule);
     if (!automatic) {
         return summary;
     }
-    return [NSString stringWithFormat:@"%@ by iOS setting unless a global rule matches. Saved rule: %@",
-                                      [automatic isEqual:@"block"] ? @"Blocked" : @"Allowed", summary];
+    return [NSString stringWithFormat:@"%@ by %@ setting unless a global rule matches. Saved rule: %@",
+                                      [automatic isEqual:@"block"] ? @"Blocked" : @"Allowed",
+                                      system ? @"iOS" : @"third-party", summary];
 }
 
 @interface NSDashboardRowCell : UITableViewCell
@@ -523,8 +524,9 @@ static UIImage *NSDashboardUpdateIcon(void) {
         NSDictionary *rules = policy.document[@"rules"];
         for (NSString *identity in identities) {
             NSString *fullName = NSIdentityFullDisplayName(identity);
-            NSString *summary = NSDashboardAppRuleSummary(rules[identity],
-                                                          [policy automaticSystemActionForIdentity:identity]);
+            NSString *summary =
+                NSDashboardAppRuleSummary(rules[identity], [policy automaticActionForIdentity:identity],
+                                          NSIsAppleSystemIdentity(identity));
             [lines addObject:[NSString
                                  stringWithFormat:@"%@: %@", fullName.length ? fullName : identity, summary]];
         }
@@ -713,10 +715,12 @@ static UIImage *NSDashboardUpdateIcon(void) {
     BOOL parent = NSAppleSystemTrafficEnabled(self.policy.document);
     BOOL scope = row == NSFirewallRowSockets;
     BOOL telemetry = row == NSFirewallRowAppleTelemetry;
+    BOOL thirdParty = row == NSFirewallRowThirdParty;
     UISwitch *toggle = (UISwitch *)cell.accessoryView;
-    BOOL on = scope       ? sockets
-              : telemetry ? parent && [self.policy.document[@"blockAppleSystemTelemetry"] boolValue]
-                          : parent;
+    BOOL on = scope        ? sockets
+              : telemetry  ? parent && [self.policy.document[@"blockAppleSystemTelemetry"] boolValue]
+              : thirdParty ? NSThirdPartyTrafficEnabled(self.policy.document)
+                           : parent;
     if (toggle.isOn != on) {
         [toggle setOn:on animated:NO];
     }
@@ -736,6 +740,7 @@ static UIImage *NSDashboardUpdateIcon(void) {
     [self refreshFirewallSwitchCell:self.socketCell row:NSFirewallRowSockets];
     [self refreshFirewallSwitchCell:self.appleCell row:NSFirewallRowAppleSystem];
     [self refreshFirewallSwitchCell:self.telemetryCell row:NSFirewallRowAppleTelemetry];
+    [self refreshFirewallSwitchCell:self.thirdPartyCell row:NSFirewallRowThirdParty];
     // Monitor refreshes must not interrupt the native swipe reveal animation.
     if (self.tableView.editing || self.tableView.dragging || self.tableView.decelerating) {
         self.presentationRefreshPending = YES;
@@ -751,7 +756,8 @@ static UIImage *NSDashboardUpdateIcon(void) {
         self.traitCollection.preferredContentSizeCategory,
         [self.policy.document dictionaryWithValuesForKeys:@[
             @"rules", @"default", @"unattributed", @"filterSockets", @"allowAppleSystemProcesses",
-            @"blockAppleSystemTelemetry", @"appleSystemTelemetryIntroduced", @"ruleDestinations"
+            @"blockAppleSystemTelemetry", @"appleSystemTelemetryIntroduced", @"allowThirdPartyProcesses",
+            @"ruleDestinations"
         ]]
             ?: @{},
         globalRules,
@@ -995,7 +1001,9 @@ static UIImage *NSDashboardUpdateIcon(void) {
                                           self.monitor[@"evictedRequestCount"] ?: @0];
     }
     if (section == NSDashboardSectionRules) {
-        return self.identities.count ? @"Tap an app identity to change its rule" : nil;
+        return !self.identities.count                             ? nil
+               : NSThirdPartyTrafficEnabled(self.policy.document) ? NSAppRulesLockedMessage
+                                                                  : @"Tap an app identity to change its rule";
     }
     if (section == NSDashboardSectionActivity) {
         return @"Up to 300 recorded events";
@@ -1324,13 +1332,16 @@ static UIImage *NSDashboardUpdateIcon(void) {
             cached = self.appleCell;
         } else if (path.row == NSFirewallRowAppleTelemetry) {
             cached = self.telemetryCell;
+        } else if (path.row == NSFirewallRowThirdParty) {
+            cached = self.thirdPartyCell;
         }
     }
     UISwitch *cachedToggle =
         [cached.accessoryView isKindOfClass:UISwitch.class] ? (UISwitch *)cached.accessoryView : nil;
     BOOL persistent = path.section == NSDashboardSectionFirewall &&
                       (path.row == NSFirewallRowEnabled || path.row == NSFirewallRowSockets ||
-                       path.row == NSFirewallRowAppleSystem || path.row == NSFirewallRowAppleTelemetry);
+                       path.row == NSFirewallRowAppleSystem || path.row == NSFirewallRowAppleTelemetry ||
+                       path.row == NSFirewallRowThirdParty);
     BOOL global = path.section == NSDashboardSectionGlobalRules;
     NSString *reuse = persistent ? nil : global ? @"DashboardGlobalRule" : @"DashboardSubtitle";
     UITableViewCell *cell = cached ?: (reuse ? [tableView dequeueReusableCellWithIdentifier:reuse] : nil);
@@ -1479,6 +1490,17 @@ static UIImage *NSDashboardUpdateIcon(void) {
         cell.accessoryView = toggle;
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
         [self refreshFirewallSwitchCell:cell row:NSFirewallRowAppleTelemetry];
+    } else if (path.section == NSDashboardSectionFirewall && path.row == NSFirewallRowThirdParty) {
+        cell.textLabel.text = @"Allow third-party traffic";
+        cell.detailTextLabel.text = @"Allow 3rd party apps internet access";
+        UISwitch *toggle = cachedToggle ?: [UISwitch new];
+        [toggle removeTarget:self action:NULL forControlEvents:UIControlEventValueChanged];
+        [toggle addTarget:self
+                      action:@selector(thirdPartyProcessesChanged:)
+            forControlEvents:UIControlEventValueChanged];
+        cell.accessoryView = toggle;
+        cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        [self refreshFirewallSwitchCell:cell row:NSFirewallRowThirdParty];
     } else if (path.section == NSDashboardSectionFirewall && path.row == NSFirewallRowSockets) {
         cell.textLabel.text = @"Filter System Sockets";
         cell.detailTextLabel.text = @"Required to filter all app network";
@@ -1547,10 +1569,11 @@ static UIImage *NSDashboardUpdateIcon(void) {
         NSString *identity = [self identitiesForSection:path.section][path.row];
         ((NSDashboardRowCell *)cell).representedRowKey = identity;
         id rule = self.policy.document[@"rules"][identity];
-        NSString *automatic = [self.policy automaticSystemActionForIdentity:identity];
+        NSString *automatic = [self.policy automaticActionForIdentity:identity];
         rowTint = automatic ? NSRuleColor(automatic) : NSAppRuleColor(rule);
         cell.textLabel.text = NSIdentityDisplayName(identity);
-        cell.detailTextLabel.text = NSDashboardAppRuleSummary(rule, automatic);
+        cell.detailTextLabel.text =
+            NSDashboardAppRuleSummary(rule, automatic, NSIsAppleSystemIdentity(identity));
     } else if (path.section == NSDashboardSectionNotifications) {
         cell.textLabel.text = path.row == 0 ? @"Notification Settings" : @"Banners & Do Not Disturb";
         cell.detailTextLabel.text =
@@ -1641,6 +1664,9 @@ static UIImage *NSDashboardUpdateIcon(void) {
     }
     if (path.section == NSDashboardSectionFirewall && path.row == NSFirewallRowAppleTelemetry) {
         self.telemetryCell = cell;
+    }
+    if (path.section == NSDashboardSectionFirewall && path.row == NSFirewallRowThirdParty) {
+        self.thirdPartyCell = cell;
     }
     return cell;
 }

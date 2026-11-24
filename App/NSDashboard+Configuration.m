@@ -45,6 +45,7 @@ static NSDictionary *NSSavedFilterFingerprint(NEFilterManager *manager) {
             if (!enabled) {
                 document[@"allowAppleSystemProcesses"] = @NO;
                 document[@"blockAppleSystemTelemetry"] = @NO;
+                document[@"allowThirdPartyProcesses"] = @NO;
             }
             return YES;
         }

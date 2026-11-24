@@ -97,12 +97,12 @@ NetShield2/
 |   +-- NSMonitorSchema.h              # Declares validation for shared monitor snapshots.
 |   +-- NSMonitorSchema.m              # Validates monitor fields, activity records, and request entries.
 |   +-- NSNotificationPolicy.h         # Determines when to withdraw stale permission notifications.
-|   +-- NSNotifications.h              # Registers/validates direction-aware permission actions and withdraws banners for automatic system actions.
+|   +-- NSNotifications.h              # Registers/validates direction-aware permission actions and withdraws banners for automatic system and third-party actions.
 |   +-- NSPermissionQueue.h            # Declares the queue for flows waiting on user decisions.
 |   +-- NSPermissionQueue.m            # Settles held flows with shared evaluation of captured directions/peers and handles timeouts.
 |   +-- NSPermissionRequest.h          # Defines canonical request fingerprints, scope, and presentation checks.
 |   +-- NSPolicy.h                     # Defines raw system classification, the telemetry list interface and shared verdict APIs.
-|   +-- NSPolicy.m                     # Defines the 20 telemetry identities, validates system settings and evaluates precedence for all callers.
+|   +-- NSPolicy.m                     # Defines the 20 telemetry identities, validates system and third-party traffic settings and evaluates precedence for all callers.
 |   +-- NSPolicyCache.h                # Declares policy caching and invalidation.
 |   +-- NSPolicyCache.m                # Tracks policy file identity and caches validated snapshots.
 |   +-- NSPolicyReader.h               # Declares the shared policy reader and app-group path helpers.

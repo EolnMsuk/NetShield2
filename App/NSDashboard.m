@@ -10,17 +10,23 @@
 #include <errno.h>
 
 NSString *const NSSystemRulesLockedMessage = @"Disable \"Allow iOS system traffic\" to modify system rules.";
+NSString *const NSAppRulesLockedMessage = @"Disable \"Allow third-party traffic\" to modify app rules.";
 static NSString *const NSSystemRulesLockedErrorDomain = @"NetShield2.SystemRulesLocked";
+static NSString *const NSAppRulesLockedErrorDomain = @"NetShield2.AppRulesLocked";
 
 // Recheck inside the policy transaction before changing rules or ask generations.
-static BOOL NSSystemRuleEditAllowed(NSDictionary *document, BOOL system, NSError **error) {
-    if (!system || !NSAppleSystemTrafficEnabled(document)) {
+static BOOL NSIdentityRuleEditAllowed(NSDictionary *document, BOOL system, NSError **error) {
+    if (!(system ? NSAppleSystemTrafficEnabled(document) : NSThirdPartyTrafficEnabled(document))) {
         return YES;
     }
     if (error) {
-        *error = [NSError errorWithDomain:NSSystemRulesLockedErrorDomain
-                                     code:1
-                                 userInfo:@{NSLocalizedDescriptionKey : NSSystemRulesLockedMessage}];
+        *error =
+            [NSError errorWithDomain:system ? NSSystemRulesLockedErrorDomain : NSAppRulesLockedErrorDomain
+                                code:1
+                            userInfo:@{
+                                NSLocalizedDescriptionKey : system ? NSSystemRulesLockedMessage
+                                                                   : NSAppRulesLockedMessage
+                            }];
     }
     return NO;
 }
@@ -577,8 +583,9 @@ static BOOL NSSystemRuleEditAllowed(NSDictionary *document, BOOL system, NSError
     });
 }
 - (void)showError:(NSError *)error operation:(NSString *)operation {
-    if ([error.domain isEqual:NSSystemRulesLockedErrorDomain]) {
-        [self showSystemRulesLocked];
+    if ([error.domain isEqual:NSSystemRulesLockedErrorDomain] ||
+        [error.domain isEqual:NSAppRulesLockedErrorDomain]) {
+        [self showRulesLockedForSystem:[error.domain isEqual:NSSystemRulesLockedErrorDomain]];
         return;
     }
     self.message = [NSString stringWithFormat:@"%@: %@ (%@ %ld).", operation, error.localizedDescription,
@@ -591,17 +598,19 @@ static BOOL NSSystemRuleEditAllowed(NSDictionary *document, BOOL system, NSError
     }
     [self refreshTableKeepingPosition];
 }
-- (void)showSystemRulesLocked {
+- (void)showRulesLockedForSystem:(BOOL)system {
     [self.tableView setEditing:NO animated:YES];
+    NSString *message = system ? NSSystemRulesLockedMessage : NSAppRulesLockedMessage;
     UIViewController *presented = self.presentedViewController;
     if ([presented isKindOfClass:UIAlertController.class] &&
-        [((UIAlertController *)presented).message isEqual:NSSystemRulesLockedMessage]) {
+        [((UIAlertController *)presented).message isEqual:message]) {
         return;
     }
     void (^present)(void) = ^{
-        UIAlertController *notice = [UIAlertController alertControllerWithTitle:@"System Rules Locked"
-                                                                        message:NSSystemRulesLockedMessage
-                                                                 preferredStyle:UIAlertControllerStyleAlert];
+        UIAlertController *notice =
+            [UIAlertController alertControllerWithTitle:system ? @"System Rules Locked" : @"App Rules Locked"
+                                                message:message
+                                         preferredStyle:UIAlertControllerStyleAlert];
         [notice addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
         [self presentViewController:notice animated:YES completion:nil];
     };
@@ -695,16 +704,16 @@ static BOOL NSSystemRuleEditAllowed(NSDictionary *document, BOOL system, NSError
         }];
 }
 - (void)removeAppRuleForIdentity:(NSString *)identity completion:(void (^)(BOOL))completion {
-    if (!NSSystemRuleEditAllowed(self.policy.document, NSIsAppleSystemIdentity(identity), NULL)) {
+    if (!NSIdentityRuleEditAllowed(self.policy.document, NSIsAppleSystemIdentity(identity), NULL)) {
         if (completion) {
             completion(NO);
         }
-        [self showSystemRulesLocked];
+        [self showRulesLockedForSystem:NSIsAppleSystemIdentity(identity)];
         return;
     }
     [self
         updatePolicy:^BOOL(NSMutableDictionary *document, NSError **error) {
-            if (!NSSystemRuleEditAllowed(document, NSIsAppleSystemIdentity(identity), error)) {
+            if (!NSIdentityRuleEditAllowed(document, NSIsAppleSystemIdentity(identity), error)) {
                 return NO;
             }
             return NSUseDefaultRule(document, identity, error);
@@ -730,8 +739,9 @@ static BOOL NSSystemRuleEditAllowed(NSDictionary *document, BOOL system, NSError
     BOOL activity = section == NSDashboardSectionActivity;
     BOOL global = section == NSDashboardSectionGlobalRules;
     BOOL system = section == NSDashboardSectionSystemRules;
-    if (!NSSystemRuleEditAllowed(self.policy.document, system, NULL)) {
-        [self showSystemRulesLocked];
+    BOOL identityRules = system || section == NSDashboardSectionRules;
+    if (identityRules && !NSIdentityRuleEditAllowed(self.policy.document, system, NULL)) {
+        [self showRulesLockedForSystem:system];
         return;
     }
     NSString *name = activity ? @"Recent Activity"
@@ -766,8 +776,8 @@ static BOOL NSSystemRuleEditAllowed(NSDictionary *document, BOOL system, NSError
                                           }
                                           return NSUpdatePolicy(
                                               ^BOOL(NSMutableDictionary *document, NSError **mutationError) {
-                                                  if (!NSSystemRuleEditAllowed(document, system,
-                                                                               mutationError)) {
+                                                  if (identityRules && !NSIdentityRuleEditAllowed(
+                                                                           document, system, mutationError)) {
                                                       return NO;
                                                   }
                                                   if (global) {
@@ -821,8 +831,8 @@ static BOOL NSSystemRuleEditAllowed(NSDictionary *document, BOOL system, NSError
         return;
     }
     if (!key && !connection &&
-        !NSSystemRuleEditAllowed(self.policy.document, NSIsAppleSystemIdentity(identity), NULL)) {
-        [self showSystemRulesLocked];
+        !NSIdentityRuleEditAllowed(self.policy.document, NSIsAppleSystemIdentity(identity), NULL)) {
+        [self showRulesLockedForSystem:NSIsAppleSystemIdentity(identity)];
         return;
     }
     NSString *fullName = NSIdentityFullDisplayName(identity);
@@ -871,58 +881,59 @@ static BOOL NSSystemRuleEditAllowed(NSDictionary *document, BOOL system, NSError
     }
     __weak NSRuleActionController *weakAlert = alert;
     for (NSString *action in actions) {
-        [alert addActionWithTitle:[self ruleTitle:action]
-                             rule:action
-                          handler:^{
-                              if (!key && !NSSystemRuleEditAllowed(self.policy.document,
-                                                                   NSIsAppleSystemIdentity(identity), NULL)) {
-                                  [weakAlert finishRuleSelectionWithRules:nil message:nil];
-                                  [self showSystemRulesLocked];
-                                  return;
-                              }
-                              if (!key && [action isEqual:@"remove"]) {
-                                  [self removeAppRuleForIdentity:identity completion:nil];
-                                  return;
-                              }
-                              BOOL ready = self.preferencesLoaded && self.configurationReady;
-                              BOOL enabled = self.savedEnabled;
-                              NSInteger engine = self.savedEngine;
-                              NSString *activation = self.savedActivation;
-                              __block NSArray<NSString *> *committedRules = nil;
-                              [self
-                                  updatePolicy:^BOOL(NSMutableDictionary *document, NSError **error) {
-                                      if (!key && !NSSystemRuleEditAllowed(
-                                                      document, NSIsAppleSystemIdentity(identity), error)) {
-                                          return NO;
-                                      }
-                                      if ([key isEqual:@"unattributed"]) {
-                                          return NSSetUnidentifiedMode(document, action, ready, enabled,
-                                                                       engine, activation, error);
-                                      }
-                                      if (key) {
-                                          document[key] = action;
-                                      } else {
-                                          if (!connection) {
-                                              if (!NSToggleAppRule(document, identity, action, error)) {
-                                                  return NO;
-                                              }
-                                              // Capture while locked; publish only after the save succeeds.
-                                              committedRules =
-                                                  [NSAppRuleSelections(document[@"rules"][identity]) copy];
-                                              return YES;
-                                          }
-                                          NSMutableDictionary *rules = document[@"rules"];
-                                          rules[identity] = NSAppRuleBySelecting(rules[identity], action);
-                                      }
-                                      return YES;
-                                  }
-                                  completion:^(BOOL saved) {
-                                      if (!key && !connection) {
-                                          [weakAlert finishRuleSelectionWithRules:saved ? committedRules : nil
-                                                                          message:saved ? nil : self.message];
-                                      }
-                                  }];
-                          }];
+        [alert
+            addActionWithTitle:[self ruleTitle:action]
+                          rule:action
+                       handler:^{
+                           if (!key && !NSIdentityRuleEditAllowed(self.policy.document,
+                                                                  NSIsAppleSystemIdentity(identity), NULL)) {
+                               [weakAlert finishRuleSelectionWithRules:nil message:nil];
+                               [self showRulesLockedForSystem:NSIsAppleSystemIdentity(identity)];
+                               return;
+                           }
+                           if (!key && [action isEqual:@"remove"]) {
+                               [self removeAppRuleForIdentity:identity completion:nil];
+                               return;
+                           }
+                           BOOL ready = self.preferencesLoaded && self.configurationReady;
+                           BOOL enabled = self.savedEnabled;
+                           NSInteger engine = self.savedEngine;
+                           NSString *activation = self.savedActivation;
+                           __block NSArray<NSString *> *committedRules = nil;
+                           [self
+                               updatePolicy:^BOOL(NSMutableDictionary *document, NSError **error) {
+                                   if (!key && !NSIdentityRuleEditAllowed(
+                                                   document, NSIsAppleSystemIdentity(identity), error)) {
+                                       return NO;
+                                   }
+                                   if ([key isEqual:@"unattributed"]) {
+                                       return NSSetUnidentifiedMode(document, action, ready, enabled, engine,
+                                                                    activation, error);
+                                   }
+                                   if (key) {
+                                       document[key] = action;
+                                   } else {
+                                       if (!connection) {
+                                           if (!NSToggleAppRule(document, identity, action, error)) {
+                                               return NO;
+                                           }
+                                           // Capture while locked; publish only after the save succeeds.
+                                           committedRules =
+                                               [NSAppRuleSelections(document[@"rules"][identity]) copy];
+                                           return YES;
+                                       }
+                                       NSMutableDictionary *rules = document[@"rules"];
+                                       rules[identity] = NSAppRuleBySelecting(rules[identity], action);
+                                   }
+                                   return YES;
+                               }
+                               completion:^(BOOL saved) {
+                                   if (!key && !connection) {
+                                       [weakAlert finishRuleSelectionWithRules:saved ? committedRules : nil
+                                                                       message:saved ? nil : self.message];
+                                   }
+                               }];
+                       }];
     }
     if (!key) {
         if (connection && identity.length && !NSConnectionRuleValues(connection[@"direction"]).count) {
@@ -1186,6 +1197,25 @@ static BOOL NSSystemRuleEditAllowed(NSDictionary *document, BOOL system, NSError
             if ([document[@"blockAppleSystemTelemetry"] boolValue]) {
                 document[@"appleSystemTelemetryIntroduced"] = @YES;
             }
+            return YES;
+        }
+        completion:^(BOOL saved) {
+            [self refreshTableKeepingPosition];
+        }];
+    [self refreshTableKeepingPosition];
+}
+- (void)thirdPartyProcessesChanged:(UISwitch *)sender {
+    BOOL allow = sender.on;
+    [sender setOn:NSThirdPartyTrafficEnabled(self.policy.document) animated:NO];
+    if (!self.policy || self.busy || self.importPending ||
+        ![self.policy.document[@"filterSockets"] boolValue]) {
+        [self refreshTableKeepingPosition];
+        return;
+    }
+    [self
+        updatePolicy:^BOOL(NSMutableDictionary *document, NSError **error) {
+            document[@"allowThirdPartyProcesses"] =
+                allow && [document[@"filterSockets"] boolValue] ? @YES : @NO;
             return YES;
         }
         completion:^(BOOL saved) {

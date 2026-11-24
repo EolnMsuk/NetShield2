@@ -1,5 +1,11 @@
 ### Users coming from 2.8.8 or lower must reset / clear any existing global rules before updating (or just uninstall first).
 
+# 3.0.6
+
+- Added Allow third-party traffic in Firewall. Turn it on to let third-party apps connect without prompts, including apps you previously blocked. Global Rules still take priority.
+- Your saved App Rules stay intact and take effect again when you turn the option off. App Rules editing is locked while it is on.
+- The option starts off and returns to off after resetting settings. It requires Filter System Sockets.
+
 # 3.0.5
 
 - Tap Global Rules to collapse or expand its rules and Add a Custom Rule option. Your choice is remembered after reopening NetShield2.
