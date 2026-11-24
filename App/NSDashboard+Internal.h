@@ -43,9 +43,9 @@ typedef NS_ENUM(NSInteger, NSConfigurationRow) {
 typedef NS_ENUM(NSInteger, NSFirewallRow) {
     NSFirewallRowEnabled,
     NSFirewallRowSockets,
+    NSFirewallRowThirdParty,
     NSFirewallRowAppleSystem,
     NSFirewallRowAppleTelemetry,
-    NSFirewallRowThirdParty,
     NSFirewallRowStatus,
     NSFirewallRowUnidentified,
     NSFirewallRowDefault,
