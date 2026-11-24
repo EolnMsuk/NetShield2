@@ -320,7 +320,6 @@ static void TestThirdPartyTransitions(void) {
     [upgrade removeObjectForKey:@"allowThirdPartyProcesses"];
     NSDictionary *saved = @{
         @"blocked.app" : @{@"both" : @"block"},
-        @"asking.app" : @{@"both" : @"ask"},
         @"allowed.app" : @{@"both" : @"allow"},
         @"directional.app" : @{@"inbound" : @"block", @"outbound" : @"allow"}
     };
@@ -333,8 +332,12 @@ static void TestThirdPartyTransitions(void) {
     upgrade[@"askGenerations"] = @{@"asking.app" : @"ask-selection", @"directional.app" : @"mixed-selection"};
     CHECK(NSWriteDocument(upgrade, NSPolicyFile, NULL));
     NSPolicy *legacy = NSReadPolicy(NULL);
-    CHECK(legacy && [legacy.document[@"allowThirdPartyProcesses"] isEqual:@NO]);
+    CHECK(legacy);
+    CHECK([legacy.document[@"allowThirdPartyProcesses"] isEqual:@NO]);
     CHECK(NSBoolean(legacy.document[@"allowThirdPartyProcesses"]));
+    // Ask uses the Default Rule without an explicit app selection.
+    CHECK(!legacy.document[@"rules"][@"asking.app"]);
+    CHECK([legacy requiresPermissionForIdentity:@"asking.app"]);
     for (id invalid in @[ @0, @1, @"true", NSNull.null, @[], @{} ]) {
         NSMutableDictionary *bad = [upgrade mutableCopy];
         bad[@"allowThirdPartyProcesses"] = invalid;
@@ -386,7 +389,8 @@ static void TestThirdPartyTransitions(void) {
             }
         }
         CHECK(!policy.document[@"rules"][@"unseen.app"]);
-        for (NSString *identity in [saved.allKeys arrayByAddingObject:@"unseen.app"]) {
+        for (NSString *identity in
+             [saved.allKeys arrayByAddingObjectsFromArray:@[ @"asking.app", @"unseen.app" ]]) {
             CHECK(
                 [NSPermissionGeneration(policy, identity) isEqual:NSPermissionGeneration(before, identity)]);
             CHECK([policy automaticallyAllowsIdentity:identity] == enabled);
@@ -419,9 +423,9 @@ static void TestThirdPartyTransitions(void) {
     // Held flows use their individual peers. A timeout remains blocked even if
     // the allowance later removes its history card.
     NSMutableDictionary *document = [[NSPolicy defaultDocument] mutableCopy];
-    document[@"rules"] = @{@"asking.app" : @{@"both" : @"ask"}};
     CHECK(NSWriteDocument(document, NSPolicyFile, NULL));
     NSPolicy *asking = NSReadPolicy(NULL);
+    CHECK(asking && [asking requiresPermissionForIdentity:@"asking.app"]);
     NSPermissionQueue *queue = [NSPermissionQueue new], *expired = [NSPermissionQueue new];
     [queue resolveWithPolicy:asking now:0];
     [expired resolveWithPolicy:asking now:0];
