@@ -1481,7 +1481,7 @@ static UIImage *NSDashboardUpdateIcon(void) {
         [self refreshFirewallSwitchCell:cell row:NSFirewallRowAppleSystem];
     } else if (path.section == NSDashboardSectionFirewall && path.row == NSFirewallRowAppleTelemetry) {
         cell.textLabel.text = @"Block iOS system telemetry";
-        cell.detailTextLabel.text = @"Block 20 telemetry processes";
+        cell.detailTextLabel.text = @"Block 20 known telemetry processes";
         UISwitch *toggle = cachedToggle ?: [UISwitch new];
         [toggle removeTarget:self action:NULL forControlEvents:UIControlEventValueChanged];
         [toggle addTarget:self
